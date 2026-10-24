@@ -1,4 +1,5 @@
-import { eciToGeodetic, gstime, propagate, twoline2satrec, type SatRec } from "satellite.js";
+import { eciToGeodetic, gstime, propagate, type SatRec } from "satellite.js";
+import { satrecOf, type Elements } from "@/lib/orbit/elements";
 import { EARTH_RADIUS_KM, MU_EARTH } from "@/lib/orbit/constants";
 
 // Synthetic encounters with a real satellite. Object A is a live catalog object (SGP4);
@@ -87,12 +88,11 @@ export interface Encounter {
 }
 
 export function buildEncounter(
-  line1: string,
-  line2: string,
+  elements: Elements,
   tca: number,
   opts: { missM: number; crossDeg: number; radialShare?: number },
 ): Encounter | null {
-  const satrec = twoline2satrec(line1, line2);
+  const satrec = satrecOf(elements);
   const pv = propagate(satrec, new Date(tca));
   if (!pv?.position || !pv.velocity || !Number.isFinite(pv.position.x)) return null;
   const rA: V3 = [pv.position.x, pv.position.y, pv.position.z];

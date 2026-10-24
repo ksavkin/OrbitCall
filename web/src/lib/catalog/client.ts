@@ -1,4 +1,5 @@
 import { EARTH_RADIUS_KM, MU_EARTH } from "@/lib/orbit/constants";
+import type { Elements } from "@/lib/orbit/elements";
 import { CATEGORIES, type CatalogPayload, type CatalogRow, type Category } from "./types";
 
 export interface SatObject {
@@ -7,14 +8,14 @@ export interface SatObject {
   name: string;
   cospar: string;
   category: Category;
-  line1: string;
-  line2: string;
+  /** Element set as delivered: TLE lines (Dev) or the OMM record (real mode). */
+  elements: Elements;
   owner: string;
   launchDate: string;
   launchSite: string;
   objectType: string;
   rcs: number | null;
-  /** Derived from the element set (TLE line 2). */
+  /** Derived from the element set. */
   inclination: number; // deg
   eccentricity: number;
   meanMotion: number; // rev/day
@@ -41,11 +42,11 @@ function epochOf(l1: string): Date {
   return new Date(Date.UTC(year, 0, 1) + (day - 1) * 86_400_000);
 }
 
-function toObject(r: CatalogRow, index: number): SatObject {
-  const [norad, name, cospar, cat, l1, l2, owner, launchDate, launchSite, objectType, rcs] = r;
-  const inclination = parseFloat(l2.slice(8, 16));
-  const eccentricity = parseFloat("0." + l2.slice(26, 33).trim());
-  const meanMotion = parseFloat(l2.slice(52, 63));
+type SatFields = Omit<SatObject, "periodMin" | "apogeeKm" | "perigeeKm" | "regime" | "searchKey">;
+
+/** Adds the orbit figures every element-set format shares. */
+export function satObject(f: SatFields): SatObject {
+  const { name, norad, cospar, eccentricity, meanMotion } = f;
   const n = (meanMotion * 2 * Math.PI) / 86400; // rad/s
   const a = Math.cbrt(MU_EARTH / (n * n)); // km
   const apogeeKm = a * (1 + eccentricity) - EARTH_RADIUS_KM;
@@ -57,39 +58,49 @@ function toObject(r: CatalogRow, index: number): SatObject {
   else if (Math.abs(periodMin - 1436) < 90) regime = "GEO";
   else regime = "MEO";
   return {
-    index,
-    norad,
-    name,
-    cospar,
-    category: CATEGORIES[cat],
-    line1: l1,
-    line2: l2,
-    owner,
-    launchDate,
-    launchSite,
-    objectType,
-    rcs,
-    inclination,
-    eccentricity,
-    meanMotion,
+    ...f,
     periodMin,
     apogeeKm,
     perigeeKm,
-    epoch: epochOf(l1),
     regime,
     searchKey: `${name} ${norad} ${cospar}`.toLowerCase(),
   };
 }
 
-export function parseCatalog(p: CatalogPayload): Catalog {
-  const objects = p.rows.map(toObject);
+function toObject(r: CatalogRow, index: number): SatObject {
+  const [norad, name, cospar, cat, l1, l2, owner, launchDate, launchSite, objectType, rcs] = r;
+  return satObject({
+    index,
+    norad,
+    name,
+    cospar,
+    category: CATEGORIES[cat],
+    elements: { format: "tle", line1: l1, line2: l2 },
+    owner,
+    launchDate,
+    launchSite,
+    objectType,
+    rcs,
+    inclination: parseFloat(l2.slice(8, 16)),
+    eccentricity: parseFloat("0." + l2.slice(26, 33).trim()),
+    meanMotion: parseFloat(l2.slice(52, 63)),
+    epoch: epochOf(l1),
+  });
+}
+
+/** Category and regime counts for a list of objects. */
+export function makeCatalog(meta: Catalog["meta"], owners: Catalog["owners"], objects: SatObject[]): Catalog {
   const counts = Object.fromEntries(CATEGORIES.map((c) => [c, 0])) as Record<Category, number>;
   const regimes = { LEO: 0, MEO: 0, GEO: 0, HEO: 0 };
   for (const o of objects) {
     counts[o.category]++;
     regimes[o.regime]++;
   }
-  return { meta: p.meta, owners: p.owners, objects, counts, regimes };
+  return { meta, owners, objects, counts, regimes };
+}
+
+export function parseCatalog(p: CatalogPayload): Catalog {
+  return makeCatalog(p.meta, p.owners, p.rows.map(toObject));
 }
 
 /** International designator 98067A → 1998-067A. */

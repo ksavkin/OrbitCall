@@ -2,11 +2,12 @@
 // SGP4 propagation off the main thread. Output is in scene units:
 // 1 unit = 1 Earth radius, axes remapped from TEME (x, y, z) to three.js (x, z, -y).
 
-import { propagate, twoline2satrec, type SatRec } from "satellite.js";
+import { propagate, type SatRec } from "satellite.js";
 import { EARTH_RADIUS_KM } from "./constants";
+import { satrecOf, type Elements } from "./elements";
 
 type InMsg =
-  | { type: "init"; tles: [string, string][] }
+  | { type: "init"; elements: Elements[] }
   | { type: "sample"; id: number; time: number }
   | { type: "path"; id: number; index: number; time: number; steps: number; span?: number };
 
@@ -17,9 +18,9 @@ const R = EARTH_RADIUS_KM;
 self.onmessage = (e: MessageEvent<InMsg>) => {
   const msg = e.data;
   if (msg.type === "init") {
-    recs = msg.tles.map(([l1, l2]) => {
+    recs = msg.elements.map((el) => {
       try {
-        const r = twoline2satrec(l1, l2);
+        const r = satrecOf(el);
         return r.error ? null : r;
       } catch {
         return null;

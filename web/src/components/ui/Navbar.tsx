@@ -171,14 +171,17 @@ function SourcePill({ source }: { source?: string }) {
       </span>
     );
   }
-  const live = source !== "snapshot";
-  const label = source === "celestrak-live" ? "Live · CelesTrak" : source === "celestrak-cache" ? "Live · cached" : "Offline snapshot";
+  const live = source === "celestrak-live" || source === "celestrak-cache";
+  const label =
+    source === "celestrak-live" ? "Live · CelesTrak" : source === "celestrak-cache" ? "Live · cached" : source === "omm-snapshot" ? "OMM snapshot" : "Offline snapshot";
   return (
     <Tooltip
       label={
         live
           ? "Element sets from CelesTrak GP, refreshed at most every 2 h"
-          : "CelesTrak unreachable, using the committed snapshot"
+          : source === "omm-snapshot"
+            ? "Pinned CelesTrak OMM element sets, the catalog the backend serves"
+            : "CelesTrak unreachable, using the committed snapshot"
       }
     >
       <span

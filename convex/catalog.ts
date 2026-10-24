@@ -6,7 +6,7 @@ import { sourceRef } from "./lib/validators";
 export const snapshot = query({
   args: {},
   returns: v.union(v.null(), v.object({
-    snapshotId: v.string(), takenAt: v.union(v.string(), v.null()), ommUrl: v.null(),
+    snapshotId: v.string(), takenAt: v.union(v.string(), v.null()), ommUrl: v.union(v.string(), v.null()),
     gpUrl: v.union(v.string(), v.null()), sources: v.array(sourceRef),
   })),
   handler: async ctx => {
@@ -16,7 +16,7 @@ export const snapshot = query({
       const socrates = stored.sources.find(s => s.name === "socrates");
       return {
         snapshotId: stored.snapshotId, takenAt: gp?.fetchedAt ?? socrates?.fetchedAt ?? null,
-        ommUrl: null, gpUrl: gp?.url ?? null, sources: stored.sources,
+        ommUrl: stored.ommUrl ?? null, gpUrl: gp?.url ?? null, sources: stored.sources,
       };
     }
     return null;
