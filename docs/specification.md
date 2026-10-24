@@ -2,7 +2,9 @@
 
 The contract between the Next.js frontend and the Convex backend: data shapes, enums, functions, permissions, live updates, errors and the live-call join flow. Behavior comes from [functionality.md](functionality.md); IDs in brackets (for example `[ROOM-7]`) point there. Written Oct 24, 2026, from the locked docs (commit 49f930e).
 
-This document does not repeat behavior. If this spec and functionality.md disagree, functionality.md wins and this spec gets fixed.
+Updated Oct 24, 2026 (UI reconcile on `adil`): approvals use approve / veto / counter (not tick-only); dual orbit ingest (OMM preferred, GP/TLE until cutover); frontend Dev Switch + synthetic scenarios coexist with `demo.launchSatellite`; agent span / trace streaming is specified in Appendix C for the Agents panel.
+
+This document does not repeat behavior. If this spec and functionality.md disagree, functionality.md wins and this spec gets fixed — except where this reconcile note explicitly overrides the approval UX for the current UI.
 
 ---
 
@@ -41,7 +43,7 @@ type Side = "A" | "B";
 | `operator` | Everything in section 3, limited to events where their company is a party, plus their own company's policy and settings |
 | `head_of_ops` | `users.me`, `events.myQueue`, `log.list`, `reports.*` for their own company; read-only |
 
-A **party company** of an event owns `objectA` or `objectB`. Room actions (select, tick, veto, message, call) require the caller to be an `operator` of a party company; otherwise `FORBIDDEN`.
+A **party company** of an event owns `objectA` or `objectB`. Room actions (select, approve, veto, counter, message, call) require the caller to be an `operator` of a party company; otherwise `FORBIDDEN`.
 
 **Privacy rules every function keeps** [POL-2, M2, LOG-1]:
 1. No query returns another company's policy values. Only `policies.getMine` returns policy values, and only the caller's own.
@@ -197,12 +199,19 @@ interface ProposalCard {
   isSelected: boolean;
 }
 
+interface CounterPayload {
+  message: string;                  // required free-text constraint / preference
+  preferredAction?: "raise" | "lower" | "wait";
+  preferredMover?: Side | "none";
+}
+
 interface SideApproval {
-  status: "none" | "ticked" | "vetoed";
+  status: "pending" | "approved" | "vetoed" | "countered";
   byName: string | null;
   at: ISODate | null;
   proposalId: Id<"proposals"> | null;
   revision: number | null;
+  counter?: CounterPayload | null;  // set when status is "countered"
 }
 
 interface Understood {              // facts, constraints, preferences the agents took from the discussion [ROOM-12]
@@ -227,7 +236,8 @@ interface RoomState {
   understood: Understood[];
   callActive: boolean;
   canAct: boolean;                  // caller is an operator of a party company
-  omm: Record<Side, object>;        // OMM records of both objects, for drawing orbits [ROOM-4]
+  omm: Record<Side, object> | null; // OMM records when available; null during GP/TLE dual-ingest fallback
+  elements?: Record<Side, object> | null; // GP/TLE-compatible elements for the globe until OMM cutover
 }
 ```
 
@@ -313,7 +323,7 @@ interface Verification {            // [VER-1..VER-4, §20 Q11]
 
 type LogAction =
   | "event_created" | "status_changed" | "message" | "negotiation"
-  | "proposal_revised" | "selected" | "ticked" | "unticked" | "vetoed"
+  | "proposal_revised" | "selected" | "approved" | "vetoed" | "countered"
   | "approvals_reset" | "rescreened" | "refused" | "schedule_committed"
   | "schedule_failed" | "verified" | "policy_changed" | "no_action_needed"
   | "agents_rerun" | "summary_posted";
@@ -425,7 +435,7 @@ Each entry: kind · arguments → result · who · errors beyond `UNAUTHENTICATE
 |---|---|---|---|
 | `events.myQueue` | query | `{}` → `EventRow[]` | Events where the caller's company is a party [Q-5]. Order: red, then yellow, then the rest with Pc (Pc descending, then TCA ascending), then "Pc unavailable — review" (TCA, then miss). Within a color, events flagged `emergencyReportable` or listed in both SOCRATES and a CDM come first [Q-1, SCR-5, §20 Q12] |
 | `events.catalogPairs` | query | `{ limit?: number }` (default 50) → `EventRow[]` | Real pairs from the snapshot for context; read-only, `mySide: null`, no room [DATA-5] |
-| `catalog.snapshot` | query | `{}` → `{ snapshotId, takenAt, ommUrl, sources: SourceRef[] }` | The frontend downloads the OMM JSON once from `ommUrl` and draws the globe with `satellite.js`. `takenAt` drives the "snapshot from …" banner |
+| `catalog.snapshot` | query | `{}` → `{ snapshotId, takenAt, ommUrl: string \| null, gpUrl: string \| null, sources: SourceRef[] }` | Dual ingest: prefer `ommUrl` when present; otherwise use `gpUrl` (CelesTrak GP/TLE) for the globe via `satellite.js` until OMM cutover. `takenAt` drives the "snapshot from …" banner |
 | `validation.latest` | query | `{}` → `ValidationSummary \| null` | Measured numbers only; nothing hard-coded [SCR-8] |
 | `data.refresh` | action | `{}` → `{ started: boolean, nextAllowedAt: ISODate }` | `RATE_LIMITED` inside source limits [DATA-3, DATA-4] |
 | `demo.launchDefaults` | query | `{}` → `{ name, ownerName, ownerCountry, targetObjectId, tcaUtc, scenarioPc }` | Prefilled, rehearsed values [DATA-7] |
@@ -450,13 +460,13 @@ Each entry: kind · arguments → result · who · errors beyond `UNAUTHENTICATE
 | `proposals.list` | query | `{ eventId }` → `ProposalCard[]` | Latest revision of each candidate [ROOM-5] |
 | `proposals.revisions` | query | `{ proposalId }` → `Revision[]` | History, oldest first |
 | `rooms.select` | mutation | `{ eventId, proposalId, revision }` → `null` | Selects for joint review; resets both approvals [ROOM-11]. `INVALID_STATE`, `STALE_REVISION` |
-| `approvals.tick` | mutation | `{ eventId, proposalId, revision }` → `{ bothTicked: boolean }` | The only way to approve [ROOM-7]. Rules in section 4.1 |
-| `approvals.untick` | mutation | `{ eventId, proposalId, revision }` → `null` | Allowed until both are ticked; `ALREADY_DECIDED` after |
+| `approvals.approve` | mutation | `{ eventId, proposalId, revision }` → `{ bothApproved: boolean }` | Approve the selected revision [ROOM-7]. Rules in section 4.1 |
 | `approvals.veto` | mutation | `{ eventId, proposalId, revision, reason?: string }` → `null` | Resets both, agents revise [§20 Q16] |
+| `approvals.counter` | mutation | `{ eventId, proposalId, revision, counter: CounterPayload }` → `null` | Records a counter; resets both sides; agents revise with the counter as a constraint |
 | `messages.list` | query | `{ eventId, before?: ISODate, limit?: number }` (default 100) → `Message[]` | Oldest first within the page; text in the viewer's language |
 | `messages.send` | mutation | `{ eventId, text }` → `{ messageId }` | Up to 2,000 characters. Returns at once; translation and agent reactions arrive through `messages.list` [LANG-4, AGT-11] |
 | `summary.request` | mutation | `{ eventId }` → `null` | Asks the Coordination Host for the summary form now [ROOM-13] |
-| `summary.edit` | mutation | `{ eventId, proposalId, baseRevision, changes: Partial<Pick<SummaryForm, "movingSide" \| "burnTimeUtc" \| "deltaVMs" \| "direction" \| "note">> }` → `{ accepted: true }` | The backend recomputes the numbers and publishes a new revision; both checkmarks reset. `STALE_REVISION` if `baseRevision` is old |
+| `summary.edit` | mutation | `{ eventId, proposalId, baseRevision, changes: Partial<Pick<SummaryForm, "movingSide" \| "burnTimeUtc" \| "deltaVMs" \| "direction" \| "note">> }` → `{ accepted: true }` | The backend recomputes the numbers and publishes a new revision; both approvals reset to `pending`. `STALE_REVISION` if `baseRevision` is old |
 | `agents.rerun` | mutation | `{ eventId }` → `null` | Retries a stuck agent step; cannot duplicate a schedule entry or revive approvals [AGT-9] |
 | `call.join` | action | `{ eventId }` → `{ serverUrl, token, roomName, identity, language }` | `operator` of a party company; `FEATURE_DISABLED` unless `voice`. Section 5 |
 | `maneuvers.get` | query | `{ eventId }` → `Maneuver \| null` | Diff before approval, re-screen and commit after [ROOM-8, ROOM-9] |
@@ -487,26 +497,30 @@ Each entry: kind · arguments → result · who · errors beyond `UNAUTHENTICATE
 
 ### 4.1 Approvals [M1, ROOM-2, ROOM-7, ROOM-11, EXE-1]
 
-`approvals.tick` runs in one Convex transaction and checks, in order:
+UI contract (reconcile): each side uses **Approve / Veto / Counter**. Speech and casual acknowledgements never approve.
+
+`approvals.approve` runs in one Convex transaction and checks, in order:
 
 1. The caller is an `operator` of a party company → else `FORBIDDEN`.
 2. The event status is `proposal` or `communication` → else `INVALID_STATE`.
 3. `(proposalId, revision)` is the room's current selection → else `NOT_SELECTED`.
 4. `revision` is the latest revision of that proposal → else `STALE_REVISION`.
-5. It stores the caller's side as ticked. If the other side has a valid tick on the same `(proposalId, revision)`, the event moves to `approved` and the result is `{ bothTicked: true }`.
+5. It stores the caller's side as `approved`. If the other side has a valid `approved` on the same `(proposalId, revision)`, the event moves to `approved` and the result is `{ bothApproved: true }`.
 
-After both ticks the Maneuver Scheduler runs in the background:
-- It checks again that both ticks are still valid and the revision is still the latest.
+`approvals.veto` and `approvals.counter` also require steps 1–4. Veto sets the caller's status to `vetoed`. Counter sets `countered` and stores `CounterPayload`. Both reset the other side to `pending`, return the event to `agents`, and attach the reason / counter as negotiation context.
+
+After both approvals the Maneuver Scheduler runs in the background:
+- It checks again that both approvals are still valid and the revision is still the latest.
 - A **wait** candidate moves the event to `monitoring`, with no maneuver.
-- A **maneuver** is re-screened by the orbital service. On refusal: maneuver `refused`, both ticks reset with the reason, event back to `agents` [EXE-3]. On pass: Droid commits the prepared diff; maneuver `committed`, event `scheduled`. A failed write leaves the maneuver `failed` with `error`, and a retry never creates a second entry.
+- A **maneuver** is re-screened by the orbital service. On refusal: maneuver `refused`, both approvals reset to `pending` with the reason, event back to `agents` [EXE-3]. On pass: Droid commits the prepared diff; maneuver `committed`, event `scheduled`. A failed write leaves the maneuver `failed` with `error`, and a retry never creates a second entry.
 
-**Resets.** These invalidate both ticks and post a system message such as "P2 · R2 created — both approvals reset":
+**Resets.** These invalidate both sides to `pending` and post a system message such as "P2 · R2 created — both approvals reset":
 - a new selection;
 - a new revision of the selected proposal (an agent revision or `summary.edit`);
-- a veto;
+- a veto or counter;
 - a material change in policy inputs or orbital evidence.
 
-Unrelated messages never reset ticks. Old ticks stay in the log and never come back, even when the selection switches back.
+Unrelated messages never reset approvals. Old approvals stay in the log and never come back, even when the selection switches back.
 
 ### 4.2 Translation and agents
 
@@ -525,11 +539,13 @@ Unrelated messages never reset ticks. Old ticks stay in the log and never come b
 - One simulated satellite per demo run; `demo.reset` closes the run.
 - Simulated records are excluded from `validation.latest` and from `reports.*`.
 - The simulated event's `pc.source` is `"simulated"`, and its objects have no `celestrakUrl`.
+- **Frontend Dev Switch** (see Appendix C): the UI may also run local synthetic scenarios against the live catalog for polish and demos without Convex. Shapes match this contract; flipping Dev off switches to Convex queries. `demo.launchSatellite` remains the production Convex demo path and can coexist.
 
 ### 4.5 Limits
 
-- The catalog is not stored as Convex documents. The globe reads the OMM file from `catalog.snapshot.ommUrl`, and the backend asks the orbital service for screening results.
+- The catalog is not stored as Convex documents. Dual ingest: the globe prefers OMM from `catalog.snapshot.ommUrl` when present; otherwise it uses GP/TLE from `gpUrl` (or the existing CelesTrak client path) until the OMM snapshot is ready. Screening still runs in the orbital service. Target end state is OMM-only [DATA-6].
 - Queries read indexed tables only (Convex scans at most 32,000 documents per transaction). Lists are paged where noted.
+- Risk charts use historical observations only — no forecast model [SCR-6 retired, ROOM-10].
 
 ---
 
@@ -549,7 +565,7 @@ The room's chat is always there; the call is optional, like a Discord channel.
    - the `host:<myLang>` track;
    - the raw microphone of a speaker only when they speak the viewer's language.
 5. Captions are not read from LiveKit. The worker writes each phrase to Convex as a `voice` message with the original and translations, and the client shows it through `messages.list` [LANG-5].
-6. When the last participant leaves the call, the Coordination Host posts the summary form (`kind: "summary"`) and both operators get a notification [ROOM-13]. Approval is still only `approvals.tick`; speech never approves.
+6. When the last participant leaves the call, the Coordination Host posts the summary form (`kind: "summary"`) and both operators get a notification [ROOM-13]. Approval is still only `approvals.approve` (or veto / counter); speech never approves.
 
 Track names belong to the worker's implementation (Kostya). If they change, this section changes with them.
 
@@ -565,9 +581,9 @@ All errors are `ConvexError` with `data: { code, message }`. The frontend switch
 | `FORBIDDEN` | Wrong role or not a party company | "You are not part of this incident" |
 | `NOT_FOUND` | Unknown ID | Back to the queue |
 | `INVALID_STATE` | Action not allowed in the current status | Refresh the room; the queries already show the new state |
-| `NOT_SELECTED` | Ticking a candidate that is not selected | Ask to select it first |
-| `STALE_REVISION` | Ticking or editing an older revision | Show the newer revision |
-| `ALREADY_DECIDED` | Unticking after both ticked | Disable the control |
+| `NOT_SELECTED` | Approving / vetoing / countering a candidate that is not selected | Ask to select it first |
+| `STALE_REVISION` | Approving or editing an older revision | Show the newer revision |
+| `ALREADY_DECIDED` | Changing an approval after both sides approved and scheduling started | Disable the control |
 | `FEATURE_DISABLED` | Flag off | Hide the control |
 | `RATE_LIMITED` | Data refresh too early | Show `nextAllowedAt` |
 | `VALIDATION` | Bad arguments | Show the field message |
@@ -595,3 +611,76 @@ Only Convex calls these; the frontend never does. Base URL `ORBIT_SERVICE_URL`; 
 - Internal designs: agent prompts and the messages agents send each other, the translation worker's pipeline, and the Droid configuration.
 - The demo script, which is still to be discussed (plan section 7).
 - The local-backend fallback [SYNC-3] has no separate contract: a self-hosted Convex backend serves the same functions to the same frontend.
+
+## Appendix C. Agent observability + frontend Dev Switch (UI reconcile)
+
+Powers the Agents panel (graph, step traces, latency, tokens, cost). Backend should stream these as Convex documents; the Dev Switch simulator emits the same shapes locally.
+
+### C.1 Dev Switch
+
+| Mode | Data |
+|---|---|
+| `dev: false` | Convex queries / mutations in this document |
+| `dev: true` | Local synthetic scenarios over the live catalog (`web/src/lib/ops/*`) |
+
+Same UI components in both modes. Dev mode is for polishing the ops board, conjunction overlays, and agent animations before Convex is complete. It does not replace Auth0 in production mode.
+
+### C.2 Span stream
+
+```ts
+type AgentId =
+  | "monitor" | "analyst" | "advocateA" | "advocateB"
+  | "host" | "checker" | "scheduler" | "verifier";
+
+type ToolId =
+  | "sgp4" | "celestrak" | "socrates" | "spacetrack"
+  | "keeptrack" | "policy" | "convex" | "room" | "schedule";
+
+type NodeId = AgentId | ToolId | "humanA" | "humanB";
+
+type SpanKind = "llm" | "tool" | "http" | "handoff" | "human" | "check";
+type SpanStatus = "running" | "ok" | "error" | "waiting";
+
+interface Span {
+  id: string;
+  parent: string | null;
+  eventId: Id<"events"> | string | null;
+  agent: AgentId;
+  target: NodeId;
+  kind: SpanKind;
+  name: string;
+  status: SpanStatus;
+  t0: number;                       // wall-clock start, ms epoch
+  ms?: number;                      // duration once finished
+  t1?: number;                      // wall-clock end (animations at any speed)
+  progress: number;                 // 0..1 while running
+  model?: string;
+  tokensIn?: number;
+  tokensOut?: number;
+  cacheRead?: number;
+  costUsd?: number | null;          // null → UI shows "—"
+  reasoning?: string;
+  input?: unknown;
+  output?: unknown;
+  http?: { method: string; url: string; status?: number; bytes?: number };
+  error?: string;
+}
+
+interface AgentLogLine {
+  id: string;
+  t: number;
+  level: "debug" | "info" | "warn" | "error";
+  source: AgentId | "system" | "humanA" | "humanB";
+  msg: string;
+  spanId?: string;
+  eventId?: Id<"events"> | string;
+}
+```
+
+| Function | Kind | Arguments → result | Notes |
+|---|---|---|---|
+| `spans.list` | query | `{ eventId?: Id<"events">, limit?: number }` → `Span[]` | Active + recent; updates live while agents run |
+| `agentLogs.list` | query | `{ eventId?: Id<"events">, limit?: number }` → `AgentLogLine[]` | Agents panel log tab; complements `log.list` audit entries |
+| `scan.last` | query | `{}` → `{ at: ISODate, objects: number, pairs: number, flagged: number, ms: number } \| null` | Last Risk Monitor sweep (globe radar / Agents header) |
+
+Map `AgentRole` (section 2.1) to `AgentId` in the adapter: `risk_monitor→monitor`, `incident_analyst→analyst`, `operator_advocate`→`advocateA`/`advocateB` by side, `coordination_host→host`, `second_model→checker`, `maneuver_scheduler→scheduler`, `maneuver_verifier→verifier`.
