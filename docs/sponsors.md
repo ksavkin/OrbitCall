@@ -6,9 +6,9 @@ Primary targets: Convex and SpaceXAI. All selected sponsors must contribute real
 
 ## 1. Locked runtime sponsors
 
-| Sponsor | Locked role | Code status at baseline 0ed8496 | What to demonstrate |
+| Sponsor | Locked role | Code status through baseline ec5ea34 | What to demonstrate |
 |---|---|---|---|
-| Convex | Application database, authorization, reactive queries, mutations, actions, scheduling, audit, search, artifact references | Phase 1 catalog/Analyst backend and frontend bridge in main. Private fleet/room/approval work remains | One decision updates four screens, current approvals are enforced, and real jobs/search work |
+| Convex | Application database, authorization, reactive queries, mutations, actions, scheduling, audit, search, artifact references | Phase 1 catalog/Analyst backend, OMM snapshot URL and frontend bridge in main. Private fleet/room/approval work remains | One decision updates four screens, current approvals are enforced, and real jobs/search work |
 | SpaceXAI | Grok STT for EN/RU/ZH, Grok TTS for Russian, independent Grok rationale check. Actual Cursor use during development | Locked target. Audio implementation described in older branch notes is not present on baseline main | A real Grok audio call, checked transcript, Russian speech, and an accurate account of Cursor use |
 | Anthropic | Claude Incident Analyst, private Operator Advocates, and translation | Checked Analyst runtime in main. Other roles remain to build | Checked explanations and a proposal revision driven by operator discussion |
 | Google Gemini (MLH) | Coordination Host through the Gemini API and official `@google/genai` SDK in a Convex Node action | Locked target, not implemented on baseline main | A real host call, relevant clarification, and checked per-event summary in the shared room, with model/provider trace |

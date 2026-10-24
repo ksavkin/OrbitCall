@@ -8,6 +8,7 @@ Updated October 24, 2026. Start with [the locked master roadmap](master-roadmap.
 - `kostya/phase1-plan` through `185041e`, including the already-merged `andrew-phase1-analyst` implementation.
 - Root Convex package, normalized Phase 1 schema, snapshot loader and catalog queries, Risk Monitor, checked Incident Analyst, mocked-model tests and backend CI.
 - Frontend Convex provider, snapshot/queue integration and error boundaries, preserved alongside the development simulator.
+- OMM snapshot work through `ec5ea34`: pinned GP/SATCAT inputs, static web index/files, nullable/string `ommUrl`, direct OMM loading/propagation, and SOCRATES queue rows restricted to objects in that catalog.
 
 `main` and `adil` are synchronized through this integration. The shared [UI design system](adil/design-system.md) is included in Git alongside the product decisions. Historical feature-branch tips remain intact. New work can use feature branches; synchronize through reviewed merges. Shared Git content does not mean the team's cloud deployment, credentials or local environments have been configured.
 
@@ -37,7 +38,9 @@ The [assigned-fleet user flow](user-flow.md) is the starting point. The [specifi
 
 **Dev on:** retain the existing CelesTrak TLE catalog and synthetic event/agent scenarios for UI development and demos. Real catalog elements and synthetic encounter evidence must be distinguished.
 
-**Dev off:** the real mode requires OMM from the backend. It never calls the development `/api/catalog` TLE loader or silently substitutes local synthetic incidents. An explicitly selected backend demo run may process labeled simulated encounters through the real backend, as defined in the master roadmap. Current Phase 1 `catalog.snapshot` returns `ommUrl: null`, so the UI shows "waiting for OMM". The real OMM loader/worker/renderer integration is still pending. A non-null URL alone must not be presented as completed rendering. Current code reports that integration state explicitly.
+**Dev off:** Convex names the pinned OMM catalog index through `catalog.snapshot.ommUrl`. The browser loads the index and group files from `web/public/snapshots/`, checks their hashes in a secure context, and propagates OMM directly through the shared worker. Missing or invalid OMM keeps a waiting/error state. Real mode never calls the development `/api/catalog` TLE loader or silently substitutes local synthetic incidents. The loader and renderer are merged. The target backend demo run may separately process explicitly labeled simulated encounters through the real services.
+
+Current queue geometry is supplied by SOCRATES. Restricting those rows to catalog object IDs does not re-screen them numerically against the newer GP elements. Assigned-fleet scanning remains a separate implementation task. See [data preparation](../data/README.md) for the pinned sources, publication scripts and static catalog path.
 
 Both modes live in both Git branches. `main` is a branch, not a runtime switch. CelesTrak remains the source in either format. OMM supports larger catalog IDs and structured exchange, but changing serialization alone does not guarantee better orbit accuracy. See [CelesTrak's format documentation](https://celestrak.org/NORAD/documentation/gp-data-formats.php).
 
@@ -47,7 +50,7 @@ Both modes live in both Git branches. `main` is a branch, not a runtime switch. 
 |---|---|
 | Normalized snapshots, spaceObjects, events and agentRuns | Users, fleet assignments and assignment-authorized subscriptions |
 | Pinned SOCRATES snapshot and catalog-pair ingestion | Assigned-fleet-versus-catalog scan jobs and coverage/progress |
-| Catalog snapshot/pairs and checked Analyst summary queries | Real OMM ingest, catalog payload, frontend parser and propagation worker |
+| Pinned OMM inputs, web catalog index/files, Convex URL, frontend loader and OMM worker propagation | Shared-deployment validation and numerical screening of assigned fleets against the same pinned inputs |
 | Public catalog inspection, current coloring and Analyst runtime | Fleet-scoped personal queues, selected severity/time ordering and review sections |
 | Frontend Dev switch, simulator, Convex bridge and error boundaries | Authenticated rooms, candidate revisions, selection generation, approvals and unilateral debris |
 | Mocked-model tests and backend CI | Shared-deployment/live-provider smoke test, scheduling, verification and reports |
@@ -57,8 +60,8 @@ The Phase 1 public catalog queries are not the private assigned-fleet applicatio
 
 ## Integration order
 
-1. Backend: publish a versioned OMM snapshot with full object IDs, epochs, source metadata and a retrievable payload. Update `catalog.snapshot`, whose current validator explicitly permits only null `ommUrl`.
-2. Frontend: implement and validate the agreed OMM payload parser and worker propagation without converting OMM back into legacy TLE. Use stable object IDs and the same snapshot as screening. Until this works, keep the explicit real-mode pending state.
+1. Deploy the merged OMM snapshot contract and load its manifest into the shared Convex deployment. The validator now permits a string URL. Publish the matching static assets in the same Vercel release.
+2. Validate real-mode loading and direct OMM propagation against that deployed index. Keep missing/error states explicit. Implement the numerical screening service separately, with pinned inputs and reported coverage. Do not present the current SOCRATES queue as that service's calculated output.
 3. Implement assignments and `users.me` / `fleet.listMine`, then `scans.startMine` / `scans.getMine`, `events.myQueue` and `events.orbits`. The new signatures are target APIs, not currently deployed functions.
 4. Implement shared candidate selection and workflow-specific current approvals, with privacy, re-screening and idempotent scheduling. Keep simulator states distinct from live evidence.
 5. Implement the Gemini Coordination Host against checked shared context. Configure its server-only key and pinned model, validate referenced facts, and demonstrate a live clarification/summary. Keep Claude's analysis/advocate/translation work and Grok's independent check distinct in the trace.
@@ -71,4 +74,6 @@ Root backend: `npm ci`, then `npm run check`. Frontend: `cd web`, `npm ci`, `npx
 
 Frontend backend access requires `NEXT_PUBLIC_CONVEX_URL`. Live Analyst execution requires the model/provider settings in the Phase 1 guide. Repository synchronization does not deploy Convex or supply credentials. No live model call or cloud deployment is claimed by local tests.
 
-Validation for this reconciliation: backend TypeScript and 58 tests passed; frontend TypeScript, ESLint and production build passed. Browser smoke test: real mode made no TLE request; Dev on loaded 18,588 cached catalog objects; switching Dev off cleared the catalog and returned to the explicit OMM waiting state without another TLE request. Build warnings remain for multiple lockfiles and weather-cache filesystem tracing. Live Convex/provider configuration was not tested.
+Historical validation at `0ed8496`: backend TypeScript and 58 tests passed, plus frontend TypeScript, ESLint and production build. That browser smoke test verified the earlier waiting state and TLE mode switch. It did not validate the newly merged OMM loader. Current OMM/shared-deployment and provider checks must be recorded separately.
+
+Validation after merging `ec5ea34`: backend TypeScript and all 59 tests passed. Frontend TypeScript, ESLint and production build passed. All six published OMM group files match their pinned hashes and source copies, covering 19,468 unique object IDs across those files. Existing build warnings remain for multiple lockfiles and weather-cache filesystem tracing. This run did not validate a live shared deployment or call the agent/voice providers.

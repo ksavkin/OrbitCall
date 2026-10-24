@@ -1,5 +1,7 @@
 # Data
 
+Product scope and stack follow the [master roadmap](../docs/master-roadmap.md), the team's source of truth. This file documents the pinned inputs and their current delivery path. OMM loading does not implement the planned fleet-screening service or recompute supplied SOCRATES geometry.
+
 Where the repository keeps external data, and the rules for adding more. Real mode (Dev off) uses only what is pinned
 here; Dev mode keeps its own TLE copy in `web/` ([integration status](../docs/integration-status.md), "Data modes").
 
@@ -34,7 +36,7 @@ here; Dev mode keeps its own TLE copy in `web/` ([integration status](../docs/in
 
 - **The browser gets OMM from a copy under `web/public/`** (Vercel's CDN; Convex file storage would cost egress on
   the free plan). `scripts/build_omm_catalog.py` writes it; git stores the byte-identical group files once. The web
-  app checks each file against its pinned sha256. Pending Adil's OK.
+  app checks each file against its pinned sha256 in a secure context. This code is merged. Shared-deployment validation remains a separate check.
 - `build_catalog_pairs.py` keeps only pairs whose objects are both in the `gp-*` OMM snapshot, and writes its
   `catalog.json` path into `catalog-pairs.json` (`omm.url`), which `load_snapshot.mjs` registers as `ommUrl`.
 - The globe and the queue are not one screening: SOCRATES ran on CelesTrak's own elements at its run time, while

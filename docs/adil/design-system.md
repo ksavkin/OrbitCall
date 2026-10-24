@@ -140,7 +140,7 @@ Bottom left: view switcher. Bottom right: map controls. Overlays (expanded agent
 ## 9. Dev mode
 
 - The `Dev` switch in the navbar (shortcut `D`) turns on the simulator in `web/src/lib/ops/engine.ts`. It uses the simulator view model in `web/src/lib/ops/types.ts`. The backend contract differs and requires an explicit adapter; see `docs/specification.md`. Dev on retains the current TLE catalog and synthetic scenarios.
-- Dev off is real mode and requires backend OMM. With no OMM snapshot, show an explicit waiting/error state and no TLE or synthetic fallback. The OMM loader/renderer is still pending. A configured Convex connection does not itself mean real orbit rendering is ready. Both modes live in `main` and `adil`.
+- Dev off is real mode and loads the pinned OMM index named by Convex. The loader and direct OMM worker propagation are implemented. With no valid snapshot, show the explicit waiting/error state and no TLE or synthetic fallback. A configured connection alone does not prove successful loading. Both modes live in `main` and `adil`.
 - Private policy values and internal model context never appear in shared traces or explanations. Any prototype traces containing synthetic private values are simulator-only and must not be copied into live payloads.
 - Synthetic objects are built around real catalog satellites so the geometry on the globe is true (`web/src/lib/ops/encounter.ts`). Their names end in `(SYN)`.
 - Agent cost uses Anthropic list prices. Grok cost shows `—` until prices are confirmed.

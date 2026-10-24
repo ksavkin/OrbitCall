@@ -13,7 +13,7 @@ Start with [the locked master roadmap](docs/master-roadmap.md), the team's sourc
 
 ## Current integration and modes
 
-See [the integration handoff](docs/integration-status.md) for what is implemented and what is still planned. **Dev on** uses the current TLE catalog and synthetic scenarios. **Dev off** requires backend OMM and shows an explicit pending state until the pipeline is ready. CelesTrak remains the source; switching formats does not itself guarantee more accurate orbits.
+See [the integration handoff](docs/integration-status.md) for what is implemented and what is still planned. **Dev on** uses the current TLE catalog and synthetic scenarios. **Dev off** loads the pinned OMM catalog named by Convex and propagates OMM directly. Missing or invalid inputs keep a waiting/error state with no TLE fallback. CelesTrak remains the source. Switching formats does not itself guarantee more accurate orbits. [Data preparation](data/README.md) explains the committed inputs and static web delivery.
 
 ## Development
 
@@ -80,7 +80,7 @@ Principles:
 | Orbital mechanics | A separate Python service (`python-sgp4`, Python 3.12): catalog screening, re-screen, verification, validation and the simulated satellite's orbit. It keeps the catalog snapshot; Convex calls it and stores the results. `satellite.js` only draws orbits in the browser |
 | Reasoning agents, translation | Claude Sonnet for analysis, private advocates and translation. Gemini Flash runs the Coordination Host. Grok independently checks shared rationale. Risk Monitor uses deterministic backend jobs and Python screening |
 | Agent runtime | Convex actions call the provider assigned to each role with explicit instructions and scoped data. Gemini uses `@google/genai` in a Node action. Convex stores checked outputs and job state. No general agent framework. Fetch.ai remains dropped |
-| Orbit data format | Real mode: OMM (JSON / CSV), integration pending. Dev/demo: current TLE catalog and synthetic scenarios. No real-mode fallback to TLE |
+| Orbit data format | Real mode: pinned OMM JSON, Convex catalog URL, static Vercel assets and direct OMM propagation are implemented. Assigned-fleet numerical screening remains planned. Dev uses TLE and synthetic scenarios. No real-mode fallback to TLE |
 | Voice | LiveKit Cloud call plus persistent text. Python worker: Grok STT (`grok-voice-transcribe-2.0`) → protect values → Claude translation → restore/check → Cartesia EN/ZH or Grok RU TTS. Three languages, one shared room, pair-specific approvals |
 | Model and voice configuration | Use the pinned identifiers in the master roadmap, including `gemini-3.8-flash` for the host. Test EN/RU/ZH speech and number integrity before rehearsal. Gemini host text uses the same checked translation and listener-language TTS routing |
 | Sign-in | Pre-created test users only, one per operator; no registration. Login through Auth0 with sign-ups disabled; Convex verifies the identity on every read, write and subscription |

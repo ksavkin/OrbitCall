@@ -12,7 +12,7 @@ The accepted decisions in the master roadmap, user-flow.md, and functionality.md
 
 ## Implementation boundary after branch reconciliation
 
-The merged Phase 1 backend implements catalog ingestion, catalog snapshot/pairs, Risk Monitor coloring and the checked Incident Analyst. Fleet assignments, fleet-scoped scans, authenticated rooms, candidate approvals and unilateral debris are accepted targets, not completed Phase 1 features. The public catalog queries in Phase 1 are an explicit temporary scope exception to section 1 and do not authorize private data or scheduling. See [integration status](integration-status.md) for the handoff and [Phase 1 guide](phase1-andrew.md) for current callable functions.
+The merged Phase 1 backend implements catalog ingestion, catalog snapshot/pairs, Risk Monitor coloring and the checked Incident Analyst. The `ec5ea34` OMM merge adds pinned web assets, a nullable/string `catalog.snapshot.ommUrl`, frontend loading and direct OMM worker propagation. SOCRATES rows are filtered by catalog membership, with their supplied encounter geometry retained. Fleet assignments, numerical fleet-scoped scans, authenticated rooms, candidate approvals and unilateral debris remain targets. The public catalog queries are an explicit temporary scope exception to section 1 and do not authorize private data or scheduling. See [integration status](integration-status.md) for the handoff, [data layout](../data/README.md) for OMM delivery, and the [Phase 1 guide](phase1-andrew.md) for the original callable functions.
 
 ## 0. Conventions
 
@@ -625,11 +625,11 @@ Unrelated messages never reset approvals. Old approvals stay in the log and neve
 - The linked demo may use two flagged simulated US objects, one per pair incident, within the four-object assigned fleet. This supersedes the old one-simulated-object restriction. `demo.reset` closes the run.
 - Simulated records are excluded from `validation.latest` and from `reports.*`.
 - The simulated event's `pc.source` is `"simulated"`. Only the synthetic object has no `celestrakUrl`; its real counterpart retains its real source link. Launch explicitly assigns the synthetic object to the caller, updates assignmentVersion and invalidates old scan coverage. Its OMM is included in a versioned demo-run overlay of the pinned catalog. Reset deactivates that overlay and assignment and advances assignmentVersion.
-- **Frontend Dev Switch** (see Appendix C): the UI may also run local synthetic scenarios against the live catalog for polish and demos without Convex. The target adapter maps simulator view models to this contract. Dev on uses the TLE catalog and synthetic scenarios. Dev off subscribes to the Convex snapshot and waits visibly for OMM. Phase 1 currently returns `ommUrl: null`; the OMM loader/renderer remains to be implemented, with an explicit integration-pending state even if a URL becomes available. `demo.launchSatellite` remains the production Convex demo path and can coexist.
+- **Frontend Dev Switch** (see Appendix C): the UI may run local synthetic scenarios for polish without Convex. The target adapter maps simulator view models to this contract. Dev on uses TLE and synthetic scenarios. Dev off subscribes to the Convex snapshot, loads the pinned OMM index and group files, and propagates those records directly. Missing or invalid OMM stays visibly pending/error. `demo.launchSatellite` is the separate backend demo target and does not authorize a silent local-simulator fallback.
 
 ### 4.5 Limits
 
-- The full orbital catalog is not stored as per-object live Convex updates. Real mode requires OMM from `catalog.snapshot.ommUrl`; unavailable/invalid OMM stays explicitly pending/error with no TLE or simulator fallback. `/api/catalog` and the TLE worker path are dev-only. OMM loading/rendering is still pending integration. Screening runs in the orbital service [DATA-6].
+- The full orbital catalog is not stored as per-object live Convex updates. Real mode requires OMM from `catalog.snapshot.ommUrl`. Unavailable/invalid OMM stays explicitly pending/error with no TLE or simulator fallback. `/api/catalog` and the TLE element path are dev-only. The shared worker now accepts either format and uses OMM directly in real mode. The numerical fleet-screening service remains to build [DATA-6].
 - Queries read indexed tables only (Convex scans at most 32,000 documents per transaction). Lists are paged where noted.
 - Risk charts use historical observations only — no forecast model [SCR-6 retired, ROOM-10].
 

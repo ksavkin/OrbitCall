@@ -17,7 +17,7 @@ Agent traces must identify the actual provider/model for each call, including th
 
 ## Merged backend and mode boundary
 
-Phase 1 Convex catalog/snapshot/Analyst integration is now included alongside the latest simulator. Dev on keeps TLE plus synthetic scenarios. Dev off waits for backend OMM and never loads `/api/catalog` or substitutes a synthetic event. Phase 1 returns `ommUrl: null`; the real OMM loader and renderer are still pending. The full assigned-fleet flow below remains a target, not completed backend functionality. See [integration status](../integration-status.md).
+Phase 1 Convex catalog/snapshot/Analyst integration is included alongside the simulator. The `ec5ea34` merge adds pinned OMM assets, a Convex catalog URL, the loader and direct OMM propagation in Dev off. Dev on keeps TLE plus synthetic scenarios. Missing OMM stays pending/error and never loads `/api/catalog` or substitutes a synthetic event. Shared-deployment validation and the full assigned-fleet flow remain work to complete. SOCRATES queue geometry is not recomputed by merely loading the OMM catalog. See [integration status](../integration-status.md).
 
 ## Where things stand
 

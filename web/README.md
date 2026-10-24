@@ -12,7 +12,7 @@ npm run dev        # http://localhost:3000
 
 ## Runtime mode decision
 
-Dev on is the TLE catalog and synthetic scenarios. Dev off requires backend OMM. While Phase 1 returns `ommUrl: null`, the real view shows an explicit waiting state with no TLE/simulator fallback. The OMM loader/renderer remains an integration task. Both modes are in `main` and `adil`; Git branch names do not choose data format. See [integration status](../docs/integration-status.md).
+Dev on is the TLE catalog and synthetic scenarios. Dev off loads the pinned OMM index from `catalog.snapshot.ommUrl`, then its static group files, and propagates those OMM records directly. The loader/renderer is merged. Missing or invalid inputs keep the waiting/error state with no TLE/simulator fallback. Shared-deployment validation remains separate from code presence. Both modes are in `main` and `adil`. Git branch names do not choose data format. See [integration status](../docs/integration-status.md) and [data preparation](../data/README.md).
 
 ## What's on screen
 

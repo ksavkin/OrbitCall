@@ -1,6 +1,6 @@
 # OrbitCall master roadmap
 
-Status: locked hackathon plan, version 1.1. Updated October 24, 2026, America/Los_Angeles. Code baseline: `0ed8496`. Version 1.1 assigns the Coordination Host to Gemini.
+Status: locked hackathon plan, version 1.1. Updated October 24, 2026, America/Los_Angeles. Code baseline: `ec5ea34`, including the OMM snapshot merge. Version 1.1 assigns the Coordination Host to Gemini.
 
 This document is the team's source of truth. It defines the finished hackathon demo, phase goals, stack, agent roles, data ownership, service contracts, and deployment plan. It separates implemented code from work still required. Other documents explain or implement this plan and must follow its current decisions.
 
@@ -99,6 +99,8 @@ NASA defines conjunctions between two trajectories and requires mitigation traje
 The base catalog is real public data. Engineered encounters, demo ownership assignments, policies, and schedule actions are labeled simulated. For a reliable three-operator story, the scenario may use two flagged US simulated spacecraft, each against a real catalog counterpart assigned to the RU or CN demo company. Keep four assigned spacecraft per dispatcher. This replaces the earlier one-simulated-object-per-run restriction. Do not force one artificial orbit to meet two arbitrary real trajectories.
 
 The same numerical pipeline must produce the engineered trajectories, screening results, candidate geometry, and rendered orbits. Store the scenario inputs and measured closest approach. A fixture is not a real detected emergency. A supplied demo probability is marked simulated and is not computed from SGP4 geometry.
+
+The current OMM delivery is implemented: pinned files under `data/snapshots/` are copied byte-for-byte into `web/public/snapshots/`, and Convex returns the catalog index URL. The browser loads that index and propagates the OMM records directly. Current queued encounters still come from SOCRATES and are filtered to objects in that catalog. This object-membership filter does not recompute encounter geometry or implement the assigned-fleet screening service. [Data layout and preparation](../data/README.md).
 
 ## 3. Phases: goals only
 
@@ -243,7 +245,7 @@ flowchart TD
     AUTH[Auth0] --> UI
     AUTH --> OBS
     CV <--> ORBIT[DigitalOcean: Python orbital API]
-    ORBIT --> DATA[CelesTrak and permitted reference sources]
+    ORBIT --> DATA[Pinned CelesTrak and permitted reference inputs]
     CV <--> CLAUDE[Claude reasoning agents]
     CV <--> GEMINI[Gemini Coordination Host]
     CV <--> CHECK[Grok rationale check]
@@ -292,7 +294,7 @@ One CPU Droplet is the locked initial host. Use measured memory and screening ru
 ### Dependency rules
 
 - Browser application commands go to Convex. Live audio goes to LiveKit.
-- Large OMM assets may load from a versioned backend-issued file URL. This is asset delivery, not browser access to the numerical API.
+- OMM assets load from the versioned index named by Convex. The current demo serves the committed files from `web/public/snapshots/` through Vercel. This is asset delivery, not browser access to the numerical API.
 - Convex calls the orbital and schedule services using service authentication.
 - Workers publish results through narrow authenticated backend functions or HTTP actions. They do not expose a general client write token.
 - Tiger Data cannot alter approvals. Backboard cannot authorize a maneuver. Factory cannot select one.
@@ -740,6 +742,7 @@ For this two-package repo, deploy the root Convex package in the release workflo
 ### Step 7: Prepare data and the four screens
 
 - Load the pinned OMM snapshot and record its hash, source coverage, and epochs.
+- Use `scripts/build_omm_catalog.py` to publish the byte-identical OMM files and index inside `web/`. `scripts/build_catalog_pairs.py` records that index path, and the snapshot loader registers it as `ommUrl`. Keep both packages on the same release commit. See the data README for the pinned inputs and preparation commands.
 - Seed four assigned spacecraft for each dispatcher, with the intended simulated objects and labels.
 - Seed a closed prior incident or explicitly demonstrate a first interaction, then a second one, for Backboard recall.
 - Load only sourced or explicitly simulated historical observations into Tiger Data. Keep them distinguishable.
@@ -811,19 +814,20 @@ For this two-package repo, deploy the root Convex package in the release workflo
 
 ## 15. Baseline status and team handoff
 
-### What exists at `0ed8496`
+### What exists through `ec5ea34`
 
 - Next.js globe/UI and the TLE development catalog.
 - Local synthetic conjunction/agent scenarios, decision dock, camera, and resolution/alert screens.
 - Root Convex schema for snapshots, objects, events, and Analyst runs.
 - SOCRATES ingestion, catalog queries, current color updates, and checked Analyst runtime.
 - Frontend Convex bridge and error boundaries.
-- Dev-off waiting state with no automatic TLE fallback.
-- Backend tests, frontend checks, and a successful production build from the previous reconciliation.
+- Pinned GP OMM and SATCAT inputs, static web catalog index, Convex `ommUrl`, OMM loader, and direct OMM worker propagation in Dev off. Missing inputs retain the waiting/error state with no TLE fallback.
+- SOCRATES queue rows restricted to objects in the pinned OMM catalog. Their supplied geometry remains a separate source result.
+- Backend TypeScript and 59 tests, frontend TypeScript/lint, and production build pass for the merged baseline. The integration handoff records asset checks and remaining live-deployment validation.
 
 ### What is still to build
 
-- OMM loading and rendering in real mode.
+- Validate OMM delivery on the shared deployment and add the numerical assigned-fleet screening service against those pinned inputs.
 - Auth0 identity and assigned fleets.
 - Fleet screening jobs and private queues.
 - Group rooms, three-language live voice, and notifications.
@@ -873,5 +877,6 @@ The old automatic Auth0 replacement, automatic non-Factory schedule writer and u
 | Date and version | Change | Reason and impact |
 |---|---|---|
 | October 24, 2026, v1.1 | Coordination Host moves from Claude to Gemini. Claude keeps analysis, advocates, and translation. Grok keeps independent checking and audio | User requested three meaningful agent providers and Best Use of Gemini API coverage. Adds the Google SDK, server-only key/model configuration, checked host output, and sponsor evidence. No extra duplicate review agent. Integration owners follow the work areas above. Documentation is aligned. The Gemini runtime and live checks remain to build |
+| October 24, 2026, baseline refresh | Include the OMM snapshot and renderer merged in `ec5ea34` | Update implementation status and the static asset-delivery path. The remaining fleet-screening and shared-deployment work stays explicit |
 
 Future changes need a short record: date, old choice, new choice, reason, affected functions/services, verification, and sponsor impact. Keep `main` and `adil` synchronized when sharing a new agreed baseline. A push does not deploy the cloud services by itself.
