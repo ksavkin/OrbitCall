@@ -1,11 +1,14 @@
 import { ConvexError, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import type { EventFacts } from "./analyst";
+import { AnalystError, inputKey, isRed, validateFacts, type EventFacts } from "./analyst";
+import { supersede } from "./runs";
 import type { objectInput, sourceRef } from "./validators";
 
 type ObjectInput = Infer<typeof objectInput>;
 type Measurements = Pick<Doc<"events">, "tcaMs" | "missKm" | "relSpeedKmS" | "pcValue" | "simulated">;
+
+export type Encounter = Omit<Measurements, "tcaMs"> & { snapshotId: Id<"snapshots">; objectA: ObjectInput; objectB: ObjectInput; tcaUtc: string };
 
 export const TCA_MATCH_MS = 60_000;
 export const isSimulatedId = (objectId: string) => objectId.startsWith("SIM-");
@@ -81,4 +84,52 @@ export async function putFixture(ctx: MutationCtx, key: string, facts: EventFact
   if (!existing) return ctx.db.insert("events", row);
   await ctx.db.patch(existing._id, row);
   return existing._id;
+}
+
+// The one color rule, shared by ingestion and the recolor cron. isRed reads only tcaUtc and pc.value.
+export function colorOf({ pcValue, tcaMs }: Pick<Measurements, "pcValue" | "tcaMs">, now: number): Doc<"events">["color"] {
+  if (isRed({ tcaUtc: isoUtc(tcaMs), pc: { value: pcValue } } as EventFacts, now)) return "red";
+  return pcValue !== null && pcValue >= 1e-5 ? "yellow" : "none";
+}
+
+// Stores one encounter from a registered snapshot. `start` says the Analyst should be scheduled;
+// the caller decides (bulk loads never start it, the recolor cron does).
+export async function ingestEncounter(ctx: MutationCtx, { snapshotId, objectA, objectB, tcaUtc, ...measured }: Encounter) {
+  const snapshot = await ctx.db.get(snapshotId);
+  if (!snapshot) throw new ConvexError({ code: "NOT_FOUND", message: "Snapshot not found." });
+  const tcaMs = Date.parse(tcaUtc);
+  if (!Number.isFinite(tcaMs)) throw new AnalystError("INVALID_INPUT", "Encounter time or units are invalid.");
+  validateFacts({ ...buildFacts({ ...measured, tcaMs }, objectA, objectB, snapshot.sources), tcaUtc });
+
+  // Read the previous evidence before object metadata changes underneath it.
+  const [knownA, knownB] = await Promise.all([findObject(ctx, objectA.objectId), findObject(ctx, objectB.objectId)]);
+  const previous = knownA && knownB ? await findEncounter(ctx, knownA._id, knownB._id, tcaMs) : null;
+  const before = previous && inputKey(await loadFacts(ctx, previous));
+  const objectAId = await upsertObject(ctx, objectA, measured.simulated);
+  const objectBId = await upsertObject(ctx, objectB, measured.simulated);
+  const [a, b] = await Promise.all([ctx.db.get(objectAId), ctx.db.get(objectBId)]);
+  const facts = buildFacts({ ...measured, tcaMs }, a!, b!, snapshot.sources);
+  const changed = before !== inputKey(facts);
+
+  const now = Date.now();
+  const color = colorOf({ pcValue: measured.pcValue, tcaMs }, now);
+  const row = { objectAId, objectBId, snapshotId, tcaMs, ...measured, color, active: tcaMs > now };
+  // updatedAt moves only when the evidence does; an identical reload keeps it and writes nothing.
+  let outcome: "inserted" | "updated" | "unchanged" = "inserted";
+  let eventId: Id<"events">;
+  if (!previous) eventId = await ctx.db.insert("events", { ...row, updatedAt: now });
+  else {
+    eventId = previous._id;
+    const same = (Object.keys(row) as (keyof typeof row)[]).every(key => previous[key] === row[key]);
+    outcome = changed || !same ? "updated" : "unchanged";
+    if (changed) await ctx.db.patch(eventId, { ...row, updatedAt: now });
+    else if (!same) await ctx.db.patch(eventId, row);
+  }
+  // Publishing a changed input also invalidates any result still being computed for it.
+  if (changed && previous) {
+    const running = await ctx.db.query("agentRuns").withIndex("by_event_status", q =>
+      q.eq("eventId", eventId).eq("status", "running")).collect();
+    for (const run of running) await supersede(ctx, run._id);
+  }
+  return { eventId, outcome, start: color === "red" && (changed || previous?.color !== "red") };
 }
