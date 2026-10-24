@@ -5,7 +5,13 @@
 Nothing moves without a human. It is a handshake, not a law.
 
 > Built at **Cal Hacks 13.0** (Oct 23–25, 2026).
-> **Status: planning.** This repo holds documentation, not an implemented application. Product decisions updated Oct 24, 2026; see [Feature decisions](docs/analysis.md).
+> **Status: Phase 1 implementation.** The frontend lives in `web/`; the Convex backend at the repository root implements the first Incident Analyst and its checks. The broader workflow below remains the product plan. Product decisions updated Oct 24, 2026; see [Feature decisions](docs/analysis.md). Current assignments and feature-branch workflow are in [roadmap issue #1](https://github.com/ksavkin/OrbitCall/issues/1).
+
+## Development
+
+For the backend, run `npm ci` then `npm run check` from the repository root. Tests use simulated fixtures and a mocked model provider, so no accounts or keys are required. Run `npm run dev` to start Convex locally or connect to the team's existing OrbitCall development project.
+
+See [Andrew's Phase 1 implementation and integration guide](docs/phase1-andrew.md) for the live model settings, fixture walkthrough, event ingestion hook, summary query and remaining integration work. The frontend has its own package and setup in [web/README.md](web/README.md).
 
 ---
 

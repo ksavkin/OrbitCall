@@ -8,7 +8,17 @@
  * @module
  */
 
+import type * as agentRuns from "../agentRuns.js";
+import type * as agentSummaries from "../agentSummaries.js";
+import type * as agents from "../agents.js";
 import type * as agents_analyst from "../agents/analyst.js";
+import type * as dev from "../dev.js";
+import type * as events from "../events.js";
+import type * as lib_access from "../lib/access.js";
+import type * as lib_analyst from "../lib/analyst.js";
+import type * as lib_claude from "../lib/claude.js";
+import type * as lib_events from "../lib/events.js";
+import type * as lib_validators from "../lib/validators.js";
 import type * as schema_agents from "../schema/agents.js";
 import type * as schema_data from "../schema/data.js";
 
@@ -19,7 +29,17 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agentRuns: typeof agentRuns;
+  agentSummaries: typeof agentSummaries;
+  agents: typeof agents;
   "agents/analyst": typeof agents_analyst;
+  dev: typeof dev;
+  events: typeof events;
+  "lib/access": typeof lib_access;
+  "lib/analyst": typeof lib_analyst;
+  "lib/claude": typeof lib_claude;
+  "lib/events": typeof lib_events;
+  "lib/validators": typeof lib_validators;
   "schema/agents": typeof schema_agents;
   "schema/data": typeof schema_data;
 }>;
