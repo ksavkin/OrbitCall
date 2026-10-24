@@ -29,28 +29,28 @@ OrbitCall solves the communication and decision step between operators who are *
 
 ```mermaid
 flowchart TD
-    D["Public orbit data<br/>CelesTrak GP / SupGP / SOCRATES<br/>Space-Track cdm_public · KeepTrack · ESA Kelvins"] --> S[Scout<br/>screens every pair, ranks the queue]
-    S -- "red event" --> AN[Analyst<br/>5-line summary + options]
-    AN --> OA[Operator agent A]
-    AN --> OB[Operator agent B]
+    D["Public orbit data<br/>CelesTrak GP / SupGP / SOCRATES<br/>Space-Track cdm_public · KeepTrack · ESA Kelvins"] --> S[Risk Monitor<br/>screens every pair, ranks the queue]
+    S -- "red event" --> AN[Incident Analyst<br/>5-line summary + options]
+    AN --> OA[Operator Advocate A]
+    AN --> OB[Operator Advocate B]
     OA <-- "negotiate within policies" --> OB
-    OA --> DI[Dispatcher<br/>opens the room, calls people, translates, logs]
+    OA --> DI[Coordination Host<br/>opens the room, calls people, translates, logs]
     OB --> DI
     DI --> R{{"Conjunction room<br/>voice + text, live translation"}}
     HA[Human operator A] <--> R
     HB[Human operator B] <--> R
-    R -- "two approves" --> EX[Executor<br/>writes the burn, re-screens the catalog]
-    EX --> VE[Verifier<br/>new orbit data vs. the agreed burn]
+    R -- "two approves" --> EX[Maneuver Scheduler<br/>writes the burn, re-screens the catalog]
+    EX --> VE[Maneuver Verifier<br/>new orbit data vs. the agreed burn]
     VE -.-> S
 ```
 
-1. **Scout** propagates the catalog with SGP4, finds close pairs, and ranks them by probability and time to closest approach. Red (Pc > 1e-4 and TCA < 72 h) wakes the agents.
-2. **Analyst** packs the pair into a five-line summary with two or three options.
-3. **Operator agents A and B** each know their company's policy (fuel reserve, no-move mission windows, acceptable risk) and converge on who moves, when and by how much.
-4. **Dispatcher** opens the room, calls both owners plus anyone the fix affects, translates and logs.
+1. **Risk Monitor** propagates the catalog with SGP4, finds close pairs, and ranks them by probability and time to closest approach. Red (Pc > 1e-4 and TCA < 72 h) wakes the agents.
+2. **Incident Analyst** packs the pair into a five-line summary with two or three options.
+3. **Operator Advocates A and B** each know their company's policy (fuel reserve, no-move mission windows, acceptable risk) and converge on who moves, when and by how much.
+4. **Coordination Host** opens the room, calls both owners plus anyone the fix affects, translates and logs.
 5. **Two humans** approve, veto or counter. One "no" sends the agents back with a new constraint.
-6. **Executor** records the maneuver and re-screens the moved satellite against the whole catalog.
-7. **Verifier** later compares new orbit data with the promised maneuver and flags any mismatch to both sides.
+6. **Maneuver Scheduler** records the maneuver and re-screens the moved satellite against the whole catalog.
+7. **Maneuver Verifier** later compares new orbit data with the promised maneuver and flags any mismatch to both sides.
 
 Principles:
 
@@ -66,10 +66,10 @@ Principles:
 | Frontend | Next.js, globe.gl / CesiumJS |
 | Backend, live state, scheduler | Convex |
 | Orbital mechanics | SGP4 (`sgp4` npm or `python-sgp4`) |
-| Reasoning agents, translation | Claude (Sonnet; Haiku for Scout) |
+| Reasoning agents, translation | Claude (Sonnet; Haiku for Risk Monitor) |
 | Agent runtime | Fetch.ai uAgents, Agentverse, Agent Chat Protocol, ASI:One |
 | Voice | Grok Voice via LiveKit; fallback STT → Claude → Cartesia TTS; text chat as the last fallback |
-| Optional | Factory Droid SDK (Executor diff), Backboard (agent memory), Tiger Data (Pc time series), Auth0 (two operator roles) |
+| Optional | Factory Droid SDK (Maneuver Scheduler diff), Backboard (agent memory), Tiger Data (Pc time series), Auth0 (two operator roles) |
 | Deploy | Vercel + Convex |
 
 ## Data sources
@@ -82,20 +82,20 @@ All open. A snapshot is cached so the demo runs offline.
 | CelesTrak SupGP | Operator-supplied orbits; GP vs. SupGP gives an honest uncertainty estimate |
 | CelesTrak SOCRATES | Reference #1: validate our screening, source of live pairs |
 | Space-Track `cdm_public` | Reference #2: official public CDMs |
-| KeepTrack API v4 | Owner, purpose and country metadata for the Dispatcher |
+| KeepTrack API v4 | Owner, purpose and country metadata for the Coordination Host |
 | ESA Kelvins CDM dataset | History for the "risk will rise or fall" model |
 
 ## Fetch.ai agents
 
 | Agent | Address |
 |---|---|
-| Scout | TBD |
-| Analyst | TBD |
-| Operator A | TBD |
-| Operator B | TBD |
-| Dispatcher | TBD |
-| Executor | TBD |
-| Verifier | TBD |
+| Risk Monitor | TBD |
+| Incident Analyst | TBD |
+| Operator Advocate A | TBD |
+| Operator Advocate B | TBD |
+| Coordination Host | TBD |
+| Maneuver Scheduler | TBD |
+| Maneuver Verifier | TBD |
 
 Addresses are filled in once the agents are registered on Agentverse.
 

@@ -22,12 +22,12 @@ Each function has a stable ID (for example `ROOM-3`) so the specification and th
 
 | Role | Does | Does not |
 |---|---|---|
-| Scout | Screens every pair, ranks the queue, forecasts whether risk will rise or fall, starts the agents on red events | Decide who moves |
-| Analyst | Gathers everything on a pair and produces a five-line summary with options | Represent either side |
-| Operator agent (one per company) | Negotiates on behalf of its company within that company's policy | Step outside the policy or execute anything |
-| Dispatcher | Opens the room, calls the right people, translates, runs the conversation, writes the log | Vote or decide |
-| Executor | After two approvals writes the maneuver to the schedule and re-screens the moved satellite against the whole catalog | Act without two approvals; write outside the one schedule location |
-| Verifier | After the maneuver time checks new orbit data against the promised maneuver | — |
+| Risk Monitor | Screens every pair, ranks the queue, forecasts whether risk will rise or fall, starts the agents on red events | Decide who moves |
+| Incident Analyst | Gathers everything on a pair and produces a five-line summary with options | Represent either side |
+| Operator Advocate (one per company) | Negotiates on behalf of its company within that company's policy | Step outside the policy or execute anything |
+| Coordination Host | Opens the room, calls the right people, translates, runs the conversation, writes the log | Vote or decide |
+| Maneuver Scheduler | After two approvals writes the maneuver to the schedule and re-screens the moved satellite against the whole catalog | Act without two approvals; write outside the one schedule location |
+| Maneuver Verifier | After the maneuver time checks new orbit data against the promised maneuver | — |
 
 No system role can act on a satellite. Agents read, compute, propose, call, translate and write a file. Only two human approvals put a maneuver into the schedule (§12 item 8).
 
@@ -44,7 +44,7 @@ Names and meaning only; fields and formats are defined in the specification.
 | Policy | One operator's hard constraints and preferences: minimum fuel reserve, protected or preferred mission windows, acceptable risk, mission priority per satellite, language, contact |
 | Conjunction event | Two objects predicted to pass close: time of closest approach (TCA), miss distance, probability (Pc), relative velocity, color (red / yellow), status, risk trend, uncertainty from comparing orbit sources, which reference sources also list it |
 | Inbox item | A persistent entry for one person and one conjunction event, with unread updates, the current situation, relevant satellite information, operator contacts and contact methods, and links to the room and log |
-| Room | The shared space for one red event: participants, Analyst summary, agent negotiation, human conversation, current proposal, approval state |
+| Room | The shared space for one red event: participants, Incident Analyst summary, agent negotiation, human conversation, current proposal, approval state |
 | Message | One line in a room: from an agent or a human, voice or text, the original text plus a translation for each reader's language |
 | Constraint | A hard requirement from policy or the incident discussion ("can't move on Wednesday") that the agents must respect, with its source and any later correction |
 | Preference | A desired outcome from policy or the incident discussion ("prefer to move after the imaging pass") that the agents weigh while satisfying hard constraints, with its source and any later correction |
@@ -76,23 +76,23 @@ awaiting verification data ──(sufficient new data)──▶ verified / flagg
 agents ──(no mutually acceptable option)──▶ communication (needs operator decision)
 proposal / communication ──(veto / counter / relevant discussion update)──▶ agents
 approved ──(revised proposal before scheduling)──▶ communication
-approved ──(Executor refusal)──▶ agents
+approved ──(Maneuver Scheduler refusal)──▶ agents
 ```
 
 The verification branches apply after the maneuver time.
 
 - **new** — the pair is in the queue.
-- **agents** — the event turned red; Analyst and operator agents are working ("agents working").
+- **agents** — the event turned red; Incident Analyst and Operator Advocates are working ("agents working").
 - **proposal** — a proposal is ready, the room is open and both owners are called.
 - **communication** — the human operators review the proposal and discuss it in the room by voice or text with translation. Agents follow both the voice transcripts and text messages, using relevant new facts, constraints, preferences and corrections to prepare revised proposals as the discussion continues. Each person can access the incident from their inbox even if the other person has not joined. They can approve, veto or counter. With one approval the event stays in **communication** and shows "waiting for the other side."
 - **approved** — both owners approved the current proposal.
-- **scheduled** — Executor wrote the maneuver and the re-screen found no new conjunction.
+- **scheduled** — Maneuver Scheduler wrote the maneuver and the re-screen found no new conjunction.
 - **monitoring** — both owners agreed to wait; the decision and any agreed review time or condition stay visible in the inbox, and no maneuver is scheduled.
 - **awaiting verification data** — the maneuver time has passed, but there is not enough new orbit data to determine whether the maneuver matched the promise.
 - **verified** — after the maneuver time, new orbit data matches the promise ("maneuver confirmed").
 - **flagged** — new orbit data does not match the promise; both sides are warned.
 
-Transitions back to negotiation: a veto, a counter, relevant new discussion input, or an Executor refusal because the maneuver would create a new conjunction. Each return carries the new context or refusal reason. Agents distinguish hard constraints from preferences and revise the proposal when the discussion changes feasible options or the preferred outcome. Both owners must approve the revised version; earlier approvals remain in the history and do not authorize it. If a maneuver is already scheduled, new discussion or policy changes flag it for review and can produce a proposed revision, but do not silently rewrite the schedule.
+Transitions back to negotiation: a veto, a counter, relevant new discussion input, or a Maneuver Scheduler refusal because the maneuver would create a new conjunction. Each return carries the new context or refusal reason. Agents distinguish hard constraints from preferences and revise the proposal when the discussion changes feasible options or the preferred outcome. Both owners must approve the revised version; earlier approvals remain in the history and do not authorize it. If a maneuver is already scheduled, new discussion or policy changes flag it for review and can produce a proposed revision, but do not silently rewrite the schedule.
 
 **Cases that remain accessible through the inbox**
 
@@ -134,7 +134,7 @@ Inbox access does not depend on reaching agreement. Reading an entry or receivin
 - **SCR-4** Computes the same conjunction on two orbit sources (GP and SupGP); the difference in miss distance is the uncertainty shown for the event.
 - **SCR-5** Compares SOCRATES with public CDMs; a pair listed in both, or flagged `EMERGENCY_REPORTABLE` in a CDM, gets higher priority.
 - **SCR-6** Forecasts whether an event's risk will rise or fall, using a model trained on the ESA Kelvins history. The forecast is used only if it beats the rule "current risk = final risk."
-- **SCR-7** Re-screens a single satellite against the whole catalog on demand (used by the Executor, EXE-2).
+- **SCR-7** Re-screens a single satellite against the whole catalog on demand (used by the Maneuver Scheduler, EXE-2).
 
 **User**
 
@@ -184,7 +184,7 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 **System**
 
 - **POL-1** Stores one policy per operator: minimum fuel reserve, "don't move" mission windows, acceptable risk, mission priority per satellite, language, contact.
-- **POL-2** Gives each operator agent only its own company's policy.
+- **POL-2** Gives each Operator Advocate only its own company's policy.
 - **POL-3** When a policy changes, re-runs the negotiation for open, unscheduled events that involve that operator. Flags affected scheduled maneuvers for review; any proposed revision requires fresh approvals before changing the schedule.
 - **POL-6** Distinguishes hard constraints that proposals must satisfy from preferences that can be traded off. Applies context learned from voice or text discussion to the current incident; lasting company policy changes are explicit policy updates.
 
@@ -199,13 +199,13 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 
 **System**
 
-- **AGT-1** Analyst gathers everything on the pair: both orbits, uncertainty, fuel, mission windows, owner/purpose/country, history of concessions.
-- **AGT-2** Analyst produces a five-line summary and options. Maneuver options are fixed: raise, lower, wait.
-- **AGT-3** Operator agents A and B exchange messages and converge on who moves, when, by how much, and the resulting miss distance, each within its own policy.
-- **AGT-4** A relevant new fact, constraint, preference or correction from human discussion, a veto, a counter or an Executor refusal makes the agents reconsider the proposal and recompute candidate outcomes as needed.
+- **AGT-1** Incident Analyst gathers everything on the pair: both orbits, uncertainty, fuel, mission windows, owner/purpose/country, history of concessions.
+- **AGT-2** Incident Analyst produces a five-line summary and options. Maneuver options are fixed: raise, lower, wait.
+- **AGT-3** Operator Advocates A and B exchange messages and converge on who moves, when, by how much, and the resulting miss distance, each within its own policy.
+- **AGT-4** A relevant new fact, constraint, preference or correction from human discussion, a veto, a counter or a Maneuver Scheduler refusal makes the agents reconsider the proposal and recompute candidate outcomes as needed.
 - **AGT-5** Every number in a rationale comes from computation, not generation; each explanation passes a deterministic check against the numbers before it reaches a person.
 - **AGT-6** A second, independent model reads the rationale and flags disagreement to the humans.
-- **AGT-7** An operator agent remembers past incidents between rooms (for example, that it yielded last time).
+- **AGT-7** An Operator Advocate remembers past incidents between rooms (for example, that it yielded last time).
 - **AGT-10** If no mutually acceptable option is found, records the outcome and a shareable explanation of the disagreement in the inbox and room so humans can continue the discussion directly.
 - **AGT-11** Follows the incident's ongoing conversation through transcribed voice and posted text messages, including messages sent when the other operator is absent. Uses the conversation history and speaker identity to interpret new information and corrections; users do not need to manually re-enter discussion points in a policy form or press re-run for routine updates.
 - **AGT-12** Automatically prepares a revised proposal when discussion changes the feasible options or preferred outcome. Recomputes numerical results through the deterministic tools and checks the explanation before publishing the revision in the room and inbox, with what changed, why, and links to the relevant messages. Unrelated conversation does not trigger a proposal replacement.
@@ -213,12 +213,12 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 
 **User**
 
-- **AGT-8** Sees the Analyst summary and the transcript of the agents' negotiation.
+- **AGT-8** Sees the Incident Analyst summary and the transcript of the agents' negotiation.
 - **AGT-9** Can re-run the agents if they hang.
 
 ---
 
-## 9. Dispatcher and calling people
+## 9. Coordination Host and calling people
 
 **System**
 
@@ -266,7 +266,7 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 - **LANG-3** Delivers each phrase to the listener as voice and text in their language; the speaker sees their original in the transcript.
 - **LANG-4** Feeds transcribed voice and posted text messages into the agents' conversation context, retaining the speaker, original wording and translations. Relevant facts, hard constraints, preferences and corrections can trigger a revised proposal (AGT-11..AGT-13).
 - **LANG-5** Writes both language versions of every phrase to the log.
-- **LANG-6** Gives the Dispatcher a voice: it can speak to the humans and accept a spoken "approve."
+- **LANG-6** Gives the Coordination Host a voice: it can speak to the humans and accept a spoken "approve."
 - **LANG-7** Works in text only when voice is unavailable, with the same translation.
 
 **User**
@@ -302,7 +302,7 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 **System**
 
 - **LOG-1** Keeps one immutable log, visible to both sides.
-- **LOG-2** Records every agent message, every human line in both languages, every approval / veto / counter with identity and time, every Executor result, and the verification result.
+- **LOG-2** Records every agent message, every human line in both languages, every approval / veto / counter with identity and time, every Maneuver Scheduler result, and the verification result.
 - **LOG-3** Each entry has time, who (agent or human), what was said or done, and numbers before and after.
 - **LOG-5** Records no-agreement outcomes, contact attempts made through the system, wait decisions, changes indicating no action is currently needed, and verification delays with their reasons. These records are linked from the inbox.
 - **LOG-6** Records discussion-derived facts, constraints, preferences and corrections with their source messages, and each resulting proposal version with the reason for the change. Preserves the approvals attached to each version.
@@ -339,7 +339,7 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 **System** (§11, Fetch.ai)
 
 - **EXT-1** Each system role runs as a separate agent with its own address.
-- **EXT-2** Operator agents negotiate by real messages over a standard agent chat protocol.
+- **EXT-2** Operator Advocates negotiate by real messages over a standard agent chat protocol.
 - **EXT-3** The main scenario can be started from an external agent chat (ASI:One).
 
 ---
@@ -374,11 +374,11 @@ From §12 "What we don't promise":
 Plan v1 leaves these open or contradicts itself; the specification has to settle them.
 
 1. **Screening horizon:** 7 days ahead (§6) or 3 days (§13)?
-2. **Refresh and Scout cadence:** every 15 minutes (§6) or every 5 minutes (§13)?
-3. **Analyst options:** two (§5 text), two or three (§5 roles table), or three (§13)?
+2. **Refresh and Risk Monitor cadence:** every 15 minutes (§6) or every 5 minutes (§13)?
+3. **Incident Analyst options:** two (§5 text), two or three (§5 roles table), or three (§13)?
 4. **Counter:** what does a counter contain beyond "returns to negotiation with a constraint" — a free-text line, or a structured counter-proposal?
 5. **Policy visibility:** can one side see the other side's policy, or only the outcome?
-6. **Calling people:** is the Dispatcher's call in-app only, or also email / phone / push?
+6. **Calling people:** is the Coordination Host's call in-app only, or also email / phone / push?
 7. **Third-party notice:** through which channel, and does the third operator get a room or only a notice?
 8. **Event identity:** how do we match the same pair across our screening, SOCRATES and CDMs (object IDs + TCA window)?
 9. **Yellow events:** do prepared options for yellow events persist and show anywhere, or are they discarded?
