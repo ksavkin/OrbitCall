@@ -1,1 +1,7 @@
 .playwright-mcp/
+node_modules/
+.env*
+!.env.example
+.convex/
+coverage/
+*.tsbuildinfo
