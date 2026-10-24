@@ -23,7 +23,12 @@ export function Navbar() {
   const set = useOrbit((s) => s.set);
   const source = useOrbit((s) => s.catalog?.meta.source);
   const tab = useOps((s) => s.tab);
-  const redCount = useOps((s) => s.events.filter((e) => e.risk === "red" && !["verified", "scheduled", "no_action"].includes(e.status)).length);
+  // dev on: synthetic scenarios; dev off: red rows of the backend queue
+  const redCount = useOps((s) =>
+    s.dev
+      ? s.events.filter((e) => e.risk === "red" && !["verified", "scheduled", "no_action"].includes(e.status)).length
+      : (s.backendRows ?? []).filter((r) => r.color === "red").length,
+  );
 
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 p-2.5">
