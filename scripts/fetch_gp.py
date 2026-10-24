@@ -17,7 +17,8 @@ it from your own machine, never from a Convex action, at most once per cycle:
 * Any status other than 200, or a body that is not a JSON array of OMM records (CelesTrak
   serves HTML and plain-text messages with status 200), stops the run. Each raw response is
   saved in data/snapshots/_incoming/ the moment it arrives, and a rerun reuses a saved file
-  instead of requesting that group again. A "has not updated since your last download" answer
+  instead of requesting that group again (a response saved by hand, e.g. downloaded by a teammate,
+  carries a "note" in its .meta.json that the manifest keeps). A "has not updated since your last download" answer
   is not kept: wait for the next 2-hour cycle and rerun. `--discard-incoming` deletes the saved
   responses to start over. A successful run removes the folder; never commit it.
 * Each group is stored as served (`<group>.json`, raw bytes, so sha256 matches the download)
@@ -157,6 +158,7 @@ def run() -> Path:
             "bytes": len(res["body"]), "sha256": sha256(res["body"]), "records": len(records),
             "epochMin": epochs[0], "epochMax": epochs[-1],
             "maxNoradCatId": max(cat), "noradCatIdsAbove99999": sum(1 for n in cat if n > 99999),
+            **({"note": res["note"]} if res.get("note") else {}),
         })
 
     manifest = {

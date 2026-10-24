@@ -9,7 +9,8 @@ here; Dev mode keeps its own TLE copy in `web/` ([integration status](../docs/in
 |---|---|---|
 | `data/snapshots/socrates-<run time>/` | SOCRATES list (`socrates.csv.gz`), the 1000 queued pairs (`catalog-pairs.json`) | `scripts/build_catalog_pairs.py`, `scripts/load_snapshot.mjs` → Convex |
 | `data/snapshots/satcat-<fetch time>/` | SATCAT (`satcat.csv.gz`): object names, owner country, launch and decay dates | `scripts/build_catalog_pairs.py` |
-| `data/snapshots/gp-<fetch time>/` | GP as OMM JSON, one file per CelesTrak group (`scripts/fetch_gp.py`) | real mode, once its delivery is decided (below) |
+| `data/snapshots/gp-<fetch time>/` | GP as OMM JSON, one file per CelesTrak group (`scripts/fetch_gp.py`) | `scripts/build_omm_catalog.py`, `scripts/build_catalog_pairs.py` |
+| `web/public/snapshots/gp-<fetch time>/` | the same group files, byte-identical, plus `catalog.json` (index with sha256, SATCAT rows, owner names) | the browser in real mode: `catalog.snapshot.ommUrl` points at `catalog.json` |
 | `web/data/snapshot/` | GP as TLE plus a SATCAT subset: Adil's Dev globe fallback | the Next server (`/api/catalog`), Dev only |
 | `web/data/weather/` | weather layer fallbacks | the Next server |
 | `fixtures/` | simulated events and candidates | tests |
@@ -29,12 +30,17 @@ here; Dev mode keeps its own TLE copy in `web/` ([integration status](../docs/in
 - **`data/snapshots/_incoming/`** holds raw responses between runs of a fetch script. It is ignored; never commit it.
 - Store large CSVs gzipped (`mtime=0`, so the same input gives the same bytes). OMM JSON is stored as served.
 
+## Real-mode OMM delivery
+
+- **The browser gets OMM from a copy under `web/public/`** (Vercel's CDN; Convex file storage would cost egress on
+  the free plan). `scripts/build_omm_catalog.py` writes it; git stores the byte-identical group files once. The web
+  app checks each file against its pinned sha256. Pending Adil's OK.
+- `build_catalog_pairs.py` keeps only pairs whose objects are both in the `gp-*` OMM snapshot, and writes its
+  `catalog.json` path into `catalog-pairs.json` (`omm.url`), which `load_snapshot.mjs` registers as `ommUrl`.
+- The globe and the queue are not one screening: SOCRATES ran on CelesTrak's own elements at its run time, while
+  the globe propagates the later GP download. The pair list is SOCRATES's; positions are ours.
+
 ## Open
 
-- **How the browser gets OMM in real mode:** a copy under `web/public/` (Vercel's CDN) or Convex file storage (no
-  copy, but the free plan's egress is about 1 GB a month). The answer sets `catalog.snapshot.ommUrl`; decide with
-  Adil.
-- `build_catalog_pairs.py` still reads the Dev TLE ids in `web/data/snapshot/` to keep only drawable pairs. It moves
-  to the `gp-*` OMM snapshot once that snapshot is complete.
 - `satcat-20261024T0802Z` is the subset Adil committed (the objects in his TLE groups). Objects new in OMM fall back
   to SOCRATES names until a full SATCAT is pinned.
