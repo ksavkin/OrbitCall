@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowRightLeft, Check, ChevronRight, Globe, Loader2, Radar, ShieldCheck, Sparkle, User, Wrench, X, type LucideIcon } from "lucide-react";
+import { ArrowRightLeft, ArrowUp, Check, ChevronRight, Globe, Loader2, Radar, ShieldCheck, Sparkle, User, Wrench, X, type LucideIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fmtMs, fmtTokens, fmtUsd } from "@/lib/ops/format";
 import { AGENTS, MODELS, nodeLabel } from "@/lib/ops/roster";
@@ -22,105 +22,252 @@ const KIND_ICON: Record<SpanKind, LucideIcon> = {
   check: ShieldCheck,
 };
 
-function pickNow(spans: Span[], focusSpan: string | null, focusAgent: string | null) {
-  if (focusSpan) return spans.find((s) => s.id === focusSpan) ?? null;
-  const pool = focusAgent ? spans.filter((s) => s.agent === focusAgent) : spans;
-  for (let i = pool.length - 1; i >= 0; i--) if (pool[i].status === "running" && pool[i].reasoning) return pool[i];
-  for (let i = pool.length - 1; i >= 0; i--) if (pool[i].reasoning) return pool[i];
-  return pool[pool.length - 1] ?? null;
-}
+/* ------------------------------------------------------------ call feed */
 
-/* ------------------------------------------------------------- now card */
+type FeedItem = { id: string; span: Span; pass?: Span[] };
 
-/** What an agent is doing right now: streamed thinking summary, tokens, latency, cost. */
-export function NowCard() {
+/**
+ * Every call as a card, newest on top. Cards slide in and push the older ones down.
+ * The list sticks to the top while you're there; scroll down to read and it stays put,
+ * with a pill to jump back to the newest.
+ */
+export function CallFeed({ className = "" }: { className?: string }) {
   const spans = useOps((s) => s.spans);
-  const focusSpan = useOps((s) => s.focusSpan);
   const focusAgent = useOps((s) => s.focusAgent);
-  const span = pickNow(spans, focusSpan, focusAgent);
+  const focusSpan = useOps((s) => s.focusSpan);
   const now = useNow(200);
 
-  if (!span) {
-    return (
-      <div className="rounded-[11px] bg-white/[0.025] px-3 py-4 text-center text-[11px] text-muted shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]">
-        Agents are idle. They wake on red events only.
-      </div>
-    );
+  const items = useMemo(() => {
+    const out: FeedItem[] = [];
+    const passes = new Map<string, FeedItem>();
+    for (const s of spans) {
+      if (focusAgent && s.agent !== focusAgent && s.target !== focusAgent) continue;
+      // a background screening pass is one card, not five
+      if (isPatrolRoot(s)) {
+        const it: FeedItem = { id: s.id, span: s, pass: [s] };
+        passes.set(s.id, it);
+        out.push(it);
+        continue;
+      }
+      if (s.parent && passes.has(s.parent)) {
+        passes.get(s.parent)!.pass!.push(s);
+        continue;
+      }
+      out.push({ id: s.id, span: s });
+    }
+    return out.slice(-80).reverse();
+  }, [spans, focusAgent]);
+
+  const box = useRef<HTMLDivElement>(null);
+  const atTop = useRef(true);
+  const seen = useRef(items[0]?.id);
+  const [unseen, setUnseen] = useState(0);
+
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const onScroll = () => {
+      atTop.current = el.scrollTop < 24;
+      if (atTop.current) setUnseen(0);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  const newest = items[0]?.id;
+  useEffect(() => {
+    if (!newest || newest === seen.current) return;
+    const idx = items.findIndex((i) => i.id === seen.current);
+    seen.current = newest;
+    const el = box.current;
+    if (!el) return;
+    if (atTop.current) el.scrollTo({ top: 0, behavior: "smooth" });
+    else setUnseen((n) => n + (idx < 0 ? 1 : idx));
+  }, [newest, items]);
+
+  // the newest real call stays open; background passes don't count
+  const firstCall = items.findIndex((i) => !i.pass);
+
+  if (!items.length) {
+    return <div className={`px-3 py-6 text-center text-[11px] text-muted ${className}`}>Agents are idle. They wake on red events only.</div>;
   }
-  const agent = AGENTS[span.agent];
-  const model = span.model ? MODELS[span.model] : null;
-  const running = span.status === "running";
-  const text = span.reasoning ?? "";
-  // stream a little ahead of the clock so the text finishes as the call returns
-  const shown = running ? text.slice(0, Math.ceil(text.length * Math.min(span.progress * 1.12, 1))) : text;
-  const elapsed = running ? (now ? now - span.t0 : 0) : (span.ms ?? 0);
-  const recent = spans.filter((s) => s.agent === span.agent && s.id !== span.id).slice(-3);
 
   return (
-    <motion.div
-      layout
-      className="overflow-hidden rounded-[11px] bg-white/[0.03] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
-      transition={{ duration: 0.25 }}
-    >
-      <div className="flex items-center gap-2 px-2.5 pt-2.5">
-        <span
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] bg-[#16171b] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]"
-          style={{ boxShadow: running ? `inset 0 0 0 1px rgba(255,255,255,0.1), 0 0 16px -3px ${EDGE.call}` : undefined }}
-        >
-          <ModelGlyph model={span.model ?? agent.model} size={14} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-[12px] font-semibold">{agent.name}</span>
-            {model && <span className="mono shrink-0 rounded-[4px] bg-white/[0.05] px-1 text-[9.5px] text-fg-2">{model.label}</span>}
-          </div>
-          <div className="truncate text-[10.5px] text-muted">
-            {span.name} <span className="text-faint">→ {nodeLabel(span.target)}</span>
-          </div>
-        </div>
-        <StatusIcon s={span} />
-      </div>
-
-      {text && (
-        <div className="px-2.5 pt-2">
-          <div className="eyebrow mb-1 flex items-center gap-1.5 !text-[9px]">
-            Thinking · summarized
-            {running && <span className="h-1 w-1 animate-pulse rounded-full bg-blue" />}
-          </div>
-          <p className={`min-h-[44px] text-[11px] leading-[1.55] text-fg-2 ${running ? "caret" : ""}`}>{shown}</p>
-        </div>
-      )}
-      {!text && span.output !== undefined && (
-        <pre className="thin-scroll mono mx-2.5 mt-2 max-h-[96px] overflow-auto rounded-[7px] bg-black/30 p-2 text-[10px] leading-[1.5] text-fg-2">
-          {JSON.stringify(span.output, null, 2)}
-        </pre>
-      )}
-
-      <div className="mt-2 grid grid-cols-4 border-t border-white/[0.05] text-[10px]">
-        <Stat k="In" v={span.tokensIn !== undefined ? fmtTokens(span.tokensIn) : "—"} hint={span.cacheRead ? `${fmtTokens(span.cacheRead)} cached` : undefined} />
-        <Stat k="Out" v={span.tokensOut !== undefined ? fmtTokens(Math.round((span.tokensOut ?? 0) * (running ? span.progress : 1))) : "—"} />
-        <Stat k="Latency" v={fmtMs(elapsed)} />
-        <Stat
-          k="Cost"
-          v={running ? "…" : fmtUsd(span.costUsd)}
-          hint={span.costUsd === null ? "price not verified" : undefined}
-        />
-      </div>
-      {recent.length > 0 && (
-        <div className="flex flex-wrap gap-1 border-t border-white/[0.05] px-2.5 py-1.5">
-          {recent.map((r) => (
-            <button
-              key={r.id}
-              className="flex h-[18px] items-center gap-1 rounded-full bg-white/[0.04] px-1.5 text-[9.5px] text-fg-2 transition-colors hover:bg-white/[0.08]"
-              onClick={() => useOps.getState().set({ focusSpan: r.id })}
+    <div className={`relative min-h-0 ${className}`}>
+      <AnimatePresence>
+        {unseen > 0 && (
+          <motion.button
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            className="absolute left-1/2 top-1.5 z-10 flex h-[22px] -translate-x-1/2 items-center gap-1 rounded-full bg-blue px-2.5 text-[10.5px] font-medium text-white shadow-[0_4px_14px_-2px_rgba(79,140,255,0.6)]"
+            onClick={() => {
+              box.current?.scrollTo({ top: 0, behavior: "smooth" });
+              setUnseen(0);
+            }}
+          >
+            <ArrowUp size={10} /> {unseen} new {unseen === 1 ? "call" : "calls"}
+          </motion.button>
+        )}
+      </AnimatePresence>
+      <div ref={box} className="thin-scroll h-full overflow-y-auto px-3 pb-3 pt-0.5 [overflow-anchor:none]">
+        <AnimatePresence initial={false}>
+          {items.map((it, k) => (
+            <motion.div
+              key={it.id}
+              // grow in from zero height so older cards slide down instead of jumping
+              initial={{ opacity: 0, height: 0, y: -10 }}
+              animate={{ opacity: 1, height: "auto", y: 0 }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.36, ease: [0.22, 1, 0.36, 1] }}
+              className="overflow-hidden"
             >
-              <StatusDot s={r} />
-              {r.name}
-            </button>
+              <div className="pb-1.5">
+                {it.pass ? (
+                  <PassCard steps={it.pass} now={now} />
+                ) : (
+                  <CallCard s={it.span} now={now} open={focusSpan === it.id || it.span.status === "running" || k === firstCall} />
+                )}
+              </div>
+            </motion.div>
           ))}
-        </div>
-      )}
-    </motion.div>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+function CallCard({ s, now, open }: { s: Span; now: number; open: boolean }) {
+  const agent = AGENTS[s.agent];
+  const model = s.model ? MODELS[s.model] : null;
+  const running = s.status === "running";
+  const text = s.reasoning ?? "";
+  // stream a little ahead of the clock so the text finishes as the call returns
+  const shown = running ? text.slice(0, Math.ceil(text.length * Math.min(s.progress * 1.12, 1))) : text;
+  const elapsed = running ? (now ? Math.max(now - s.t0, 0) : 0) : (s.ms ?? 0);
+  const Icon = KIND_ICON[s.kind];
+  return (
+    <div
+      className="overflow-hidden rounded-[11px] bg-white/[0.03] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)] transition-shadow duration-300"
+      style={
+        running
+          ? {
+              boxShadow: `inset 0 0 0 1px rgba(79,140,255,0.35), 0 0 18px -8px ${EDGE.call}`,
+            }
+          : s.status === "error"
+            ? { boxShadow: "inset 0 0 0 1px rgba(255,90,79,0.35)" }
+            : undefined
+      }
+    >
+      <button
+        className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition-colors hover:bg-white/[0.03]"
+        onClick={() => {
+          sfx.click();
+          const st = useOps.getState();
+          st.set({ focusSpan: st.focusSpan === s.id ? null : s.id });
+        }}
+      >
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-[7px] bg-[#16171b] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]">
+          <ModelGlyph model={s.kind === "llm" || s.kind === "human" ? (s.model ?? agent.model) : agent.model} size={13} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="truncate text-[11.5px] font-medium">{agent.name}</span>
+            {model && s.kind === "llm" && <span className="mono shrink-0 rounded-[4px] bg-white/[0.05] px-1 text-[9px] text-fg-2">{model.label}</span>}
+          </span>
+          <span className="flex items-center gap-1 truncate text-[10px] text-muted">
+            <Icon size={9} className="shrink-0" />
+            <span className="truncate">{s.name}</span>
+            <span className="shrink-0 text-faint">→ {nodeLabel(s.target)}</span>
+          </span>
+        </span>
+        <span className="flex shrink-0 flex-col items-end gap-0.5">
+          <StatusIcon s={s} compact />
+          <span className="mono tnum text-[9.5px] text-muted">
+            {fmtMs(elapsed)}
+            {s.costUsd !== undefined && !running && <span className="text-faint"> · {fmtUsd(s.costUsd)}</span>}
+          </span>
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="px-2.5 pb-2">
+              {s.http && (
+                <div className="mono mb-1.5 flex items-center gap-1.5 break-all text-[9.5px]">
+                  <span className="rounded-[4px] bg-[rgba(79,140,255,0.14)] px-1 text-blue">{s.http.method}</span>
+                  <span className="text-fg-2">{s.http.url}</span>
+                  {s.http.status && <span className="ml-auto shrink-0 text-green">{s.http.status}</span>}
+                </div>
+              )}
+              {s.error && <div className="mb-1.5 rounded-[6px] bg-[rgba(255,90,79,0.08)] px-2 py-1 text-[10.5px] text-red">{s.error}</div>}
+              {!text && s.output === undefined && (
+                <p className="text-[10.5px] leading-[1.5] text-muted">
+                  {s.kind === "handoff"
+                    ? `Hands the event to ${nodeLabel(s.target)}.`
+                    : s.kind === "human"
+                      ? `Calling ${nodeLabel(s.target)} into the room.`
+                      : `${KIND_LABEL[s.kind]} step on ${nodeLabel(s.target)}.`}
+                  {s.input !== undefined && <span className="mono mt-1 block break-all text-[10px] text-fg-2">{JSON.stringify(s.input)}</span>}
+                </p>
+              )}
+              {text ? (
+                <>
+                  <div className="eyebrow mb-1 flex items-center gap-1.5 !text-[9px]">
+                    Thinking · summarized
+                    {running && <span className="h-1 w-1 animate-pulse rounded-full bg-blue" />}
+                  </div>
+                  <p className={`text-[11px] leading-[1.55] text-fg-2 ${running ? "caret" : ""}`}>{shown}</p>
+                </>
+              ) : (
+                s.output !== undefined && (
+                  <pre className="thin-scroll mono max-h-[110px] overflow-auto rounded-[7px] bg-black/30 p-2 text-[10px] leading-[1.5] text-fg-2">
+                    {JSON.stringify(s.output, null, 2)}
+                  </pre>
+                )
+              )}
+            </div>
+            {s.tokensIn !== undefined && (
+              <div className="grid grid-cols-4 border-t border-white/[0.05] text-[10px]">
+                <Stat k="In" v={fmtTokens(s.tokensIn)} hint={s.cacheRead ? `${fmtTokens(s.cacheRead)} cached` : undefined} />
+                <Stat k="Out" v={fmtTokens(Math.round((s.tokensOut ?? 0) * (running ? s.progress : 1)))} />
+                <Stat k="Latency" v={fmtMs(elapsed)} />
+                <Stat k="Cost" v={running ? "…" : fmtUsd(s.costUsd)} hint={s.costUsd === null ? "price not verified" : undefined} />
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function PassCard({ steps, now }: { steps: Span[]; now: number }) {
+  const running = steps.some((s) => s.status === "running");
+  const t0 = steps[0].t0;
+  const t1 = running ? now : Math.max(...steps.map((s) => s.t1 ?? s.t0));
+  const cost = steps.reduce((a, s) => a + (s.costUsd ?? 0), 0);
+  const current = steps.filter((s) => s.status === "running").pop();
+  return (
+    <div className="flex items-center gap-2 rounded-[11px] bg-white/[0.02] px-2.5 py-1.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.045)]">
+      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-[7px] bg-[#16171b] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]">
+        <Radar size={12} className={running ? "text-[#7fd8ff]" : "text-muted"} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[11px] text-fg-2">Screening pass</span>
+        <span className="block truncate text-[10px] text-muted">{current ? current.name : `Risk Monitor · ${steps.length} steps · background`}</span>
+      </span>
+      <span className="mono tnum shrink-0 text-right text-[9.5px] text-muted">
+        {running ? <Loader2 size={10} className="ml-auto animate-spin text-blue" /> : <Check size={10} className="ml-auto text-green" />}
+        {fmtMs(Math.max(t1 - t0, 0))} · {fmtUsd(cost)}
+      </span>
+    </div>
   );
 }
 
@@ -134,29 +281,25 @@ function Stat({ k, v, hint }: { k: string; v: string; hint?: string }) {
   );
 }
 
-function StatusIcon({ s }: { s: Span }) {
+function StatusIcon({ s, compact }: { s: Span; compact?: boolean }) {
+  const pad = compact ? "px-1.5 py-px text-[9.5px]" : "px-1.5 py-0.5 text-[10px]";
   if (s.status === "running")
     return (
-      <span className="flex items-center gap-1 rounded-full bg-[rgba(79,140,255,0.12)] px-1.5 py-0.5 text-[10px] font-medium text-blue">
-        <Loader2 size={10} className="animate-spin" /> Running
+      <span className={`flex items-center gap-1 rounded-full bg-[rgba(79,140,255,0.12)] font-medium text-blue ${pad}`}>
+        <Loader2 size={9} className="animate-spin" /> Running
       </span>
     );
   if (s.status === "error")
     return (
-      <span className="flex items-center gap-1 rounded-full bg-[rgba(255,90,79,0.12)] px-1.5 py-0.5 text-[10px] font-medium text-red">
-        <X size={10} /> Failed
+      <span className={`flex items-center gap-1 rounded-full bg-[rgba(255,90,79,0.12)] font-medium text-red ${pad}`}>
+        <X size={9} /> Failed
       </span>
     );
   return (
-    <span className="flex items-center gap-1 rounded-full bg-[rgba(61,220,151,0.1)] px-1.5 py-0.5 text-[10px] font-medium text-green">
-      <Check size={10} /> Done
+    <span className={`flex items-center gap-1 rounded-full bg-[rgba(61,220,151,0.1)] font-medium text-green ${pad}`}>
+      <Check size={9} /> Done
     </span>
   );
-}
-
-function StatusDot({ s }: { s: Span }) {
-  const c = s.status === "running" ? EDGE.call : s.status === "error" ? EDGE.failed : EDGE.answer;
-  return <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: c, boxShadow: s.status === "running" ? `0 0 6px ${c}` : undefined }} />;
 }
 
 /* ---------------------------------------------------------------- trace */
@@ -217,7 +360,21 @@ export function TraceList({ big = false }: { big?: boolean }) {
   );
 }
 
-function PassGroup({ root, steps, start, range, now, focusSpan }: { root: Span; steps: Span[]; start: number; range: number; now: number; focusSpan: string | null }) {
+function PassGroup({
+  root,
+  steps,
+  start,
+  range,
+  now,
+  focusSpan,
+}: {
+  root: Span;
+  steps: Span[];
+  start: number;
+  range: number;
+  now: number;
+  focusSpan: string | null;
+}) {
   const [open, setOpen] = useState(false);
   const all = [root, ...steps];
   const running = all.some((s) => s.status === "running");
@@ -240,7 +397,14 @@ function PassGroup({ root, steps, start, range, now, focusSpan }: { root: Span; 
           </span>
         </span>
         <span className="relative h-[3px] w-[64px] shrink-0 overflow-hidden rounded-full bg-white/[0.05]">
-          <span className="absolute inset-y-0 rounded-full" style={{ left: `${left}%`, width: `${width}%`, background: running ? EDGE.call : AGENT_HUE.monitor }} />
+          <span
+            className="absolute inset-y-0 rounded-full"
+            style={{
+              left: `${left}%`,
+              width: `${width}%`,
+              background: running ? EDGE.call : AGENT_HUE.monitor,
+            }}
+          />
         </span>
         <span className="mono tnum w-[40px] shrink-0 text-right text-[10px] text-fg-2">{fmtMs(t1 - root.t0)}</span>
         <span className="mono tnum w-[46px] shrink-0 text-right text-[10px] text-muted">{fmtUsd(cost)}</span>
@@ -289,9 +453,19 @@ function TraceRow({ s, start, range, now, open }: { s: Span; start: number; rang
           </span>
         </span>
         <span className="relative h-[3px] w-[64px] shrink-0 overflow-hidden rounded-full bg-white/[0.05]">
-          <span className="absolute inset-y-0 rounded-full" style={{ left: `${left}%`, width: `${width}%`, background: color, transition: "width .25s linear" }} />
+          <span
+            className="absolute inset-y-0 rounded-full"
+            style={{
+              left: `${left}%`,
+              width: `${width}%`,
+              background: color,
+              transition: "width .25s linear",
+            }}
+          />
         </span>
-        <span className="mono tnum w-[40px] shrink-0 text-right text-[10px] text-fg-2">{fmtMs(s.status === "running" ? (now ? now - s.t0 : 0) : (s.ms ?? 0))}</span>
+        <span className="mono tnum w-[40px] shrink-0 text-right text-[10px] text-fg-2">
+          {fmtMs(s.status === "running" ? (now ? Math.max(now - s.t0, 0) : 0) : (s.ms ?? 0))}
+        </span>
         <span className="mono tnum w-[46px] shrink-0 text-right text-[10px] text-muted">{s.costUsd !== undefined ? fmtUsd(s.costUsd) : ""}</span>
       </button>
       <AnimatePresence initial={false}>
@@ -391,10 +565,16 @@ function LogRow({ l }: { l: LogLine }) {
   const p = (x: number, n = 2) => String(x).padStart(n, "0");
   const t = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}.${p(d.getUTCMilliseconds(), 3)}`;
   const color = l.level === "error" ? "var(--red)" : l.level === "warn" ? "var(--orange)" : "var(--fg-2)";
-  const src = l.source in AGENTS ? AGENTS[l.source as keyof typeof AGENTS].short : l.source === "system" ? "system" : l.source === "humanA" ? "Operator A" : "Operator B";
+  const src =
+    l.source in AGENTS ? AGENTS[l.source as keyof typeof AGENTS].short : l.source === "system" ? "system" : l.source === "humanA" ? "Operator A" : "Operator B";
   const hue = l.source in AGENTS ? AGENT_HUE[l.source as keyof typeof AGENT_HUE] : l.source === "system" ? "var(--muted)" : EDGE.human;
   return (
-    <motion.div initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.18 }} className="flex gap-2 whitespace-pre-wrap break-words">
+    <motion.div
+      initial={{ opacity: 0, x: -4 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.18 }}
+      className="flex gap-2 whitespace-pre-wrap break-words"
+    >
       <span className="shrink-0 text-faint">{t}</span>
       <span className="w-[64px] shrink-0 truncate" style={{ color: hue }}>
         {src}

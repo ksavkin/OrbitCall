@@ -163,6 +163,10 @@ export class GlobeScene {
   readonly conj: ConjunctionLayer;
   /** Fixed inertial point the camera orbits (a conjunction's TCA point). */
   private pivot: THREE.Vector3 | null = null;
+  /** Moving target the camera follows (cinematic shots of an object). */
+  private trackFn: ((out: THREE.Vector3) => THREE.Vector3 | null) | null = null;
+  /** Last time the user dragged or zoomed (the director backs off after that). */
+  userCameraAt = 0;
   private lastDensity = 0;
   private cloudsOn = true;
   private lastFrame = performance.now();
@@ -410,6 +414,7 @@ export class GlobeScene {
     el.addEventListener("wheel", this.onWheel, { passive: false });
     this.controls.addEventListener("start", () => {
       this.fly = null;
+      this.userCameraAt = performance.now();
     });
 
     this.resizeObs = new ResizeObserver(() => this.resize());
@@ -887,6 +892,7 @@ export class GlobeScene {
 
   flyToLatLon(lat: number, lon: number, dist = 2.4) {
     this.pivot = null;
+    this.trackFn = null;
     if (this.following) this.setFollow(false);
     this.tracking = false;
     const dir = this.earthGroup.localToWorld(llToVec(lat, lon, 1)).normalize();
@@ -919,6 +925,7 @@ export class GlobeScene {
     const side = this.camera.position.clone().sub(p).projectOnPlane(up).normalize();
     const toDir = up.clone().multiplyScalar(0.82).addScaledVector(side, 0.57).normalize();
     this.pivot = p.clone();
+    this.trackFn = null;
     this.fly = {
       t0: performance.now(),
       dur: 1800,
@@ -947,6 +954,66 @@ export class GlobeScene {
     this.focusConjunction(id, { fly: true, dist: 0.32 });
   }
 
+  /* ----------------------------------------------------------- shots */
+
+  /** Fly to a moving target and keep it centered, camera `dist` away, looking from above its path. */
+  shotTrack(get: (out: THREE.Vector3) => THREE.Vector3 | null, dist: number, dur = 2200) {
+    const p = get(new THREE.Vector3());
+    if (!p) return;
+    if (this.following) this.setFollow(false);
+    this.tracking = false;
+    this.pivot = null;
+    this.trackFn = get;
+    const up = p.clone().normalize();
+    const side = this.camera.position.clone().sub(p).projectOnPlane(up).normalize();
+    const toDir = up.clone().multiplyScalar(0.7).addScaledVector(side, 0.71).normalize();
+    this.fly = {
+      t0: performance.now(),
+      dur,
+      fromDir: this.camera.position.clone().sub(this.controls.target).normalize(),
+      toDir,
+      fromDist: this.camera.position.distanceTo(this.controls.target),
+      toDist: dist,
+      fromTarget: this.controls.target.clone(),
+      toTarget: null,
+      world: true,
+      fromPos: this.camera.position.clone(),
+    };
+    this.targetDist = dist;
+  }
+
+  /** Follow a catalog object. */
+  shotObject(i: number, dist = 0.1, dur?: number) {
+    this.shotTrack((out) => (this.sampleValid[i] ? this.positionOf(i, out) : null), dist, dur);
+  }
+
+  /** Follow the synthetic object of an event. */
+  shotSynthetic(id: string, dist = 0.1, dur?: number) {
+    this.shotTrack((out) => this.conj.bPosition(id, this.clock.now(), out), dist, dur);
+  }
+
+  /** Pull back to a wide view centered on Earth, over a point. */
+  shotWide(over: THREE.Vector3 | null, dist = 4.2, dur = 2400) {
+    if (this.following) this.setFollow(false);
+    this.tracking = false;
+    this.pivot = null;
+    this.trackFn = null;
+    const dir = over ? over.clone().normalize().lerp(this.camera.position.clone().normalize(), 0.35).normalize() : this.camera.position.clone().normalize();
+    this.fly = {
+      t0: performance.now(),
+      dur,
+      fromDir: this.camera.position.clone().sub(this.controls.target).normalize(),
+      toDir: dir,
+      fromDist: this.camera.position.distanceTo(this.controls.target),
+      toDist: dist,
+      fromTarget: this.controls.target.clone(),
+      toTarget: new THREE.Vector3(),
+      world: true,
+      fromPos: this.camera.position.clone(),
+    };
+    this.targetDist = dist;
+  }
+
   /** Back to real time after a preview. */
   endPreview() {
     if (!this.previewing) return;
@@ -957,8 +1024,10 @@ export class GlobeScene {
 
   /** Leave the TCA pivot and go back to orbiting Earth. */
   releasePivot() {
-    if (!this.pivot) return;
+    if (!this.pivot && !this.trackFn) return;
     this.pivot = null;
+    this.trackFn = null;
+    this.trackFn = null;
     this.release();
   }
 
@@ -1009,6 +1078,7 @@ export class GlobeScene {
   /** Fly to a satellite and keep it centered; the camera then orbits around it. */
   private flyToObject(i: number) {
     this.pivot = null;
+    this.trackFn = null;
     const p = this.positionOf(i, new THREE.Vector3());
     const dist = 2.0;
     this.tracking = true;
@@ -1064,7 +1134,10 @@ export class GlobeScene {
 
   setFollow(on: boolean) {
     if (on && this.selected === null) return;
-    if (on) this.pivot = null;
+    if (on) {
+      this.pivot = null;
+      this.trackFn = null;
+    }
     this.following = on;
     if (on) this.setHovered(null);
     const target = this.controls.target.clone();
@@ -1129,7 +1202,7 @@ export class GlobeScene {
   zoomBy(factor: number) {
     const [min, max] = this.distLimits();
     // Zoom on altitude, not distance to Earth's center, so it keeps working near the ground.
-    const floor = this.following || this.tracking || this.pivot ? 0 : 1;
+    const floor = this.following || this.tracking || this.pivot || this.trackFn ? 0 : 1;
     this.targetDist = THREE.MathUtils.clamp(floor + (this.targetDist - floor) * factor, min, max);
     if (this.fly) this.fly.toDist = this.targetDist;
   }
@@ -1142,6 +1215,7 @@ export class GlobeScene {
   /** Esri-style zoom presets: LEO shell, MEO (GNSS) and the GEO belt. */
   zoomTo(preset: "leo" | "meo" | "geo") {
     this.pivot = null;
+    this.trackFn = null;
     if (this.following) this.setFollow(false);
     this.tracking = false;
     const d = { leo: 4.6, meo: 10, geo: 19 }[preset];
@@ -1162,6 +1236,7 @@ export class GlobeScene {
 
   resetView() {
     this.pivot = null;
+    this.trackFn = null;
     if (this.following) this.setFollow(false);
     this.tracking = false;
     this.fly = {
@@ -1183,7 +1258,7 @@ export class GlobeScene {
 
   private distLimits(): [number, number] {
     if (this.following) return [0.012, 4];
-    if (this.tracking || this.pivot) return [0.02, 60];
+    if (this.tracking || this.pivot || this.trackFn) return [0.02, 60];
     return [1.0006, 60];
   }
 
@@ -1191,6 +1266,7 @@ export class GlobeScene {
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
+    this.userCameraAt = performance.now();
     const k = Math.exp(e.deltaY * (e.ctrlKey ? 0.01 : 0.0012));
     this.zoomBy(k);
   };
@@ -1470,8 +1546,13 @@ export class GlobeScene {
 
   private updateCamera(now: number) {
     const target = this.controls.target;
-    const centered = this.following || this.tracking || this.pivot !== null;
-    const satPos = (this.following || this.tracking) && this.selected !== null ? this.positionOf(this.selected, new THREE.Vector3()) : null;
+    const centered = this.following || this.tracking || this.pivot !== null || this.trackFn !== null;
+    const satPos =
+      (this.following || this.tracking) && this.selected !== null
+        ? this.positionOf(this.selected, new THREE.Vector3())
+        : this.trackFn
+          ? this.trackFn(new THREE.Vector3())
+          : null;
 
     if (this.fly) {
       const f = this.fly;

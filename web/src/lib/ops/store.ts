@@ -25,6 +25,8 @@ interface OpsState {
   scenarioDone: boolean;
   /** Approve automatically after a short think so scenarios run hands-free. */
   autopilot: boolean;
+  /** Camera follows the story while agents work. */
+  cinematic: boolean;
   humans: HumanPrompt[];
   /** Risk Monitor screening pass in progress (drives the globe sweep). */
   scanning: boolean;
@@ -50,6 +52,7 @@ export const useOps = create<OpsState>((set) => ({
   scenario: null,
   scenarioDone: false,
   autopilot: true,
+  cinematic: true,
   humans: [],
   scanning: false,
   lastScan: null,

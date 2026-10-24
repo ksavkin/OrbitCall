@@ -19,6 +19,7 @@ import { AgentsExpanded, AgentsPanel } from "@/components/ops/AgentsPanel";
 import { ConjunctionMarkers } from "@/components/ops/ConjunctionMarkers";
 import { ConjunctionQueue } from "@/components/ops/ConjunctionQueue";
 import { OpsSync } from "@/components/ops/OpsSync";
+import { Director } from "@/components/ops/Director";
 import { ScenarioBar } from "@/components/ops/ScenarioBar";
 import { useOps } from "@/lib/ops/store";
 import { sceneRef } from "@/lib/sceneRef";
@@ -43,6 +44,7 @@ export function OrbitApp() {
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/50 to-transparent" />
       <WeatherSync />
       <OpsSync />
+      <Director />
       <StormLabels />
       <ConjunctionMarkers />
       <Navbar />

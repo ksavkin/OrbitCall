@@ -15,6 +15,7 @@ import { useOrbit } from "@/lib/store";
 import { useNow } from "@/lib/useNow";
 import { Chip } from "@/components/ui/Chip";
 import { Flag } from "@/components/ui/OwnerBadge";
+import { ClaudeGlyph } from "./Glyphs";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { toggleDev } from "@/components/ui/Navbar";
 import { RESOLVED, RISK_COLOR, STATUS_META } from "./meta";
@@ -258,10 +259,10 @@ function EventRow({ e, now }: { e: ConjunctionEvent; now: number }) {
 function EventDetail({ e }: { e: ConjunctionEvent }) {
   const allHumans = useOps((s) => s.humans);
   const humans = useMemo(() => allHumans.filter((h) => h.eventId === e.id), [allHumans, e.id]);
-  const analyst = AGENTS.analyst;
   return (
     <div className="px-2.5 pb-2.5">
-      <div className="grid grid-cols-2 overflow-hidden rounded-[9px] bg-white/[0.025] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.055)]">
+      {e.summary ? <SummaryCard lines={e.summary} /> : e.agentsWorking && <SummaryPending />}
+      <div className="mt-2 grid grid-cols-2 overflow-hidden rounded-[9px] bg-white/[0.025] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.055)]">
         <Cell label="Miss distance" value={fmtMiss(e.missM)} hint={`±${fmtMiss(e.uncertaintyM)}`} />
         <Cell label="Probability" value={fmtPc(e.pc)} hint={e.pcSource} border tone={RISK_COLOR[e.risk]} />
         <Cell label="Rel. velocity" value={`${e.relVelKms.toFixed(2)} km/s`} top />
@@ -269,31 +270,6 @@ function EventDetail({ e }: { e: ConjunctionEvent }) {
       </div>
 
       <PcChart e={e} />
-
-      {e.summary && (
-        <div className="mt-2.5">
-          <div className="flex items-center justify-between">
-            <span className="eyebrow">Summary</span>
-            <span className="text-[9.5px] text-faint">
-              {analyst.name} · {MODELS[analyst.model].label}
-            </span>
-          </div>
-          <ol className="mt-1 space-y-1">
-            {e.summary.map((l, i) => (
-              <motion.li
-                key={i}
-                initial={{ opacity: 0, y: 3 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.06, duration: 0.25 }}
-                className="flex gap-1.5 text-[10.5px] leading-[1.45] text-fg-2"
-              >
-                <span className="mono mt-px shrink-0 text-[9.5px] text-faint">{i + 1}</span>
-                <span>{l}</span>
-              </motion.li>
-            ))}
-          </ol>
-        </div>
-      )}
 
       {e.status === "needs_decision" && (
         <div className="mt-2.5 rounded-[9px] bg-[rgba(255,159,64,0.07)] p-2 text-[10.5px] leading-[1.45] text-fg-2 shadow-[inset_0_0_0_1px_rgba(255,159,64,0.2)]">
@@ -339,6 +315,70 @@ function EventDetail({ e }: { e: ConjunctionEvent }) {
           </button>
         </Tooltip>
       </div>
+    </div>
+  );
+}
+
+const SUMMARY_LABELS = ["Pair", "Risk", "Data", "Where", "Options"];
+
+/** Numbers, times and distances in a summary line set in mono so they stand out. */
+function emphasize(line: string) {
+  const re = /(\d{2}:\d{2} UTC|(?<![\w-])\d[\d.,]*(?:e-\d+)?(?:\s?(?:km\/s|km|m\b|°[NSEW]?))?|±\d[\d.,]*\s?(?:km|m))/g;
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of line.matchAll(re)) {
+    if (m.index! > last) out.push(line.slice(last, m.index));
+    out.push(
+      <span key={m.index} className="mono font-medium text-fg">
+        {m[0]}
+      </span>,
+    );
+    last = m.index! + m[0].length;
+  }
+  out.push(line.slice(last));
+  return out;
+}
+
+/** The five-line Incident Analyst summary: the first thing a dispatcher reads (AGT-2, AGT-8). */
+function SummaryCard({ lines }: { lines: string[] }) {
+  const analyst = AGENTS.analyst;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      className="mb-0.5 overflow-hidden rounded-[10px] bg-white/[0.045] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.09),0_8px_20px_-12px_rgba(0,0,0,0.8)]"
+    >
+      <div className="flex items-center gap-1.5 border-b border-white/[0.06] px-2.5 py-1.5">
+        <ClaudeGlyph size={11} />
+        <span className="text-[11px] font-semibold tracking-[-0.005em]">Incident summary</span>
+        <span className="ml-auto text-[9.5px] text-muted">
+          {analyst.name} · {MODELS[analyst.model].label}
+        </span>
+      </div>
+      <dl className="space-y-[5px] px-2.5 py-2">
+        {lines.map((l, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, x: -4 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.05 + i * 0.07, duration: 0.25 }}
+            className="grid grid-cols-[46px_1fr] gap-1.5"
+          >
+            <dt className="pt-px text-[9.5px] font-medium uppercase tracking-[0.08em] text-muted">{SUMMARY_LABELS[i] ?? i + 1}</dt>
+            <dd className="text-[11.5px] leading-[1.45] text-fg-2">{emphasize(l)}</dd>
+          </motion.div>
+        ))}
+      </dl>
+    </motion.div>
+  );
+}
+
+function SummaryPending() {
+  return (
+    <div className="mb-0.5 flex items-center gap-2 rounded-[10px] bg-white/[0.03] px-2.5 py-2 text-[11px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]">
+      <ClaudeGlyph size={11} />
+      <span className="shimmer font-medium">Incident Analyst is writing the summary…</span>
     </div>
   );
 }

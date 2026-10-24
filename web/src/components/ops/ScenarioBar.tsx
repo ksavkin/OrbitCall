@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Check, ChevronUp, Pause, Play, RotateCcw, Trash2 } from "lucide-react";
+import { Check, ChevronUp, Clapperboard, Pause, Play, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { engine } from "@/lib/ops/engine";
 import { runScenario, SCENARIOS } from "@/lib/ops/scenarios";
@@ -19,6 +19,7 @@ export function ScenarioBar() {
   const playing = useOps((s) => s.playing);
   const speed = useOps((s) => s.speed);
   const autopilot = useOps((s) => s.autopilot);
+  const cinematic = useOps((s) => s.cinematic);
   const catalogReady = useOrbit((s) => !!s.catalog);
   const [open, setOpen] = useState(false);
   const [pick, setPick] = useState(SCENARIOS[0].id);
@@ -173,6 +174,20 @@ export function ScenarioBar() {
               />
             </span>
             Autopilot
+          </button>
+        </Tooltip>
+        <Tooltip label={cinematic ? "Camera follows the agents' work. Drag the globe to take over." : "Camera stays where you put it"}>
+          <button
+            className="icon-btn h-7 w-7"
+            data-active={cinematic}
+            onClick={() => {
+              sfx.toggle(!cinematic);
+              useOps.getState().set({ cinematic: !cinematic });
+            }}
+            aria-pressed={cinematic}
+            aria-label="Cinematic camera"
+          >
+            <Clapperboard size={13} />
           </button>
         </Tooltip>
         <Tooltip label="Clear the board and stop the story">

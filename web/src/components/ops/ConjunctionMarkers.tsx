@@ -77,7 +77,7 @@ function Marker({ e, bind }: { e: ConjunctionEvent; bind: (k: "tca" | "b" | "a" 
     <>
       <div ref={(el) => bind("tca", el)} className="absolute left-0 top-0 transition-opacity duration-200" style={{ opacity: 0 }}>
         <button
-          className="pointer-events-auto absolute left-[-11px] top-[-11px] grid h-[22px] w-[22px] place-items-center"
+          className="pointer-events-auto absolute left-[-15px] top-[-15px] grid h-[30px] w-[30px] place-items-center transition-transform duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-110"
           onClick={() => {
             sfx.select();
             useOps.getState().set({ focusEvent: focused ? null : e.id });
@@ -85,18 +85,11 @@ function Marker({ e, bind }: { e: ConjunctionEvent; bind: (k: "tca" | "b" | "a" 
           onPointerEnter={() => sfx.hover()}
           aria-label={`Focus ${e.id}`}
         >
-          {!quiet && <span className="absolute inset-[-6px] rounded-full opacity-60" style={{ background: `radial-gradient(circle, ${c}40, transparent 70%)` }} />}
-          <span
-            className="relative h-[9px] w-[9px] rotate-45 rounded-[1.5px] transition-transform duration-300"
-            style={{ background: focused ? "#fff" : c, boxShadow: `0 0 0 2px rgba(0,0,0,0.55), 0 0 12px ${c}`, transform: `rotate(45deg) scale(${focused ? 1.25 : 1})` }}
-          />
-          {!quiet && e.risk === "red" && (
-            <span className="absolute inset-[1px] rounded-full border" style={{ borderColor: c, animation: "ping 1.8s var(--ease-out) infinite" }} />
-          )}
+          <ConjunctionIcon color={c} focused={focused} live={!quiet && e.risk === "red"} />
         </button>
         {(focused || (e.risk === "red" && !quiet)) && (
           <span
-            className="glass glass-strong absolute left-3.5 top-[-11px] flex items-center gap-1.5 whitespace-nowrap rounded-full py-0.5 pl-2 pr-2.5 text-[10.5px]"
+            className="glass glass-strong absolute left-[19px] top-[-11px] flex items-center gap-1.5 whitespace-nowrap rounded-full py-0.5 pl-2 pr-2.5 text-[10.5px]"
             style={{ boxShadow: `inset 0 0 0 1px ${c}40` }}
           >
             <span className="mono text-muted">{e.id}</span>
@@ -107,7 +100,7 @@ function Marker({ e, bind }: { e: ConjunctionEvent; bind: (k: "tca" | "b" | "a" 
           </span>
         )}
         {focused && (
-          <span className="absolute left-[22px] top-[10px] whitespace-nowrap text-[10px] text-muted [text-shadow:0_1px_2px_rgba(0,0,0,0.8)]">
+          <span className="absolute left-[26px] top-[10px] whitespace-nowrap text-[10px] text-muted [text-shadow:0_1px_2px_rgba(0,0,0,0.8)]">
             TCA point · <span ref={(el) => bind("range", el)} className="mono tnum" />
           </span>
         )}
@@ -127,5 +120,30 @@ function Marker({ e, bind }: { e: ConjunctionEvent; bind: (k: "tca" | "b" | "a" 
         <span className="absolute left-3 top-[-8px] whitespace-nowrap rounded-full bg-black/55 px-1.5 py-px text-[10px] text-[#cfe0ff] backdrop-blur-sm">{e.a.name}</span>
       </div>
     </>
+  );
+}
+
+/**
+ * Conjunction mark: two short trajectory strokes crossing at the TCA point (A in pale
+ * blue, B in the risk color), a slowly turning dashed range ring, and a ping when red.
+ */
+function ConjunctionIcon({ color, focused, live }: { color: string; focused: boolean; live: boolean }) {
+  return (
+    <span className="relative block h-[30px] w-[30px]" style={{ transform: `scale(${focused ? 1.18 : 1})`, transition: "transform .3s cubic-bezier(.34,1.56,.64,1)" }}>
+      <span className="absolute inset-0 rounded-full" style={{ background: `radial-gradient(circle, ${color}33, transparent 68%)` }} />
+      {live && <span className="absolute inset-[5px] rounded-full border" style={{ borderColor: color, animation: "ping 1.8s var(--ease-out) infinite" }} />}
+      <svg viewBox="0 0 30 30" className="absolute inset-0 overflow-visible">
+        <g style={{ transformOrigin: "15px 15px", animation: "spin 9s linear infinite" }}>
+          <circle cx="15" cy="15" r="10.5" fill="none" stroke={color} strokeOpacity="0.75" strokeWidth="1.1" strokeDasharray="3.2 2.3" />
+        </g>
+        <line x1="5" y1="21" x2="25" y2="9" stroke="#9cc2ff" strokeWidth="1.6" strokeLinecap="round" strokeOpacity="0.95" />
+        <line x1="5" y1="9" x2="25" y2="21" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+        <circle cx="15" cy="15" r="2.6" fill="#fff" style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
+        {focused &&
+          [0, 90, 180, 270].map((r) => (
+            <path key={r} d="M3 8 V3 H8" fill="none" stroke="#fff" strokeOpacity="0.85" strokeWidth="1.2" transform={`rotate(${r} 15 15) translate(-4 -4)`} />
+          ))}
+      </svg>
+    </span>
   );
 }

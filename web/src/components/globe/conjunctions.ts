@@ -223,6 +223,13 @@ export class ConjunctionLayer {
     for (const l of [this.orbitA, this.orbitB, this.glowA, this.glowB]) (l.material as LineMaterial).resolution.set(w, h);
   }
 
+  /** Synthetic object's position at sim time `t`, scene units. */
+  bPosition(id: string, t: number, out = new THREE.Vector3()) {
+    const it = this.item(id);
+    if (!it) return null;
+    return toScene(posB(it.enc, t), out) as THREE.Vector3;
+  }
+
   /** TCA point of an event in scene units. */
   tcaPoint(id: string, out = new THREE.Vector3()) {
     const it = this.item(id);

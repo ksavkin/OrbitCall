@@ -163,7 +163,7 @@ async function analyze(eng: Engine, gen: number, e: ConjunctionEvent, crossDeg: 
     `Pc ${fmtPc(e.pc)} from ${e.pcSource}; rising over the last 24 h. Relative speed ${e.relVelKms.toFixed(1)} km/s, crossing at ${crossDeg}°.`,
     `US data says ${fmtMiss(e.missM)}, operator data says ${fmtMiss(e.missM + e.uncertaintyM)}: ±${fmtMiss(e.uncertaintyM)} uncertainty.`,
     `Over ${Math.abs(Math.round(e.where.lat))}°${e.where.lat >= 0 ? "N" : "S"}, ${Math.abs(Math.round(e.where.lon))}°${e.where.lon >= 0 ? "E" : "W"} at ${Math.round(e.where.altKm)} km altitude.`,
-    e.b.kind === "debris" ? "Options: A raises, A lowers, or wait for the next CDM. Debris cannot move." : "Options: A raises, B lowers, or wait for the next CDM.",
+    e.b.kind === "debris" ? "A raises, A lowers, or wait for the next CDM. Debris cannot move." : "A raises, B lowers, or wait for the next CDM.",
   ];
   await eng.span(
     {

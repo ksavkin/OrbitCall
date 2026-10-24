@@ -10,7 +10,7 @@ import { sfx } from "@/lib/sound";
 import { useNow } from "@/lib/useNow";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { AgentGraph, GraphLegend } from "./AgentGraph";
-import { LogStream, NowCard, TraceList } from "./AgentTrace";
+import { CallFeed, LogStream, TraceList } from "./AgentTrace";
 
 const VIEWS: { id: AgentView; label: string }[] = [
   { id: "graph", label: "Graph" },
@@ -171,14 +171,19 @@ export function AgentsPanel() {
               className="flex min-h-0 flex-1 flex-col"
             >
               {view === "graph" && (
-                <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-                  <div className="px-1 pt-2">
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <div className="shrink-0 px-4 pt-2">
                     <AgentGraph />
+                    <div className="py-2">
+                      <GraphLegend />
+                    </div>
                   </div>
-                  <div className="py-2">
-                    <GraphLegend />
+                  <div className="mx-3 mb-1.5 flex items-center gap-2">
+                    <span className="eyebrow">Calls</span>
+                    <span className="h-px flex-1 bg-white/[0.05]" />
+                    <span className="text-[9.5px] text-faint">newest first</span>
                   </div>
-                  <NowCard />
+                  <CallFeed className="flex-1" />
                 </div>
               )}
               {view === "trace" && (
@@ -226,16 +231,18 @@ export function AgentsExpanded() {
             <Header expanded />
             <div className="mx-3 h-px bg-white/[0.06]" />
             <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
-              <div className="thin-scroll flex min-h-0 flex-col overflow-y-auto border-r border-white/[0.06] px-6 pb-4 pt-3">
+              <div className="flex min-h-0 flex-col overflow-hidden border-r border-white/[0.06] px-6 pb-4 pt-3">
                 <div className="mx-auto w-full max-w-[520px]">
                   <AgentGraph big />
                   <div className="py-3">
                     <GraphLegend />
                   </div>
                 </div>
-                <div className="mx-auto w-full max-w-[520px]">
-                  <NowCard />
+                <div className="mx-auto mb-1.5 flex w-full max-w-[520px] items-center gap-2">
+                  <span className="eyebrow">Calls</span>
+                  <span className="h-px flex-1 bg-white/[0.05]" />
                 </div>
+                <CallFeed className="mx-auto min-h-[240px] w-full max-w-[540px] flex-1" />
               </div>
               <div className="flex min-h-0 flex-col">
                 <div className="flex items-center gap-2 px-3 pb-1 pt-2.5">
