@@ -1,0 +1,31 @@
+# OrbitCall web
+
+The ops UI. First screen: the live orbit view.
+
+```sh
+npm install
+npm run dev        # http://localhost:3000
+```
+
+## What's on screen
+
+- Every object in the CelesTrak GP `active` group plus three debris clouds (Cosmos 2251, Iridium 33, Fengyun-1C), propagated with SGP4 in a Web Worker (`src/lib/orbit/propagate.worker.ts`). The GPU extrapolates between samples, so motion stays smooth at any time speed.
+- Owner, launch date and site, object type and RCS come from CelesTrak SATCAT.
+- Five globe views: Realistic (real sun position, night lights, clouds), Imagery, Night, Terrain, Tactical.
+- Zooming in streams map tiles (`src/components/globe/tiles.ts`): Esri World Imagery, Esri World Hillshade and NASA GIBS VIIRS Black Marble. Attribution follows the source on screen.
+- The selected object gets a detailed PBR model (`hero.ts`). Its reflections come from a cube camera at the satellite's position, so the arrays show the real Earth below.
+
+## Data
+
+`/api/catalog` (`src/lib/catalog/build.ts`) downloads from CelesTrak at most once every 2 hours, because CelesTrak blocks clients that download a group more often. If the download fails, it serves the copy in `.cache/`, then the committed snapshot in `data/snapshot/`, so the demo works offline. Set `ORBITCALL_OFFLINE=1` to skip the network.
+
+Refresh the snapshot by re-downloading the `.tle` groups and `satcat.csv` listed in `GROUPS` into `data/snapshot/`, then update `fetched_at.txt`.
+
+## Assets
+
+- Earth textures: Solar System Scope (CC BY 4.0, based on NASA imagery including Blue Marble) and three-globe example images (NASA).
+- SpaceX wordmark: Wikimedia Commons, public domain, trademark of SpaceX. Shown on SpaceX-operated Starlink models only.
+
+## Keys
+
+`⌘K` search · `1–5` views · `F` follow · `G` ground track · `Space` pause · `R` reset · `A` auto-rotate · `M` mute · `Esc` deselect
