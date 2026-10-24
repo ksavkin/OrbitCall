@@ -1,5 +1,8 @@
 # OrbitCall UI design system
 
+Latest accepted scope and technical stack: [master roadmap](../master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Existing implementation notes below are not completion claims.
+
+
 Rules for anyone (person or agent) who builds or changes the OrbitCall frontend. They come from the code in `web/` and from Adil's review comments during the build. Adil reads every screen at the pixel level. A screen that "works" but has a stray line, a popping model or a clipped tooltip is not done.
 
 Read this file before changing the UI. Product behavior follows [the accepted user flow](../user-flow.md) and [backend specification](../specification.md). This document describes visual conventions and distinguishes the current prototype from target behavior.

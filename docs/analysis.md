@@ -13,9 +13,11 @@ The user confirmed: Dev on keeps the working TLE catalog and synthetic conjuncti
 - **Estimates:** the original rough backend/frontend hour estimates preceded these decisions. Re-estimate against the updated build plan; they are not delivery commitments.
 - **Evidence boundary:** competitor comparisons cannot be fully checked from this repository because the research notes are absent. Do not turn “not found in the reviewed products” into a claim that no commercial product supports a capability.
 
+The latest locked scope, stack, phases, and deployment are in [master-roadmap.md](master-roadmap.md). It supersedes older provider alternatives and pair-room-only assumptions in this decision history.
+
 ## Current workflow amendment: assigned fleet (October 24, 2026)
 
-The user approved [the fleet-first workflow](user-flow.md): My Fleet + personal incident queue + globe, with four assigned spacecraft per enabled demo dispatcher, two required demo users and an optional third based in Russia, the US and China. Identity and assignment determine access; country does not. Run Scan screens the caller's assigned fleet against every other usable object in the pinned catalog over the next 72 hours. It does not populate a global operator queue.
+The user approved [the fleet-first workflow](user-flow.md): My Fleet + personal incident queue + globe, with four assigned spacecraft per enabled demo dispatcher, three demo dispatchers based in Russia, the US and China, a read-only public display, and support for a fourth operator. Identity and assignment determine access; country does not. Run Scan screens the caller's assigned fleet against every other usable object in the pinned catalog over the next 72 hours. It does not populate a global operator queue.
 
 Priority is severity first, then earliest time of closest approach within each group. Missing/stale evidence has a separate visible Data needs review section. This supersedes Pc/time scoring and the old rule putting every missing-Pc event at the bottom. TCA means Time of Closest Approach; the UI explains it as "Time until closest approach".
 
@@ -29,7 +31,7 @@ Shared candidate selection is separate from each operator's Approve. Show up to 
 | M2 | **Accept** | Company policy values are private throughout data access, agent context, UI, logs and exports |
 | M3 | **Skip** | No structured counter-proposal form; keep ordinary voice/text counters and automatic agent revisions |
 | M4 | **Accept** | Protect technical values during translation, restoring them from their authoritative source |
-| M5 | **Accept, amended Oct 24** | The demo week's real catalog snapshot with provenance; the demo conjunction uses one flagged, labeled simulated satellite against a real catalog satellite |
+| M5 | **Accept, amended Oct 24** | A pinned real catalog snapshot with provenance. Two flagged simulated US spacecraft may create the linked US/Russia and US/China encounters, each against a real catalog counterpart |
 | M6 | **Already done** | Keep the chosen clear role names |
 | M7 | **Accept** | Shared promised-versus-observed verification with evidence, method and pending-data state |
 | M8 | **Accept with the reviewed evidence limits** | Supplied Pc with event/version provenance; source spread is not statistical uncertainty; no invented internal Pc |
@@ -74,7 +76,7 @@ Retain original wording and speaker identity. A failed placeholder check retries
 
 Pin the demo week's real catalog snapshot, retaining source URLs, object IDs, epochs and fetch times. Use actual source/computed values in the presentation. Label demonstration policies, participants and proposed actions as simulated. A sourced historical verification replay is separate from this current event; do not present it as proof that the live demo's proposed maneuver occurred.
 
-**Amended at the final review (Oct 24):** public data rarely holds a red pair of two active satellites from different companies with a TCA after judging, so the demo conjunction comes from one simulated satellite that the judge launches from a prefilled form; its orbit is built to cross a real catalog satellite at a chosen time. The simulated satellite and everything derived from it carry a `simulated` flag: a distinct color and label, and exclusion from validation and report counts. No simulated object or result is presented as real.
+**Amended for the locked demo (Oct 24):** the team cannot rely on a suitable real encounter during judging. The linked three-operator story may use two simulated US spacecraft, each with a computed orbit crossing a real catalog counterpart at a chosen time. Keep four assigned spacecraft per dispatcher. Simulated objects and everything derived from them carry a `simulated` flag, a distinct color and label, and are excluded from validation and real report counts. No simulated object or result is presented as real. See the master roadmap for the complete scenario.
 
 **Functions:** DATA-1, DATA-5, DATA-7, SCR-10, VER-3; plan sections 4, 7, 9 and 13.
 

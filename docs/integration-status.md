@@ -1,6 +1,6 @@
 # Team handoff: merged frontend, Phase 1 backend and product decisions
 
-Updated October 24, 2026. Start here before implementing the next backend or frontend change.
+Updated October 24, 2026. Start with [the locked master roadmap](master-roadmap.md) for the latest scope, stack, phases, and deployment. This file records the implementation handoff.
 
 ## Code included in this reconciliation
 
@@ -18,7 +18,7 @@ The [assigned-fleet user flow](user-flow.md) is the starting point. The [specifi
 | Topic | Decision |
 |---|---|
 | Dashboard | My Fleet + My Incidents + globe, all assigned objects listed with positions and freshness |
-| Demo identities | Two required users, optional third, based in Russia, the US and China; four assigned spacecraft each. Assignments are simulated; country is not authorization |
+| Demo identities | Three dispatcher laptops, four assigned spacecraft each, and a read-only observer display. Group rooms support 2-4 operators. Assignments are simulated; country is not authorization |
 | Run Scan | Server-resolved assigned fleet versus every other usable object in the pinned catalog, next 72 hours; explicit progress and coverage |
 | Priority | Severity first, then earliest closest approach. Missing/stale evidence in a separate visible review section. No Pc/time score |
 | TCA | Time of Closest Approach; display "Time until closest approach" / "До ближайшего сближения" |
@@ -28,12 +28,15 @@ The [assigned-fleet user flow](user-flow.md) is the starting point. The [specifi
 | Two active operators | Both assigned sides approve the same current selection generation, proposal and revision |
 | Confirmed debris | One real active-object operator approves; never fabricate debris approval. An absent active operator is not debris |
 | Completion | Scheduled is distinct from observed execution. Historical verification is explicitly replay |
+| Languages | English, Russian, Mandarin; LiveKit, Grok STT, Claude translation, Cartesia EN/ZH, Grok RU |
+| Hosting | Vercel frontend, Convex app backend, DigitalOcean containers for numerical/voice/Factory services |
+| Extra sponsors | Factory schedule artifacts, Backboard memory context, Tiger Data historical analytics, with Convex authoritative |
 
 ## Data modes: latest user decision
 
 **Dev on:** retain the existing CelesTrak TLE catalog and synthetic event/agent scenarios for UI development and demos. Real catalog elements and synthetic encounter evidence must be distinguished.
 
-**Dev off:** the real mode requires OMM from the backend. It never calls the development `/api/catalog` TLE loader and never substitutes synthetic incidents. Current Phase 1 `catalog.snapshot` returns `ommUrl: null`, so the UI shows "waiting for OMM". The real OMM loader/worker/renderer integration is still pending; a non-null URL alone must not be presented as completed rendering. Current code reports that integration state explicitly.
+**Dev off:** the real mode requires OMM from the backend. It never calls the development `/api/catalog` TLE loader or silently substitutes local synthetic incidents. An explicitly selected backend demo run may process labeled simulated encounters through the real backend, as defined in the master roadmap. Current Phase 1 `catalog.snapshot` returns `ommUrl: null`, so the UI shows "waiting for OMM". The real OMM loader/worker/renderer integration is still pending. A non-null URL alone must not be presented as completed rendering. Current code reports that integration state explicitly.
 
 Both modes live in both Git branches. `main` is a branch, not a runtime switch. CelesTrak remains the source in either format. OMM supports larger catalog IDs and structured exchange, but changing serialization alone does not guarantee better orbit accuracy. See [CelesTrak's format documentation](https://celestrak.org/NORAD/documentation/gp-data-formats.php).
 

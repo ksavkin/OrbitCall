@@ -1,5 +1,8 @@
 # OrbitCall — Full Kit for Cal Hacks 13.0 (plan v1)
 
+> Historical planning kit. The current scope and stack are locked in [master-roadmap.md](master-roadmap.md): hackathon only, four screens, 2-4 operator group rooms with pair approvals, three languages, DigitalOcean hosting, and Factory/Backboard/Tiger Data. Earlier options and hour plans below are historical where they differ.
+
+
 Oct 23, 2026 · @K · Product decisions updated Oct 24, 2026
 
 > This planning document incorporates the accepted decisions in [analysis.md](analysis.md): private policies, multiple computed proposals, approval of the same revision, protected translation, real demo data, evidence-based verification, supplied Pc, measured validation, report export and source links. Risk forecasting is removed completely. Structured counter forms, standing pair agreements, extra action labels and heuristic dismissals are skipped. **Fetch.ai was dropped on Oct 24, 2026:** its prize requires the whole workflow inside an ASI:One chat without our interface, so agents run in our own backend instead (see [functionality.md §17](functionality.md#17-agent-runtime)). The repository remains documentation only; demo outcomes and validation numbers must come from actual data and computation.

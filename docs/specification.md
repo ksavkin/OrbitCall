@@ -4,7 +4,9 @@ The contract between the Next.js frontend and the Convex backend: data shapes, e
 
 Updated Oct 24, 2026 after direct user decisions: [assigned-fleet workflow](user-flow.md), My Fleet + My Incidents + globe, fleet-versus-catalog Run Scan, severity then earliest closest approach, separate missing/stale-data review, up to four computed candidates, shared selection followed by independent Approve, and a separate unilateral debris path. The Dev Switch separates TLE development simulation from the OMM-only real mode. No TLE fallback is allowed with Dev off. Appendix C specifies safe agent observability. These are requirements; the current simulator types are not yet identical to this contract.
 
-The accepted decisions in user-flow.md and functionality.md govern behavior. There is no simulator-specific exception overriding approval integrity. Counter is a conversation message, not an approval status. Country and language do not grant fleet access.
+The latest scope and stack are locked in [master-roadmap.md](master-roadmap.md). This specification supplies the detailed contract. The four-screen demo uses three dispatchers, 2-4 operator group rooms with pair-specific approvals, three languages, DigitalOcean services, and separate Factory/Backboard/Tiger Data roles. These targets are not all implemented at the code baseline.
+
+The accepted decisions in the master roadmap, user-flow.md, and functionality.md govern behavior. There is no simulator-specific exception overriding approval integrity. Counter is a conversation message, not an approval status. Country and language do not grant fleet access.
 
 ---
 
@@ -23,13 +25,13 @@ The merged Phase 1 backend implements catalog ingestion, catalog snapshot/pairs,
 - **IDs.** Documents use Convex IDs (`Id<"events">`). Space objects use `ObjectId`: a catalog number as a decimal string (`"48211"`, 9-digit numbers allowed [DATA-6]) or a reserved simulated ID (`"SIM-0001"`) [DATA-7].
 - **Proposal labels.** `P1`, `P2`… per event; revisions are integers from 1. The UI shows `P2 · R2`.
 - **Sides.** In an event, side `"A"` owns `objectA` and side `"B"` owns `objectB`. Colors: A blue, B violet.
-- **Languages.** `"en" | "ru"`. Every text a viewer reads arrives already in the viewer's language, with the original attached [LANG-3, LANG-8].
+- **Languages.** `"en" | "ru" | "zh"`. Every text a viewer reads arrives already in the viewer's language, with the original attached [LANG-3, LANG-8].
 - **Simulated.** Every record derived from the simulated satellite carries `simulated: true`. The UI shows a distinct color and a "simulated" label wherever the record appears [DATA-5].
 - **The backend owns all state changes.** The frontend never sets an event status, a color, a feasibility outcome or an approval reset; it calls a mutation and watches queries.
 
 ```ts
 type ISODate = string;              // "2026-10-25T03:14:07Z"
-type Lang = "en" | "ru";          // China-based demo dispatcher may use English; zh is not implemented
+type Lang = "en" | "ru" | "zh";   // locked target: English, Russian, Mandarin
 type ObjectId = string;             // "48211" | "799501621" | "SIM-0001"
 type Side = "A" | "B";
 ```
@@ -38,16 +40,17 @@ type Side = "A" | "B";
 
 ## 1. Sign-in and permissions
 
-- **Login** is Auth0 with sign-ups disabled; the team pre-creates two required dispatcher users and an optional third, each with four explicitly assigned spacecraft (demo profiles based in Russia, the US and China) [ACC-1]. The frontend uses `ConvexProviderWithAuth0`. There is no registration screen.
+- **Login** is Auth0 with sign-ups disabled; the team pre-creates three dispatcher users for the main demo, four assigned spacecraft each (US/RU/CN profiles), a read-only observer, and support for a fourth operator in group-room tests [ACC-1]. The frontend uses `ConvexProviderWithAuth0`. There is no registration screen.
 - **Every function** resolves the caller with `ctx.auth.getUserIdentity()` and looks up `users` by `authSubject`. No identity → `UNAUTHENTICATED`. No user row → `FORBIDDEN`.
-- **Fallback** (plan section 11 cut rule): the same test users move to Convex Auth. Only `authSubject` changes; every function below stays the same.
+- **Identity failure:** show the sign-in failure. Auth0 is the locked provider. Replacing it requires a recorded stack revision and another authorization check.
 
 | Role [ACC-4] | Can call |
 |---|---|
 | `operator` | Everything in section 3, limited to events involving at least one currently assigned object of their company, plus their own company's policy and settings |
 | `head_of_ops` | `users.me`, `fleet.listMine`, `events.myQueue`, `log.list`, `reports.*` for their own company; company scope, read-only |
+| `demo_observer` | `users.me`, `catalog.snapshot`, `demo.publicView` for its assigned demo run; no approval, policy, private trace, or raw memory access |
 
-A **party company** operates `objectA` or `objectB`. A **fleet assignment** grants an authenticated user responsibility for an object within that company. Room actions (select, approve, veto, message, call) require both company membership and a current assignment to the corresponding active object; otherwise `FORBIDDEN`. Side is resolved on the server, never accepted from the browser. Public catalog browsing grants no room access. Demo assignments are seeded, not editable by clients. Revocation invalidates affected approvals. A third demo user is an ordinary fleet operator, distinct from deferred affected-party notices.
+A **party company** operates `objectA` or `objectB`. A **fleet assignment** grants an authenticated user responsibility for an object within that company. Event actions (select, approve, veto) require company membership and a current assignment to the corresponding active object; otherwise `FORBIDDEN`. Room chat/call/read requires explicit group-room membership derived from involvement in a linked event. Shared room access never grants approval rights on unrelated sides or access to private records. Side is resolved on the server, never accepted from the browser. Public catalog browsing grants no room access. Demo assignments are seeded, not editable by clients. Revocation invalidates affected approvals. Third/fourth group members are ordinary fleet operators involved in linked events, distinct from deferred unsolicited affected-party notices.
 
 An event has stable canonical A/B sides, independent of the current viewer. When two of the same company's objects are involved, return `myObjectIds` for both and `workflow: "internal_review"`, `mySide: null`, `canAct: false`; scheduling remains disabled pending an internal approval rule. A missing active counterpart retains a bilateral requirement and is never treated as debris.
 
@@ -167,6 +170,7 @@ interface EventRow {
   selected: { proposalId: Id<"proposals">; label: string; revision: number; generation: number } | null;
   outcome: VerificationResult | null;          // [Q-8]
   reviewRequired: boolean;          // scheduled plan flagged by new data or a policy edit [POL-3]
+  roomId: Id<"rooms"> | null;       // coordination room may link several pair events
   roomOpen: boolean;                // a room exists (created at red) [Q-3]
   sources: SourceRef[];
   simulated: boolean;
@@ -241,10 +245,13 @@ interface Understood {              // facts, constraints, preferences the agent
 }
 
 interface RoomState {
-  event: EventRow;
+  roomId: Id<"rooms">;
+  event: EventRow;                 // focused event with viewer-specific canAct/assignment scope
+  linkedEvents: { eventId: Id<"events">; summary: string; canAct: boolean; requiredApprovalSides: Side[] }[]; // intentionally shared projection
+  operatorCompanyIds: Id<"companies">[]; // 2-4 active operator companies for group rooms
   summaryLines: string[];           // Incident Analyst's five lines, viewer's language [AGT-2]
   participants: {
-    userId: Id<"users">; name: string; side: Side;
+    userId: Id<"users">; companyId: Id<"companies">; name: string; language: Lang; // sides are event-specific
     inRoom: boolean; inCall: boolean;
   }[];
   selected: EventRow["selected"];
@@ -270,9 +277,11 @@ interface ProtectedValue {          // shown in monospace, never altered by tran
 
 interface Message {
   messageId: Id<"messages">;
+  roomId: Id<"rooms">;
+  eventId: Id<"events"> | null;     // topic of this phrase, not the whole room
   at: ISODate;
   author:
-    | { kind: "human"; userId: Id<"users">; name: string; side: Side }
+    | { kind: "human"; userId: Id<"users">; companyId: Id<"companies">; name: string; side: Side | null }
     | { kind: "agent"; role: AgentRole; side: Side | null }
     | { kind: "system" };
   kind: MessageKind;
@@ -281,7 +290,7 @@ interface Message {
   originalLang: Lang;
   translationStatus: "ok" | "pending" | "original_only";   // original_only = placeholder check failed [LANG-2]
   values: ProtectedValue[];
-  refs: { proposalId?: Id<"proposals">; revision?: number };
+  refs: { eventId?: Id<"events">; proposalId?: Id<"proposals">; revision?: number };
   form: SummaryForm | null;         // only for kind "summary" [ROOM-13]
   simulated: boolean;
 }
@@ -489,6 +498,7 @@ Each entry: kind · arguments → result · who · errors beyond `UNAUTHENTICATE
 | Function | Kind | Arguments → result | Notes |
 |---|---|---|---|
 | `users.me` | query | `{}` → `{ userId, name, role, language, dispatcherCountry, company: { companyId, name, country, simulated }, assignedObjectIds, assignmentVersion }` | Any user |
+| `demo.publicView` | query | `{ demoRunId }` → observer projection | Dedicated run-authorized observer. Shared globe/scan/proposal/job/results only; no private policy/memory or controls |
 | `config.flags` | query | `{}` → `{ demoLaunch, voice, droid, secondModel }` (booleans) | Hide what is off: no launch form, no call button [LANG-7] |
 
 ### 3.2 Assigned-fleet dashboard (screen 1)
@@ -519,28 +529,31 @@ The default dashboard is My Fleet + My Incidents + globe. Label the separate mis
 | `inbox.get` | query | `{ eventId }` → `IncidentDetail` | `NOT_FOUND` [INBOX-3, INBOX-4, INBOX-7] |
 | `inbox.markRead` | mutation | `{ eventId }` → `null` | Never approves anything [INBOX-8] |
 
-### 3.4 Conjunction room (screen 2)
+### 3.4 Coordination room (screen 2)
+
+A room groups related pair events and supports 2-4 operators. Main demo: US/RU and US/CN, three dispatchers. Call/chat/presence are room-scoped. Selection, approval, scheduling, and verification remain event-scoped. A room member can read the intentionally shared card projection for linked incidents without permission to approve them or read private policy/memory. An observer uses `demo.publicView`, not the operator room query.
 
 Counter uses `messages.send`, optionally referencing the selected proposal/revision. There is no `approvals.counter` mutation, structured counter form or `countered` approval state.
 
 | Function | Kind | Arguments → result | Notes |
 |---|---|---|---|
 | `rooms.get` | query | `{ eventId }` → `RoomState \| null` | `null` while no room exists (yellow, new) |
-| `rooms.join` / `rooms.leave` | mutation | `{ eventId }` → `null` | Presence for "has B joined" [DSP-5] |
-| `rooms.setInCall` | mutation | `{ eventId, inCall: boolean }` → `null` | Called on LiveKit connect/disconnect |
+| `rooms.byId` | query | `{ roomId }` → shared group-room projection | Membership required; no private policy/memory/context |
+| `rooms.join` / `rooms.leave` | mutation | `{ roomId }` → `null` | Presence for "has B joined" [DSP-5] |
+| `rooms.setInCall` | mutation | `{ roomId, inCall: boolean }` → `null` | Called on LiveKit connect/disconnect |
 | `proposals.list` | query | `{ eventId }` → `ProposalCard[]` | Up to four computed candidate cards total, including wait when justified. Fewer/zero options are explicit; do not require exactly one shared recommendation [ROOM-5] |
 | `proposals.revisions` | query | `{ proposalId }` → `Revision[]` | History, oldest first |
 | `rooms.select` | mutation | `{ eventId, proposalId, revision, expectedGeneration }` → `null` | Selects an existing card for shared review, not a counter; checks expectedGeneration and increments generation on change; resets required approvals [ROOM-11]. `INVALID_STATE`, `STALE_REVISION` |
 | `approvals.approve` | mutation | `{ eventId, proposalId, revision, selectionGeneration, approvalRuleVersion }` → `{ allRequiredApproved: boolean, requiredApprovalSides: Side[] }` | Approve the selected revision [ROOM-7]. Rules in section 4.1 |
 | `approvals.veto` | mutation | `{ eventId, proposalId, revision, selectionGeneration, approvalRuleVersion, reason?: string }` → `null` | Resets required approvals, agents revise [§20 Q16] |
-| `messages.list` | query | `{ eventId, before?: ISODate, limit?: number }` (default 100) → `Message[]` | Oldest first within the page; text in the viewer's language |
-| `messages.send` | mutation | `{ eventId, text, refs?: { proposalId, revision } }` → `{ messageId }` | Up to 2,000 characters. Returns at once; translation and agent reactions arrive through `messages.list` [LANG-4, AGT-11] |
-| `summary.request` | mutation | `{ eventId }` → `null` | Asks the Coordination Host for the summary form now [ROOM-13] |
+| `messages.list` | query | `{ roomId, eventId?: Id<"events">, before?: ISODate, limit?: number }` (default 100) → `Message[]` | Oldest first within the page; text in the viewer's language |
+| `messages.send` | mutation | `{ roomId, eventId?: Id<"events">, text, refs?: { proposalId, revision } }` → `{ messageId }` | Up to 2,000 characters. Returns at once; translation and agent reactions arrive through `messages.list` [LANG-4, AGT-11] |
+| `summary.request` | mutation | `{ roomId }` → `null` | Asks the Coordination Host for the summary form now [ROOM-13] |
 | `summary.edit` | mutation | `{ eventId, proposalId, baseRevision, changes: Partial<Pick<SummaryForm, "movingSide" \| "burnTimeUtc" \| "deltaVMs" \| "direction" \| "note">> }` → `{ accepted: true }` | The backend recomputes the numbers and publishes a new revision; required approvals reset to `pending`. `STALE_REVISION` if `baseRevision` is old |
 | `agents.rerun` | mutation | `{ eventId }` → `null` | Retries a stuck agent step; cannot duplicate a schedule entry or revive approvals [AGT-9] |
-| `call.join` | action | `{ eventId }` → `{ serverUrl, token, roomName, identity, language }` | `operator` with current active-object assignment in a party company; `FEATURE_DISABLED` unless `voice`. Section 5 |
+| `call.join` | action | `{ roomId }` → `{ serverUrl, token, roomName, identity, language }` | `operator` with authorized room membership from an assigned linked event; `FEATURE_DISABLED` unless `voice`. Section 5 |
 | `maneuvers.get` | query | `{ eventId }` → `Maneuver \| null` | Diff before approval, re-screen and commit after [ROOM-8, ROOM-9] |
-| `history.series` | query | `{ eventId }` → `{ atUtc, pc: number \| null, missKm, source: SourceName }[]` | Observations only, no forecast [ROOM-10] |
+| `history.series` | query | `{ eventId }` → `{ atUtc, pc: number \| null, missKm, source: SourceName }[]` | Authorized cached Tiger Data observations only, no forecast. A scheduled server action performs the SQL query/export and publishes the versioned cache [ROOM-10] |
 | `verifications.get` | query | `{ eventId }` → `Verification \| null` | [Q-8, VER-2] |
 | `verifications.replay` | query | `{}` → `Verification` | The labeled historical replay [VER-3] |
 
@@ -608,7 +621,7 @@ Unrelated messages never reset approvals. Old approvals stay in the log and neve
 
 ### 4.4 Simulated data [DATA-5, DATA-7]
 
-- One simulated satellite per demo run; `demo.reset` closes the run.
+- The linked demo may use two flagged simulated US objects, one per pair incident, within the four-object assigned fleet. This supersedes the old one-simulated-object restriction. `demo.reset` closes the run.
 - Simulated records are excluded from `validation.latest` and from `reports.*`.
 - The simulated event's `pc.source` is `"simulated"`. Only the synthetic object has no `celestrakUrl`; its real counterpart retains its real source link. Launch explicitly assigns the synthetic object to the caller, updates assignmentVersion and invalidates old scan coverage. Its OMM is included in a versioned demo-run overlay of the pinned catalog. Reset deactivates that overlay and assignment and advances assignmentVersion.
 - **Frontend Dev Switch** (see Appendix C): the UI may also run local synthetic scenarios against the live catalog for polish and demos without Convex. The target adapter maps simulator view models to this contract. Dev on uses the TLE catalog and synthetic scenarios. Dev off subscribes to the Convex snapshot and waits visibly for OMM. Phase 1 currently returns `ommUrl: null`; the OMM loader/renderer remains to be implemented, with an explicit integration-pending state even if a URL becomes available. `demo.launchSatellite` remains the production Convex demo path and can coexist.
@@ -625,11 +638,11 @@ Unrelated messages never reset approvals. Old approvals stay in the log and neve
 
 The room's chat is always there; the call is optional, like a Discord channel.
 
-1. The client calls `call.join({ eventId })` and gets `{ serverUrl, token, roomName, identity, language }`.
-   - The room name is `event-<eventId>` and the identity is `user-<userId>`.
-   - The token lasts 2 hours and carries the participant attributes `{ lang, side }`.
-2. The client connects with the LiveKit JS client, publishes its microphone, and calls `rooms.setInCall({ inCall: true })`.
-3. The translation worker (Python, server side) listens to each speaker and publishes:
+1. The client calls `call.join({ roomId })` and gets `{ serverUrl, token, roomName, identity, language }`.
+   - The room name is `coordination-<roomId>` and the identity is `user-<userId>`.
+   - The token lasts 2 hours and carries participant attributes `{ lang, companyId }`. Approval sides are resolved separately per event. The observer monitor does not receive publish/approval rights.
+2. The client connects with the LiveKit JS client, publishes its microphone, and calls `rooms.setInCall({ roomId, inCall: true })`. Disconnect clears that user's room presence.
+3. The translation worker (Python on DigitalOcean) uses Grok STT, protects values, translates with Claude, restores/checks them, then uses Cartesia for EN/ZH and Grok TTS for RU. It listens only to original human tracks and publishes:
    - `tr:<lang>:<identity>` — the translated voice of each speaker, one track per listener language;
    - `host:<lang>` — the Coordination Host's voice.
 4. The client plays:
@@ -637,7 +650,7 @@ The room's chat is always there; the call is optional, like a Discord channel.
    - the `host:<myLang>` track;
    - the raw microphone of a speaker only when they speak the viewer's language.
 5. Captions are not read from LiveKit. The worker writes each phrase to Convex as a `voice` message with the original and translations, and the client shows it through `messages.list` [LANG-5].
-6. When the last participant leaves the call, the Coordination Host posts the summary form (`kind: "summary"`) and both operators get a notification [ROOM-13]. Approval is still only `approvals.approve` (or veto / counter); speech never approves.
+6. When the last participant leaves the call, the Coordination Host posts a room summary (`kind: "summary"`) and room members get a notification [ROOM-13]. Each linked incident retains its own selected revision and required approval form. Only `approvals.approve` records approval. Veto and conversational counters do not approve, and neither does speech or the summary.
 
 Track names belong to the worker's implementation (Kostya). If they change, this section changes with them.
 
@@ -670,20 +683,21 @@ Only Convex calls these; the frontend never does. Base URL `ORBIT_SERVICE_URL`; 
 
 | Endpoint | Input → output | Used by |
 |---|---|---|
-| `POST /screen` | `{ scanId, snapshotId, primaryObjectIds, fromUtc, toUtc }` → `{ scanId, snapshotId, coverage, events: { objectA, objectB, tcaUtc, missKm, relSpeedKmS, spread }[] }` | Fleet Run Scan and Risk Monitor cron; primary IDs resolved by Convex [SCR-1, SCR-4, SCAN-1] |
+| `POST /screen` | `{ scanId, snapshotId, primaryObjectIds, fromUtc, toUtc }` → `{ jobId }`, then `GET /jobs/{jobId}` yields `{ scanId, snapshotId, coverage, events: { objectA, objectB, tcaUtc, missKm, relSpeedKmS, spread }[] }` | Fleet Run Scan and Risk Monitor cron; primary IDs resolved by Convex [SCR-1, SCR-4, SCAN-1] |
 | `POST /candidates` | `{ snapshotId, evidenceVersion, objectA, objectB, tcaUtc, allowedMovingObjectIds }` → grid results with geometry and fuel inputs, no policy; debris cannot be a mover | Incident Analyst [AGT-2, §20 Q11] |
-| `POST /rescreen` | `{ snapshotId, evidenceVersion, objectId, maneuver: { burnTimeUtc, deltaVMs, direction }, fromUtc, toUtc }` → `Rescreen` plus echoed snapshot/evidence versions | Maneuver Scheduler [SCR-7, EXE-2] |
+| `POST /rescreen` | `{ snapshotId, evidenceVersion, objectId, maneuver: { burnTimeUtc, deltaVMs, direction }, fromUtc, toUtc }` → `{ jobId }`; job result is `Rescreen` plus echoed snapshot/evidence versions | Maneuver Scheduler [SCR-7, EXE-2] |
 | `POST /simulate` | `{ targetObjectId, tcaUtc, name }` → `{ objectId, omm, event }` | `demo.launchSatellite` [SCR-10] |
 | `POST /verify` | `{ objectId, expected }` → `Verification` | Maneuver Verifier [VER-1] |
 | `GET /validation` | → `ValidationSummary` | Validation run [SCR-3] |
-| `GET /snapshot` | → `{ snapshotId, takenAt, sources, ommFile }` | Stored into Convex file storage for `catalog.snapshot` |
+| `GET /jobs/{jobId}` | → status, measured progress/counters, coverage, result or result reference | Convex polls bounded requests; long numerical work does not live inside a mutation |
+| `GET /snapshot` | → `{ snapshotId, takenAt, sources, ommFile }` | Versioned OMM asset served through backend-issued file URL; selected persistence/delivery path documented in master roadmap |
 
 ## Appendix B. Not in this spec
 
-- Deferred features: calling or inviting operators [DSP-2], third-operator notices [DSP-3, DSP-6], the details of the git-style schedule history [§20 Q14].
+- Deferred features: calling or inviting operators [DSP-2] and notices to unrelated affected operators [DSP-3, DSP-6].
 - Internal designs: agent prompts and the messages agents send each other, the translation worker's pipeline, and the Droid configuration.
-- The demo script, which is still to be discussed (plan section 7).
-- The local-backend fallback [SYNC-3] has no separate contract: a self-hosted Convex backend serves the same functions to the same frontend.
+- The accepted four-screen demo story and schedule-artifact workflow are in the master roadmap. Exact presentation timing is established in rehearsal.
+- Fallback [SYNC-3] uses tested local Dev-mode features and a labeled recording. A self-hosted shared backend is outside the locked deployment and cannot be claimed without implementation and validation.
 
 ## Appendix C. Agent observability + frontend Dev Switch (UI reconcile)
 
@@ -702,14 +716,16 @@ Same UI components in both modes. Dev mode is for polishing the ops board, conju
 
 ```ts
 type AgentId =
-  | "monitor" | "analyst" | "advocateA" | "advocateB"
+  | "monitor" | "analyst" | `advocate:${string}`
   | "host" | "checker" | "scheduler" | "verifier";
+
+type HumanId = `human:${string}`;   // stable user ID, not a room-wide A/B side
 
 type ToolId =
   | "sgp4" | "celestrak" | "socrates" | "spacetrack"
   | "keeptrack" | "policy" | "convex" | "room" | "schedule";
 
-type NodeId = AgentId | ToolId | "humanA" | "humanB";
+type NodeId = AgentId | ToolId | HumanId;
 
 type SpanKind = "llm" | "tool" | "http" | "handoff" | "human" | "check";
 type SpanStatus = "running" | "ok" | "error" | "waiting";
@@ -726,7 +742,7 @@ interface Span {
   t0: number;                       // wall-clock start, ms epoch
   ms?: number;                      // duration once finished
   t1?: number;                      // wall-clock end (animations at any speed)
-  progress: number;                 // 0..1 while running
+  progress: number | null;          // measured 0..1, or null for indeterminate work
   model?: string;
   tokensIn?: number;
   tokensOut?: number;
@@ -743,7 +759,7 @@ interface AgentLogLine {
   id: string;
   t: number;
   level: "debug" | "info" | "warn" | "error";
-  source: AgentId | "system" | "humanA" | "humanB";
+  source: AgentId | "system" | HumanId;
   msg: string;
   spanId?: string;
   eventId?: Id<"events"> | string;
@@ -756,4 +772,11 @@ interface AgentLogLine {
 | `agentLogs.list` | query | `{ eventId?: Id<"events">, limit?: number }` → `AgentLogLine[]` | Agents panel log tab; same assignment/privacy filters as spans, no raw policy/tool context; complements `log.list` audit entries |
 | `scan.last` | query | `{}` → `{ at: ISODate, objects: number, pairs: number, flagged: number, ms: number } \| null` | Last fleet-relevant Risk Monitor sweep, not a global stats leak. Live Run Scan phases/counters come from scans.getMine |
 
-Map `AgentRole` (section 2.1) to `AgentId` in the adapter: `risk_monitor→monitor`, `incident_analyst→analyst`, `operator_advocate`→`advocateA`/`advocateB` by side, `coordination_host→host`, `second_model→checker`, `maneuver_scheduler→scheduler`, `maneuver_verifier→verifier`.
+Map `AgentRole` (section 2.1) to `AgentId` in the adapter: `risk_monitor→monitor`, `incident_analyst→analyst`, `operator_advocate`→`advocate:<companyId>`, `coordination_host→host`, `second_model→checker`, `maneuver_scheduler→scheduler`, `maneuver_verifier→verifier`. Existing simulator `advocateA`/`advocateB` and `humanA`/`humanB` labels are legacy local aliases. Resolve them through the event's actual company/user mapping. Group-room identity must support more than two parties.
+
+
+## Appendix D. Locked external integrations
+
+The [master roadmap](master-roadmap.md) defines the current deployment, model IDs, service endpoints, environment names, and phase goals. Target runtime: Vercel frontend, Convex application state, DigitalOcean orbital/voice/Factory containers, Auth0 identities, LiveKit transport, Grok STT/RU TTS, Claude reasoning/translation, Cartesia EN/ZH TTS, Backboard isolated company memory, and Tiger Data historical analytics.
+
+Backboard is context only. Tiger Data is an analytics copy. Factory writes a checked, authorized artifact. None owns approval state. Convex actions call these services and mutations publish version-checked results. Current Phase 1 public catalog queries do not authorize these private operations.

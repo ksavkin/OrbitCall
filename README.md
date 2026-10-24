@@ -7,6 +7,10 @@ Nothing moves without a human. It is a handshake, not a law.
 > Built at **Cal Hacks 13.0** (Oct 23–25, 2026).
 > **Status: Phase 1 implementation.** The frontend lives in `web/`; the Convex backend at the repository root implements the first Incident Analyst and its checks. The broader workflow below remains the product plan. Product decisions updated Oct 24, 2026; see [Feature decisions](docs/analysis.md). Current assignments and feature-branch workflow are in [roadmap issue #1](https://github.com/ksavkin/OrbitCall/issues/1).
 
+## Master plan
+
+Start with [the locked master roadmap](docs/master-roadmap.md): short phase goals, recent problem evidence, the complete technical architecture, sponsor roles, and deployment instructions. The target is a hackathon demo with three dispatcher laptops and one read-only large display. Rooms support 2-4 operators across linked pair incidents. The locked languages are English, Russian, and Mandarin.
+
 ## Current integration and modes
 
 See [the integration handoff](docs/integration-status.md) for what is implemented and what is still planned. **Dev on** uses the current TLE catalog and synthetic scenarios. **Dev off** requires backend OMM and shows an explicit pending state until the pipeline is ready. CelesTrak remains the source; switching formats does not itself guarantee more accurate orbits.
@@ -21,20 +25,13 @@ See [Andrew's Phase 1 implementation and integration guide](docs/phase1-andrew.m
 
 ## The problem
 
-When two active satellites from different companies are on a collision course, the decision "who dodges" is still made by email. Tracking, screening and the maneuver itself are automated. The step in the middle is not:
+Dispatchers need to review close approaches, coordinate a response and check whether a proposed maneuver creates another encounter. ESA reports growing collision-avoidance activity. ISRO reports that 82 LEO maneuver plans were revised in 2025 to avoid close approaches after the maneuver. [ESA 2025 report](https://www.esa.int/Space_Safety/Space_Debris/ESA_Space_Environment_Report_2025), [ISRO 2026 release](https://www.isro.gov.in/Indian_Space_Situational_Awareness_Report_2025.html).
 
-- there is no protocol between companies for who yields;
-- there is no shared check that the promised maneuver was done;
-- there is no record to settle a dispute later;
-- operators sit in different time zones and speak different languages, with 13 minutes to 3 days of warning.
-
-Starlink solved this for itself with onboard autonomy. A small operator with 5–50 satellites and no 24/7 shift still has an inbox.
-
-OrbitCall solves the communication and decision step between operators who are **willing** to coordinate. It does not solve unwillingness to share data; that is policy, not software.
+OrbitCall demonstrates that decision workflow: assigned fleets, checked options, multilingual discussion, explicit human approval and a shared record. Small operators and this interface are our product focus. The reports support the orbital-coordination problem, rather than proving a universal manual process or a lack of existing tools. The [master roadmap](docs/master-roadmap.md) contains the dated evidence and demo scope.
 
 ## How it works
 
-The accepted [assigned-fleet user flow](docs/user-flow.md) defines the dashboard, scan scope, priority order and approval paths. Demo: two required users and an optional third based in Russia, the US and China, each seeded with four assigned spacecraft. Country and language do not grant access. My Incidents is ordered by severity, then earliest closest approach. Missing/stale evidence stays visible in a separate review section.
+The accepted [assigned-fleet user flow](docs/user-flow.md) defines the dashboard, scan scope, priority order and approval paths. Demo: three users based in Russia, the US and China, each seeded with four assigned spacecraft, plus a read-only observer display. A room supports 2-4 operators with linked pair events. Country and language do not grant access. My Incidents is ordered by severity, then earliest closest approach. Missing/stale evidence stays visible in a separate review section.
 
 TCA means **Time of Closest Approach**, when two objects are predicted to be nearest. The interface uses "Time until closest approach" alongside miss distance. Detection does not itself determine collision probability.
 
@@ -71,29 +68,29 @@ Principles:
 - Translation protects numbers, units, times and identifiers with placeholders and restores them from the original message or exact proposal revision.
 - Bilateral approvals refer to one incident, shared selection generation, proposal ID and revision. Confirmed debris uses one real active-object approver, never a fictitious second approval. Past agreements never authorize a future event.
 - Policy privacy is enforced in data access, agent context, live updates, logs and exports, as well as the UI.
-- One source of truth: one reactive database, both laptops subscribe to it.
+- One source of truth: one reactive database, all three laptops and the observer display subscribe to authorized views.
 - Agents run only for the top of the queue, not for every pair.
 
 ## Planned stack
 
 | Layer | Choice |
 |---|---|
-| Frontend | Next.js, globe.gl / CesiumJS |
+| Frontend | TypeScript, Next.js 16.4.3, React 19.3, existing Three.js GlobeScene, Tailwind CSS 4, Motion and Zustand |
 | Backend, live state, scheduler | Convex: the single source of truth for events, rooms, messages, proposals, approvals, policies, inbox and log; cron and scheduled functions; agent calls |
 | Orbital mechanics | A separate Python service (`python-sgp4`, Python 3.12): catalog screening, re-screen, verification, validation and the simulated satellite's orbit. It keeps the catalog snapshot; Convex calls it and stores the results. `satellite.js` only draws orbits in the browser |
-| Reasoning agents, translation | Claude (Sonnet; Haiku for Risk Monitor) |
+| Reasoning agents, translation | Claude Sonnet for reasoning and translation. Risk Monitor uses deterministic backend jobs and Python screening. Grok independently checks shared rationale |
 | Agent runtime | Our own backend: each agent is a separate Claude call with its own instructions and data access; agent messages are stored with the incident state. No agent framework. Fetch.ai was dropped on Oct 24, 2026 |
 | Orbit data format | Real mode: OMM (JSON / CSV), integration pending. Dev/demo: current TLE catalog and synthetic scenarios. No real-mode fallback to TLE |
-| Voice | Live call in a LiveKit room. A Python translation worker runs one chain per speaker: Grok STT (`grok-voice-transcribe-2.0`, both languages) → protect values → Claude translation → restore/check → Cartesia TTS. The Coordination Host speaks through Grok Voice (`grok-voice-latest`) via LiveKit under the same value checks. Text fallback |
-| Open | Russian on Grok STT is listed in xAI's docs; confirm with a short test clip. `grok-voice-think-fast-1.0` is not in xAI's docs, so the host uses `grok-voice-latest` |
+| Voice | LiveKit Cloud call plus persistent text. Python worker: Grok STT (`grok-voice-transcribe-2.0`) → protect values → Claude translation → restore/check → Cartesia EN/ZH or Grok RU TTS. Three languages, one shared room, pair-specific approvals |
+| Model and voice configuration | Use the pinned identifiers in the master roadmap. Test EN/RU/ZH speech and number integrity before rehearsal. The text Coordination Host uses Claude and the same listener-language TTS routing |
 | Sign-in | Pre-created test users only, one per operator; no registration. Login through Auth0 with sign-ups disabled; Convex verifies the identity on every read, write and subscription |
-| Optional | Factory Droid SDK (writes the approved maneuver file and its diff), Backboard (agent memory), Tiger Data (Pc time series) |
+| Additional locked sponsors | Factory Droid SDK for authorized schedule artifacts, Backboard for isolated operator memory, Tiger Data for historical observations. Convex owns app decisions |
 | Development | Cursor (required by the SpaceXAI track) |
-| Deploy | Vercel + Convex; the Python service and the LiveKit translation worker on Railway or Fly (a process that does not sleep) |
+| Deploy | Vercel frontend, shared Convex backend, DigitalOcean Docker containers for Python orbital API, LiveKit worker, and Node/Factory worker |
 
 ## Data sources
 
-Public sources, with accounts or keys where required. The demo runs on the demo week's real catalog snapshot, pinned with source timestamps for reproducibility. The demo conjunction comes from one simulated satellite entered on stage ("Launch your satellite"), whose orbit is built to cross a real catalog satellite at a chosen time; it carries a `simulated` flag and is labeled everywhere. Demo operator policies and proposed actions are labeled simulated. Verification uses a separately labeled historical maneuver replay.
+Public sources, with accounts or keys where required. The demo runs on the demo week's real catalog snapshot, pinned with source timestamps for reproducibility. Two labeled simulated US spacecraft can create the US/Russia and US/China encounters, each against a real catalog counterpart with a simulated demo assignment. Each dispatcher still has four assigned spacecraft. Engineered encounters, operator policies and proposed actions are labeled simulated. Verification uses a separately labeled historical maneuver replay. See the master roadmap for the complete four-screen story.
 
 | Source | Role |
 |---|---|
@@ -116,6 +113,7 @@ Validation reports recall over the full eligible SOCRATES list for a defined sna
 
 ## Docs
 
+- [Locked master roadmap](docs/master-roadmap.md) — phase goals, full stack, agents, sponsor boundaries, and deployment runbook.
 - [Assigned-fleet user flow](docs/user-flow.md) — accepted dashboard, fleet screening, priority, bilateral/debris workflows, primary-source research and acceptance scenarios.
 - [Plan v1](docs/plan-v1.md) — the full pre-hackathon kit: problem, evidence, architecture, demo script, data sources, sponsors, judge Q&A, 36-hour plan.
 - [Functionality](docs/functionality.md) — what OrbitCall does: actors, domain objects, lifecycle, functions by area, open questions for the specification.

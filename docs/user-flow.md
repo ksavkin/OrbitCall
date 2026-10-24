@@ -1,6 +1,6 @@
 # OrbitCall: assigned fleet and dispatcher workflow
 
-Accepted product decisions, October 24, 2026. This is the current workflow for the backend and frontend teams. It supersedes earlier global-queue demo descriptions. These are requirements, not implemented capabilities. Endpoint details belong to [specification.md](specification.md), stable function IDs to [functionality.md](functionality.md).
+Accepted product decisions, October 24, 2026. This workflow follows the locked [master roadmap](master-roadmap.md), including the latest four-screen, group-room, language, and sponsor decisions. It supersedes earlier global-queue demo descriptions. These are requirements, not implemented capabilities. Endpoint details belong to [specification.md](specification.md), stable function IDs to [functionality.md](functionality.md).
 
 ## Runtime mode decision (October 24)
 
@@ -10,9 +10,9 @@ The user confirmed: Dev on keeps the working TLE catalog and synthetic conjuncti
 
 An authenticated dispatcher monitors an assigned fleet. A company owns or operates spacecraft. A server-managed assignment grants a particular user responsibility for particular objects within that company. A user's country, display flag and language do not determine spacecraft ownership, fleet membership or permissions.
 
-The demo has two required users and an optional third: dispatchers based in Russia, the United States and China, each with an explicit assigned fleet. Seed four spacecraft per enabled user for the demonstration. Real catalog object metadata stays real. Demo assignments, identities, policies and maneuvers are labeled simulated and make no claim that the team represents actual owners. One optional simulated satellite can replace a fleet slot or be explicitly assigned on launch. The demo must make the resulting fleet count visible.
+The main demo has three dispatcher users and one read-only observer display, with support for a fourth operator in a separate test: dispatchers based in Russia, the United States and China, each with an explicit assigned fleet. Seed four spacecraft per enabled user for the demonstration. Real catalog object metadata stays real. Demo assignments, identities, policies and maneuvers are labeled simulated and make no claim that the team represents actual owners. The linked demo can use two explicitly simulated US fleet objects, one for each pair incident, while preserving four assigned objects per dispatcher. Simulated objects can replace seeded slots or be explicitly assigned on launch. The demo must make the resulting fleet count visible.
 
-The initial supported translation languages remain English and Russian. A China-based user can use English in this build. Chinese translation is not implied by their country and requires separate implementation and validation.
+The locked demo languages are English, Russian, and Mandarin (`en`, `ru`, `zh`). Language is configured per dispatcher, separately from country. Grok STT and Claude translation serve all three, Cartesia speaks English/Mandarin, and Grok TTS speaks Russian. Test the actual voices before rehearsal.
 
 Assignments are seeded by the backend team for the demo. Self-service assignment administration is out of scope. Revoking an assignment removes incident access and invalidates that person's affected current approvals. Event ownership and A/B sides remain stable across viewers. A may be the user's counterpart in another event.
 
@@ -50,7 +50,7 @@ flowchart TD
 3. Screen each assigned object against the other usable catalog objects. Skip self-pairs and deduplicate unordered pairs. Public-source fetch cadence remains separate from manual screening and the five-minute monitoring cycle.
 4. Create or update canonical conjunction events and attach matching supplied probability data. Screening computes encounter geometry, not a new Pc. A scan can find a close approach with no supplied probability.
 5. Stream scan state (queued, running, completed, failed), phase and measured counters. The radar sweep visualizes actual work. Repeated clicks reuse the active run. Shared work across users may be cached by snapshot, assignment version and time window without leaking other fleets.
-6. Publish results to every authorized assigned dispatcher for the involved object(s). A Russia-based user's object approaching a US-based user's object creates one event and one shared room, visible in both personal queues. It does not create two negotiations. The China-based user sees that room only if responsible for an involved object.
+6. Publish results to every authorized assigned dispatcher for the involved object(s). A Russia-based user's object approaching a US-based user's object creates one canonical event visible in both relevant personal queues. Related pair events can share a coordination room with 2-4 operators. A China-based operator joins when a linked incident concerns their fleet. Room membership grants only the intentionally shared context, not another company's private policy or unrelated incident access.
 7. Zero detections reads "No close approaches found within this scan's scope and 72-hour window", with source and coverage. An incomplete or failed scan never produces a safe/clear badge. Previous results remain visible with their scan time.
 
 Routine monitoring continues every five minutes over cached inputs. A manual scan is a refresh of fleet screening, not the only way to receive an updated alert. Validation may separately use a broader reference scope. Catalog-context pairs never enter My Incidents unless a fleet member is involved.
@@ -69,6 +69,9 @@ The working queue uses **severity first, then earliest closest approach within e
 Explain priorities in words: "High supplied probability, closest approach in 2 hours". Report fleet affected counts by unique assigned spacecraft, not event count. Report incident counts by canonical event ID.
 
 ## 5. Incident decision paths
+
+A room can contain several linked pair incidents. The main demo contains US/RU and US/CN, with three active dispatchers. Call/chat are room-scoped. Selection, approvals, scheduling, and verification stay event-scoped. The fourth screen is an authenticated read-only observer projection. No participant approves every event merely by joining the room.
+
 
 ### Two active spacecraft with participating operators
 
@@ -106,7 +109,7 @@ The selected screen layout and severity/time ordering are product decisions info
 1. Each enabled demo account opens its own four-object fleet, positions and relevant incidents. Country changes do not change authorization.
 2. Selecting one satellite filters the list. Run Scan still checks all assigned satellites and labels that scope.
 3. One fleet member approaching an external object appears. An unrelated external/external pair does not enter the user's queue.
-4. An event shared by two enabled accounts has the same ID, selection and revision on both screens. An unrelated third account cannot read the room or private traces.
+4. An event shared by two enabled accounts has the same ID, selection and revision on both screens. An unrelated third account cannot read the room or private traces. A member involved in a different linked incident can read the shared room projection but cannot approve this event or read private records.
 5. Empty, partial, failed and zero-result scans have distinct states. Changing a snapshot or assignments prevents an old run from being labeled current for the new scope.
 6. A red event in two hours precedes a red event in ten hours even if the latter has a higher Pc. Red precedes yellow. Unknown/stale Pc remains visible in Data needs review.
 7. Selecting a different existing candidate does not send a counter. Both sides approve the exact shared selection. Assignment revocation or material input changes invalidate affected authorization.

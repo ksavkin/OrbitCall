@@ -1,10 +1,13 @@
 # Frontend progress (Adil)
 
+Latest accepted scope and technical stack: [master roadmap](../master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Existing implementation notes below are not completion claims.
+
+
 Branch: `adil`. App: `web/`. Run with `cd web && npm run dev`, then open http://localhost:3000.
 
 ## Accepted target workflow (October 24, implementation pending)
 
-The user selected [My Fleet + My Incidents + globe](../user-flow.md). Each enabled demo user has four assigned spacecraft; two users are required, with an optional third based in Russia, the US or China. Run Scan checks the full assigned fleet against all other usable catalog objects for 72 hours. Selecting a satellite filters incidents, not scan scope. Country/flag/language do not grant object access.
+The user selected [My Fleet + My Incidents + globe](../user-flow.md). Each enabled demo dispatcher has four assigned spacecraft. The main demo uses three dispatcher laptops based in the US, Russia and China, plus a read-only large display. Linked-event rooms support 2-4 operators. Run Scan checks the full assigned fleet against all other usable catalog objects for 72 hours. Selecting a satellite filters incidents, not scan scope. Country/flag/language do not grant object access.
 
 Priority: severity first, then earliest closest approach; missing/stale data is a separate visible review section. Explain TCA as "Time until closest approach". Show up to four computed candidates. Selecting an existing card changes the shared selection without countering or approving. Each required side then presses Approve. Confirmed debris has one real active-object approver, never an auto-approved debris side.
 
