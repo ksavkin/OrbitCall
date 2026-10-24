@@ -89,6 +89,8 @@ export interface Reply {
   eventId: string;
   side: "a" | "b";
   decision: Exclude<Approval, "pending">;
+  /** Proposal version the answer was about. */
+  version?: number;
   note?: string;
   /** Original wording before translation, with its language. */
   original?: string;
@@ -125,6 +127,8 @@ export interface ConjunctionEvent {
   parties?: Party[];
   /** How much to trust this event, with the reason in plain words (scan results list). */
   confidence?: { level: "high" | "medium" | "low"; why: string };
+  /** What was actually done and checked once the event closed (VER-1, EXE-2, DSP-3). */
+  outcome?: { checks: { label: string; detail: string; ok: boolean }[]; next: string[]; resolvedAt: number | null };
   /** Options shown to the dispatcher; exactly one has `recommended` (AGT-2). */
   options?: DecisionOption[];
   createdAt: number;

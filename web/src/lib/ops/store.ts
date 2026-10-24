@@ -32,6 +32,8 @@ interface OpsState {
   replies: Reply[];
   /** Demo flow: Run scan, pick a case from the results, watch the run. */
   scan: { phase: "idle" | "scanning" | "results"; ids: string[]; stats: { objects: number; pairs: number; ms: number } | null };
+  /** An incident just closed: green edge glow and the resolution summary. */
+  resolved: { eventId: string; at: number } | null;
   /** High-priority alert: red edge glow, banner and alarm. */
   alert: { eventId: string; at: number } | null;
   humans: HumanPrompt[];
@@ -64,6 +66,7 @@ export const useOps = create<OpsState>((set) => ({
   replies: [],
   scan: { phase: "idle", ids: [], stats: null },
   alert: null,
+  resolved: null,
   humans: [],
   scanning: false,
   lastScan: null,

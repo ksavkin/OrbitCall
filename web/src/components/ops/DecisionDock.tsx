@@ -39,8 +39,10 @@ export function DecisionDock() {
   const viewer: "a" | "b" = actAs ?? "a";
   const other: "a" | "b" = viewer === "a" ? "b" : "a";
 
+  const resolvedId = useOps((s) => s.resolved?.eventId);
   const state = useMemo(() => {
-    if (!e || tab !== "conjunctions") return null;
+    // the resolution card takes over once the incident closes
+    if (!e || tab !== "conjunctions" || resolvedId === e.id) return null;
     const prompt = humans.find((h) => h.eventId === e.id && h.side === viewer);
     const mine = [...replies].reverse().find((r) => r.eventId === e.id && r.side === viewer);
     const theirs = [...replies].reverse().find((r) => r.eventId === e.id && r.side === other);
@@ -52,7 +54,7 @@ export function DecisionDock() {
       mode = "waiting";
     else if (mine && ["approved", "scheduled"].includes(e.status) && now - Math.max(mine.t, theirs?.t ?? 0) < 9000) mode = "done";
     return mode ? { mode, mine, theirs } : null;
-  }, [e, tab, humans, replies, viewer, other, now]);
+  }, [e, tab, humans, replies, viewer, other, now, resolvedId]);
 
   return (
     <AnimatePresence>

@@ -22,6 +22,7 @@ import { OpsSync } from "@/components/ops/OpsSync";
 import { Director } from "@/components/ops/Director";
 import { ScanResults, UrgencyOverlay } from "@/components/ops/DemoFlow";
 import { DecisionDock } from "@/components/ops/DecisionDock";
+import { ResolutionOverlay } from "@/components/ops/Resolution";
 import { ScenarioBar } from "@/components/ops/ScenarioBar";
 import { useOps } from "@/lib/ops/store";
 import { sceneRef } from "@/lib/sceneRef";
@@ -69,6 +70,7 @@ export function OrbitApp() {
       <DecisionDock />
       <UrgencyOverlay />
       <ScanResults />
+      <ResolutionOverlay />
       <AgentsExpanded />
       <ViewSwitcher />
       <MapControls />

@@ -27,6 +27,9 @@ const CONF = {
   low: { label: "Low", color: "var(--orange)" },
 } as const;
 
+/** How long the center warning holds before the results list opens. */
+export const WARN_MS = 3400;
+
 const priority = (e: ConjunctionEvent, now: number) => e.pc / Math.max((e.tca - now) / 3600_000, 1);
 
 /** Primary action on the queue: one full screening pass. */
@@ -60,7 +63,10 @@ export function ScanResults() {
   const alert = useOps((s) => s.alert);
   const owners = useOrbit((s) => s.catalog?.owners ?? NO_OWNERS);
   const now = useNow(1000);
-  const open = scan.phase === "results" && tab === "conjunctions";
+  const fast = useNow(200);
+  // a red find shows the center warning first; the list opens after it
+  const warned = !alert || (fast > 0 && fast - alert.at > WARN_MS);
+  const open = scan.phase === "results" && tab === "conjunctions" && warned;
   const rows = useMemo(() => {
     const t = now;
     return events.filter((e) => scan.ids.includes(e.id)).sort((a, b) => priority(b, t) - priority(a, t));
@@ -253,23 +259,28 @@ export function UrgencyOverlay() {
   const tab = useOps((s) => s.tab);
   const phase = useOps((s) => s.scan.phase);
   const ev = useOps((s) => (s.alert ? s.events.find((e) => e.id === s.alert!.eventId) : undefined));
-  const now = useNow(1000);
+  const now = useNow(200);
+  const redCount = useOps((s) => s.events.filter((e) => s.scan.ids.includes(e.id) && e.risk === "red").length);
   const sounded = useRef<string | null>(null);
   const active = !!alert && !!ev && tab === "conjunctions" && !RESOLVED.includes(ev.status) && ev.status !== "scheduled";
-  // strong while the dispatcher still has to pick a case, calm once the agents are on it
+  // alarm first (center warning), strong while the dispatcher picks a case, calm once the agents are on it
+  const warning = active && phase === "results" && now > 0 && now - alert!.at < WARN_MS;
   const strong = phase === "results";
 
   useEffect(() => {
     if (!alert || sounded.current === `${alert.eventId}:${alert.at}`) return;
     sounded.current = `${alert.eventId}:${alert.at}`;
-    sfx.alarm();
+    if (useOps.getState().scan.phase === "results") sfx.siren();
+    else sfx.alarm();
   }, [alert]);
 
   return (
     <AnimatePresence>
       {active && ev && (
         <motion.div key="urgency" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.6 }} className="pointer-events-none absolute inset-0 z-[45]">
-          <div className={`urgency-edge absolute inset-0 ${strong ? "urgency-strong" : "urgency-calm"}`} />
+          <div className={`urgency-edge absolute inset-0 ${warning ? "urgency-alarm" : strong ? "urgency-strong" : "urgency-calm"}`} />
+          <AnimatePresence>{warning && <CenterWarning key="warn" ev={ev} red={redCount} now={now} />}</AnimatePresence>
+          {!warning && (
           <motion.div
             initial={{ y: -12, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -299,8 +310,76 @@ export function UrgencyOverlay() {
               <X size={11} />
             </button>
           </motion.div>
+          )}
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+/** Full-screen alarm moment for a high-priority find: flash, hazard stripes, the worst case up front. */
+function CenterWarning({ ev, red, now }: { ev: ConjunctionEvent; red: number; now: number }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: 0.45 } }}
+      className="absolute inset-0 grid place-items-center"
+    >
+      {/* one hard red flash, then a dim red wash */}
+      <motion.div
+        className="absolute inset-0"
+        initial={{ background: "rgba(255,40,30,0.38)" }}
+        animate={{ background: ["rgba(255,40,30,0.38)", "rgba(120,10,8,0.18)", "rgba(255,40,30,0.24)", "rgba(80,6,6,0.16)"] }}
+        transition={{ duration: 1.6, times: [0, 0.3, 0.55, 1] }}
+      />
+      <motion.div
+        initial={{ scale: 0.6, opacity: 0, filter: "blur(10px)" }}
+        animate={{ scale: [0.6, 1.06, 1], opacity: 1, filter: "blur(0px)" }}
+        exit={{ scale: 0.85, y: -220, opacity: 0, filter: "blur(6px)", transition: { duration: 0.5, ease: [0.55, 0, 0.6, 1] } }}
+        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+        className="relative w-[520px] max-w-[calc(100vw-32px)] overflow-hidden rounded-[18px]"
+        style={{ background: "rgba(28,6,6,0.88)", backdropFilter: "blur(18px)", boxShadow: "inset 0 0 0 1.5px rgba(255,90,79,0.7), 0 0 80px -10px rgba(255,40,30,0.7)" }}
+      >
+        <div className="hazard-stripes h-2.5 w-full" />
+        <div className="flex flex-col items-center px-6 pb-5 pt-5 text-center">
+          <span className="relative grid h-16 w-16 place-items-center">
+            <span className="absolute inset-0 rounded-full border-2 border-red" style={{ animation: "ping 1s var(--ease-out) infinite" }} />
+            <span className="absolute inset-2 rounded-full bg-[rgba(255,90,79,0.18)]" />
+            <motion.svg
+              viewBox="0 0 24 24"
+              width="34"
+              height="34"
+              animate={{ scale: [1, 1.12, 1] }}
+              transition={{ duration: 0.75, repeat: Infinity }}
+              className="relative drop-shadow-[0_0_10px_rgba(255,90,79,0.9)]"
+            >
+              <path d="M12 3 L22 20 H2 Z" fill="none" stroke="#ff5a4f" strokeWidth="2" strokeLinejoin="round" />
+              <path d="M12 9.5 V14" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" />
+              <circle cx="12" cy="17" r="1.25" fill="#fff" />
+            </motion.svg>
+          </span>
+          <div className="mt-3 text-[11px] font-bold uppercase tracking-[0.22em] text-red">High-priority conjunction</div>
+          <div className="mt-1 text-[22px] font-semibold tracking-[-0.02em] text-white">
+            {red} {red === 1 ? "event needs" : "events need"} action within 72 h
+          </div>
+          <div className="mt-3 w-full rounded-[12px] bg-black/35 px-3.5 py-2.5 text-left shadow-[inset_0_0_0_1px_rgba(255,90,79,0.3)]">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-[#ffb3ad]">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red" /> Most urgent · {ev.id}
+            </div>
+            <div className="mt-1 truncate text-[14px] font-semibold text-white">
+              {ev.a.name} <span className="text-[#ffb3ad]">×</span> {ev.b.name}
+            </div>
+            <div className="mono mt-1 flex items-center gap-3 text-[12px]">
+              <span className="text-red">Pc {fmtPc(ev.pc)}</span>
+              <span className="text-fg">{fmtMiss(ev.missM)}</span>
+              <span className="tnum text-fg">{now ? fmtCountdown(ev.tca - now) : ""}</span>
+            </div>
+          </div>
+          <div className="mt-3 text-[11px] text-[#ffb3ad]">Opening the ranked list…</div>
+        </div>
+        <div className="hazard-stripes h-2.5 w-full" />
+      </motion.div>
+    </motion.div>
   );
 }

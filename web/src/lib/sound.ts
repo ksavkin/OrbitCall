@@ -62,6 +62,35 @@ function noise(dur: number, from: number, to: number, gain = 0.25) {
   src.start(t0);
 }
 
+/** Two-tone siren: a wailing sweep plus a low pulse, filtered so it alarms without hurting. */
+function siren(cycles: number, period: number) {
+  const a = audio();
+  if (!a || !master || !enabled) return;
+  const t0 = a.currentTime;
+  const total = cycles * period;
+  const osc = a.createOscillator();
+  osc.type = "sawtooth";
+  const lp = a.createBiquadFilter();
+  lp.type = "lowpass";
+  lp.frequency.value = 2400;
+  const g = a.createGain();
+  for (let i = 0; i < cycles; i++) {
+    const t = t0 + i * period;
+    osc.frequency.setValueAtTime(620, t);
+    osc.frequency.exponentialRampToValueAtTime(1180, t + period * 0.5);
+    osc.frequency.exponentialRampToValueAtTime(620, t + period);
+  }
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(0.13, t0 + 0.06);
+  g.gain.setValueAtTime(0.13, t0 + total - 0.25);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + total);
+  osc.connect(lp).connect(g).connect(master);
+  osc.start(t0);
+  osc.stop(t0 + total + 0.05);
+  // low pulse under it so it reads as an alarm, not a whistle
+  for (let i = 0; i < cycles * 2; i++) tone(110, 0.18, { type: "square", gain: 0.12, delay: i * (period / 2) });
+}
+
 export const sfx = {
   setEnabled(v: boolean) {
     enabled = v;
@@ -103,6 +132,19 @@ export const sfx = {
   chime() {
     tone(784, 0.18, { gain: 0.08 });
     tone(1175, 0.24, { gain: 0.06, delay: 0.08 });
+  },
+  /** High-priority alarm: siren wail with a low pulse, then the console beeps. */
+  siren() {
+    siren(3, 0.9);
+    for (let i = 0; i < 3; i++) {
+      tone(988, 0.13, { gain: 0.14, type: "square", delay: 2.8 + i * 0.42 });
+      tone(740, 0.16, { gain: 0.12, type: "square", delay: 2.8 + i * 0.42 + 0.15 });
+    }
+  },
+  /** Incident closed: a rising major chord. */
+  resolved() {
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 0.9 - i * 0.12, { gain: 0.1, delay: i * 0.11 }));
+    tone(1568, 1.1, { gain: 0.035, delay: 0.45 });
   },
   /** Urgent but not shrill: three falling two-tone pairs, like an ops console. */
   alarm() {

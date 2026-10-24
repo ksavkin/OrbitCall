@@ -126,6 +126,7 @@ export class Engine {
       validation: null,
       replies: [],
       alert: null,
+      resolved: null,
       scan: { phase: "idle", ids: [], stats: null },
     });
   }
@@ -271,10 +272,11 @@ export class Engine {
     const fn = this.humanWaits.get(key);
     if (!fn) return;
     this.humanWaits.delete(key);
+    const version = useOps.getState().humans.find((h) => h.eventId === eventId && h.side === side)?.proposalVersion;
     useOps.setState((s) => ({ humans: s.humans.filter((h) => !(h.eventId === eventId && h.side === side)) }));
     this.update(eventId, (e) => ({ approvals: { ...e.approvals, [side]: d.decision } }));
     useOps.setState((s) => ({
-      replies: [...s.replies.slice(-30), { eventId, side, decision: d.decision, note: d.note, original: d.original, lang: d.lang, t: Date.now() }],
+      replies: [...s.replies.slice(-30), { eventId, side, decision: d.decision, version, note: d.note, original: d.original, lang: d.lang, t: Date.now() }],
     }));
     this.log(side === "a" ? "humanA" : "humanB", `${d.decision === "approved" ? "Approved" : d.decision === "vetoed" ? "Vetoed" : "Countered"} proposal${d.note ? ` · “${d.note}”` : ""}`, d.decision === "approved" ? "info" : "warn", { eventId });
     fn(d);

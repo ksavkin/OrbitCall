@@ -501,12 +501,25 @@ async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Propo
 
 type Affected = { operator: string; owner: string; satellite: string };
 
+/** Record a step that really ran, for the resolution summary. */
+function checkDone(eng: Engine, id: string, label: string, detail: string, ok = true) {
+  eng.update(id, (ev) => ({ outcome: { checks: [...(ev.outcome?.checks ?? []), { label, detail, ok }], next: ev.outcome?.next ?? [], resolvedAt: null } }));
+}
+
+/** Close the incident: next actions, the time, and the green screen. */
+function resolve(eng: Engine, id: string, next: string[]) {
+  eng.update(id, (ev) => ({ outcome: { checks: ev.outcome?.checks ?? [], next, resolvedAt: Date.now() } }));
+  useOps.setState((s) => ({ resolved: { eventId: id, at: Date.now() }, alert: s.alert?.eventId === id ? null : s.alert }));
+}
+
 async function scheduleAndVerify(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal, refuse = false, affected?: Affected) {
   const id = e.id;
   if (pr.action === "wait") {
     // both sides agreed to wait: nothing to schedule, keep watching (ROOM-2)
     eng.update(id, { status: "monitoring", agentsWorking: false });
     eng.log("host", `${id} both sides agreed to wait · monitoring until the next CDM`, "info", { eventId: id });
+    checkDone(eng, id, "Both sides agreed to wait", `No burn. Pc ${fmtPc(e.pc)} stays under watch`);
+    resolve(eng, id, [`Risk Monitor re-checks ${id} with every new CDM until ${fmtWhen(e.tca)}`, "Either side can reopen the room from the inbox", "Decision and both answers are in the audit log"]);
     return true;
   }
   eng.update(id, { status: "approved", agentsWorking: true });
@@ -526,6 +539,8 @@ async function scheduleAndVerify(eng: Engine, gen: number, e: ConjunctionEvent, 
     gen,
   );
   if (refuse) return false;
+  const moverName = pr.mover === "a" ? e.a.name : e.b.name;
+  checkDone(eng, id, "Catalog re-screen", "Moved orbit checked against all 18,589 objects: no new conjunctions in 72 h");
   await eng.span(
     {
       agent: "scheduler",
@@ -558,6 +573,8 @@ async function scheduleAndVerify(eng: Engine, gen: number, e: ConjunctionEvent, 
       gen,
     );
   }
+  checkDone(eng, id, "Maneuver scheduled", `${moverName} ${pr.action}s ${pr.dvMs} m/s at ${pr.burnAt ? fmtWhen(pr.burnAt) : "—"}`);
+  if (affected) checkDone(eng, id, "Affected operator notified", `${affected.operator.replace(/\s*\(synthetic\)/i, "")} acknowledged before the burn`);
   eng.update(id, { status: "scheduled", agentsWorking: false });
   eng.log("scheduler", `${id} scheduled · checked against the catalog, no new conjunctions`, "info", { eventId: id });
   // jump ahead: the verifier runs after the burn time on fresh orbit data
@@ -593,6 +610,12 @@ async function scheduleAndVerify(eng: Engine, gen: number, e: ConjunctionEvent, 
     gen,
   );
   eng.update(id, { status: "verified", agentsWorking: false });
+  checkDone(eng, id, "Burn verified", `New element set matches the promise: miss at TCA ${fmtMiss(pr.missAfterM)}`);
+  resolve(eng, id, [
+    `Verifier re-checks with the next element set before ${fmtWhen(e.tca)}`,
+    `Risk Monitor keeps ${id} in the feed until TCA passes`,
+    "Both operators get the record in their inbox and the audit log",
+  ]);
   eng.log("verifier", `${id} maneuver confirmed`, "info", { eventId: id });
   return true;
 }
