@@ -1,0 +1,56 @@
+# Frontend progress (Adil)
+
+Branch: `adil`. App: `web/`. Run with `cd web && npm run dev`, then open http://localhost:3000.
+
+## Where things stand
+
+The Orbit screen is done and the Conjunctions screen is built against the backend contract with a dev simulator. Rooms, Policy, Audit log and Inbox are not started.
+
+## Done
+
+| Commit | What it added |
+|---|---|
+| `792e449` | Next.js app, live CelesTrak catalog pipeline with a 2 h cache and an offline snapshot |
+| `ff34adf` | Orbit view: globe with 5 views, live SGP4 satellites in a worker, navbar, footer, sounds |
+| `5489951` | Selection and follow polish, PBR hero model with reflections, Starlink model, owner flags |
+| `ee190a7` | Live weather (clouds, wind, currents, storms, tornadoes, aurora, Kp), congestion layers, country filter and coloring, night and terrain fixes |
+| `c72790a` | Congestion as a thermal map, ground track stays on while following |
+| `d004fda` | Thermal map without clipped plateaus |
+| next commit | Dev switch, Conjunctions screen, agents window, scenario simulator, these docs |
+
+## Conjunctions screen (this round)
+
+- **Dev switch** in the navbar (`D`). Off: ops panels show "backend not connected". On: the simulator in `web/src/lib/ops/engine.ts` fills the same store the backend adapter will fill.
+- **Queue** (left): red first, then Pc divided by hours to TCA. Each row has countdown, miss, Pc with trend, status, and a light sweep while agents work. The open row shows the numbers, a Pc chart on a log axis with the 1e-4 line, the five-line summary, the proposal card with approvals per side, approve / veto / counter, and Preview TCA.
+- **Globe**: both orbits of the focused event cross at the TCA point. The synthetic object is a real two-body orbit built to pass the real satellite at the stated miss distance (`web/src/lib/ops/encounter.ts`, checked by `measureMiss`). Preview TCA jumps the clock 70 s before TCA and frames the crossing. The Risk Monitor's screening pass shows as a sweep around the LEO shell that lights up the satellites it passes.
+- **Agents window** (right, expandable to full screen): agent graph with live call and answer pulses, "needs you" edges to the operators, check and failure badges. The Now card streams the thinking summary with tokens, latency and cost. Trace shows every step as a waterfall row with request, response, HTTP line and model. Logs show every line with filters.
+- **Scenarios** (bottom bar, dev only): six user stories from the docs. Veto then re-plan (the demo scene from plan-v1 §7), both approve, scheduler refuses, second opinion disagrees, debris with one side moving, no agreement. Pause, 1× / 2× / 4×, autopilot for the operator answers, reset.
+- **Backend contract**: `web/src/lib/ops/types.ts`, described for the backend team in `docs/specification.md`.
+
+## Checked in the browser (2026-10-24)
+
+- Dev on, Conjunctions tab, demo scenario from start to "Maneuver confirmed", at 1× and 4×.
+- Proposal v1, B's veto, re-plan to v2, both approvals, scheduling, verification.
+- Preview TCA: objects converge at the TCA point on both orbits, range shrinks to under 100 km in view.
+- Expanded agents view, trace grouping of screening passes, log stream.
+- Dev off: queue and agents empty states.
+
+## Not checked yet
+
+- Scenarios other than "Veto, then re-plan" were not run end to end in the browser.
+- Manual approve / veto / counter with autopilot off.
+- Layout below 1280px width.
+- Sounds for the new events (alert, chime) were not listened to.
+
+## Known gaps and placeholders
+
+- Grok model ids and prices are placeholders (`web/src/lib/ops/roster.ts`). Grok cost shows `—`.
+- SOCRATES, SupGP and KeepTrack request URLs in the traces are display placeholders until the backend spec fixes them.
+- The SOCRATES validation badge (47/50) comes from the simulator. In prod it should come from `events.validation()`.
+- Synthetic B objects are drawn as glow points, not 3D models.
+
+## Next
+
+1. Conjunction room screen: transcript with translation, proposal revisions, approve / veto / counter per side, maneuver diff.
+2. Backend adapter `web/src/lib/ops/backend.ts` once P0 of `docs/specification.md` exists.
+3. Policy form, Audit log, Inbox.
