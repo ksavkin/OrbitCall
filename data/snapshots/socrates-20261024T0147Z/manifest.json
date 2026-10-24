@@ -1,0 +1,48 @@
+{
+  "snapshotId": "socrates-20261024T0147Z",
+  "socratesRunUtc": "2026-10-24T01:47:21Z",
+  "index": {
+    "url": "https://celestrak.org/SOCRATES/jsonDir.php",
+    "fetchedAt": "2026-10-24T12:29:00Z",
+    "httpStatus": 200,
+    "bytes": 114,
+    "sha256": "b237e8ef2eda7efbb18d6283bfe37104a175d2167a2228682f34ec3c7729c353",
+    "entry": {
+      "FILE_NAME": "sort-minRange.csv",
+      "FILE_SIZE": 22129626,
+      "FILE_MTIME": "2026-10-24 01:47:21 UTC"
+    }
+  },
+  "files": [
+    {
+      "file": "socrates.csv.gz",
+      "source": "socrates",
+      "url": "https://celestrak.org/SOCRATES/sort-minRange.csv",
+      "fetchedAt": "2026-10-24T12:29:01Z",
+      "httpStatus": 200,
+      "bytes": 22129626,
+      "sha256": "59abb37a30a4524bff6941cea772035a484b11d189c24ac6b20796e3a5f78d14",
+      "rows": 195064,
+      "columns": [
+        "NORAD_CAT_ID_1",
+        "OBJECT_NAME_1",
+        "DSE_1",
+        "NORAD_CAT_ID_2",
+        "OBJECT_NAME_2",
+        "DSE_2",
+        "TCA",
+        "TCA_RANGE",
+        "TCA_RELATIVE_SPEED",
+        "MAX_PROB",
+        "DILUTION"
+      ],
+      "fileMtime": "2026-10-24 01:47:21 UTC",
+      "fileMtimeUtc": "2026-10-24T01:47:21Z",
+      "lastModifiedHeader": "Sat, 24 Oct 2026 01:47:21 GMT",
+      "fileSizeInIndex": 22129626,
+      "compression": "gzip",
+      "gzBytes": 7475779,
+      "gzSha256": "9fe9b11f6a1000dc0afbe1c9c68912841301fcb42ceeecdc520275cfaad616a2"
+    }
+  ]
+}
