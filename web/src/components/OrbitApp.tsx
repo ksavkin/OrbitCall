@@ -11,6 +11,8 @@ import { Navbar } from "@/components/ui/Navbar";
 import { SatellitePanel } from "@/components/ui/SatellitePanel";
 import { SearchPalette } from "@/components/ui/SearchPalette";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import { WeatherSync } from "@/components/globe/WeatherSync";
+import { StormLabels, WeatherCard } from "@/components/ui/Weather";
 import { sceneRef } from "@/lib/sceneRef";
 import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
@@ -27,8 +29,14 @@ export function OrbitApp() {
       {/* edge vignette keeps the chrome legible over bright imagery */}
       <div className="pointer-events-none absolute inset-0 z-10 bg-[radial-gradient(ellipse_at_center,transparent_55%,rgba(0,0,0,0.55)_100%)]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/50 to-transparent" />
+      <WeatherSync />
+      <StormLabels />
       <Navbar />
-      <CatalogPanel />
+      {/* left column: catalog and live weather share the height */}
+      <div className="pointer-events-none absolute bottom-[112px] left-2.5 top-[58px] z-20 flex w-[244px] flex-col gap-2">
+        <CatalogPanel />
+        <WeatherCard />
+      </div>
       <SatellitePanel />
       <ViewSwitcher />
       <MapControls />

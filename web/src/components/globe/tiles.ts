@@ -128,13 +128,14 @@ const tileFragment = /* glsl */ `
     } else if (uMode == 1) {
       col = tile * 1.04 + vec3(0.35, 0.55, 1.0) * fres * 0.3;
     } else if (uMode == 2) {
-      col = moon * 1.4 + lights + vec3(0.01, 0.015, 0.025);
+      // night view: lights over a barely moonlit ground, matching the base shader
+      col = pow(tile, vec3(1.2)) * vec3(0.016, 0.022, 0.036) + lights + vec3(0.005, 0.007, 0.012);
       col += vec3(0.25, 0.4, 0.8) * fres * 0.25;
     } else {
       // hillshade tile (grey, 0.7 ≈ flat) on the hypsometric tint of the base view
       float shade = clamp((tile.r - 0.35) * 1.6, 0.0, 1.4);
       float h = texture2D(uTopo, eq).r;
-      float land = 1.0 - smoothstep(0.35, 0.65, texture2D(uWater, eq).r);
+      float land = 1.0 - smoothstep(0.3, 0.7, texture2D(uSpec, eq).r); // 4K ocean mask, smooth coasts
       vec3 sea = mix(vec3(0.030, 0.045, 0.070), vec3(0.055, 0.080, 0.115), fres);
       vec3 ground = mix(vec3(0.11, 0.12, 0.14), vec3(0.50, 0.52, 0.55), pow(clamp(h * 1.15, 0.0, 1.0), 0.8));
       col = mix(sea, ground * (0.25 + 1.0 * shade * shade), land);

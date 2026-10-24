@@ -53,6 +53,7 @@ export function Globe() {
         liveStats.invalid = s.invalid;
       },
       onReady: () => useOrbit.getState().set({ stage: "ready" }),
+      onDensity: (bins, top) => useOrbit.getState().set({ density: { bins, top, at: Date.now() } }),
     });
     sceneRef.set(scene);
     if (process.env.NODE_ENV === "development") (window as unknown as { __scene: GlobeScene }).__scene = scene;
@@ -69,7 +70,10 @@ export function Globe() {
         const catalog = parseCatalog(payload);
         useOrbit.getState().set({ catalog, stage: "propagate" });
         scene.setCatalog(catalog);
-        scene.setEnabled(useOrbit.getState().enabled);
+        const st = useOrbit.getState();
+        scene.setEnabled(st.enabled);
+        scene.setHiddenOwners(st.hiddenOwners);
+        scene.setColorBy(st.colorBy);
       } catch (e) {
         useOrbit.getState().set({ stage: "error", error: (e as Error).message });
       }
@@ -79,6 +83,8 @@ export function Globe() {
     const unsub = useOrbit.subscribe((s, prev) => {
       if (s.viewMode !== prev.viewMode) scene.setViewMode(s.viewMode);
       if (s.enabled !== prev.enabled) scene.setEnabled(s.enabled);
+      if (s.hiddenOwners !== prev.hiddenOwners) scene.setHiddenOwners(s.hiddenOwners);
+      if (s.colorBy !== prev.colorBy) scene.setColorBy(s.colorBy);
       if (s.selected !== prev.selected && s.selected !== scene.selected) scene.select(s.selected, { fly: true });
       if (s.following !== prev.following && s.following !== scene.following) scene.setFollow(s.following);
       if (s.speed !== prev.speed) scene.clock.setSpeed(s.speed);

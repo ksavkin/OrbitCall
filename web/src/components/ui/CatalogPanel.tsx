@@ -7,7 +7,11 @@ import { CATEGORIES } from "@/lib/catalog/types";
 import { fmtAgo, fmtInt, fmtUtc } from "@/lib/format";
 import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
-import { CATEGORY_META } from "@/lib/theme";
+import { CATEGORY_META, ownerColor, OWNER_COLORS } from "@/lib/theme";
+import { ownerInfo } from "@/lib/owners";
+import { OwnerBadge } from "./OwnerBadge";
+import { Search } from "lucide-react";
+import type { ReactNode } from "react";
 import { Tooltip } from "./Tooltip";
 
 const REGIME_COLORS = { LEO: "#e6e8eb", MEO: "#f5c451", GEO: "#a594ff", HEO: "#ff9f40" } as const;
@@ -20,14 +24,21 @@ export function CatalogPanel() {
   const set = useOrbit((s) => s.set);
   const [open, setOpen] = useState(true);
 
-  const hiddenCount = CATEGORIES.filter((c) => !enabled[c]).length;
-  const visible = useMemo(
-    () => (catalog ? CATEGORIES.reduce((a, c) => a + (enabled[c] ? catalog.counts[c] : 0), 0) : 0),
-    [catalog, enabled],
-  );
+  const hiddenOwners = useOrbit((s) => s.hiddenOwners);
+  const colorBy = useOrbit((s) => s.colorBy);
+  const [tab, setTab] = useState<"types" | "countries">("types");
+
+  const filterCount = CATEGORIES.filter((c) => !enabled[c]).length + hiddenOwners.length;
+  const visible = useMemo(() => {
+    if (!catalog) return 0;
+    const hidden = new Set(hiddenOwners);
+    let n = 0;
+    for (const o of catalog.objects) if (enabled[o.category] && !hidden.has(o.owner)) n++;
+    return n;
+  }, [catalog, enabled, hiddenOwners]);
 
   return (
-    <div className="pointer-events-none absolute left-2.5 top-[58px] z-20 flex max-h-[calc(100%-58px-96px)] flex-col">
+    <div className="pointer-events-none relative flex min-h-0 shrink flex-col">
       <AnimatePresence initial={false} mode="popLayout">
         {open ? (
           <motion.aside
@@ -36,7 +47,7 @@ export function CatalogPanel() {
             animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
             exit={{ opacity: 0, x: -14, filter: "blur(6px)" }}
             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-            className="glass pointer-events-auto relative flex w-[244px] flex-col overflow-hidden rounded-[14px]"
+            className="glass pointer-events-auto relative flex max-h-full min-h-0 w-[244px] flex-col overflow-hidden rounded-[14px]"
           >
             {/* header */}
             <div className="flex items-center justify-between px-3 pb-1 pt-2.5">
@@ -64,11 +75,19 @@ export function CatalogPanel() {
 
             <div className="mx-3 mt-3 h-px bg-white/[0.06]" />
 
-            {/* layers */}
-            <div className="flex items-center justify-between px-3 pb-1 pt-2.5">
-              <span className="eyebrow">Layers</span>
+            {/* layers: by type or by owner country */}
+            <div className="flex items-center justify-between gap-2 px-3 pb-1.5 pt-2.5">
+              <Segmented
+                value={tab}
+                options={[
+                  { value: "types", label: "Types" },
+                  { value: "countries", label: "Countries" },
+                ]}
+                onChange={(v) => setTab(v as typeof tab)}
+                id="layer-tab"
+              />
               <AnimatePresence>
-                {hiddenCount > 0 && (
+                {filterCount > 0 && (
                   <motion.button
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -76,64 +95,80 @@ export function CatalogPanel() {
                     className="flex h-5 items-center gap-1 rounded-[6px] bg-white/[0.06] pl-1.5 pr-1 text-[10.5px] text-fg-2 hover:bg-white/10"
                     onClick={() => {
                       sfx.click();
-                      set({ enabled: Object.fromEntries(CATEGORIES.map((c) => [c, true])) as typeof enabled });
+                      set({ enabled: Object.fromEntries(CATEGORIES.map((c) => [c, true])) as typeof enabled, hiddenOwners: [] });
                     }}
                   >
-                    Filter <span className="text-blue">· {hiddenCount}</span>
+                    Filter <span className="text-blue">· {filterCount}</span>
                     <X size={11} className="text-muted" />
                   </motion.button>
                 )}
               </AnimatePresence>
             </div>
-            <ul className="thin-scroll overflow-y-auto px-1.5 pb-1.5">
-              {CATEGORIES.map((c) => {
-                const m = CATEGORY_META[c];
-                const on = enabled[c];
-                return (
-                  <li key={c}>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => {
-                        sfx.toggle(!on);
-                        toggle(c);
-                      }}
-                      onKeyDown={(e) => e.key === "Enter" && toggle(c)}
-                      className="group flex h-[30px] cursor-pointer items-center gap-2.5 rounded-[8px] px-1.5 transition-colors hover:bg-white/[0.05]"
-                    >
-                      <span
-                        className="h-[7px] w-[7px] shrink-0 rounded-full transition-all duration-300"
-                        style={{
-                          background: on ? m.color : "transparent",
-                          boxShadow: on ? `0 0 8px ${m.color}aa` : `inset 0 0 0 1px ${m.color}88`,
+            <div className="flex items-center justify-between px-3 pb-1.5">
+              <span className="flex items-center gap-1 text-[10.5px]">
+                {(["all", "none"] as const).map((k) => (
+                  <button
+                    key={k}
+                    className="rounded-[5px] px-1.5 py-0.5 text-muted transition-colors hover:bg-white/[0.07] hover:text-fg"
+                    onClick={() => {
+                      sfx.click();
+                      const on = k === "all";
+                      if (tab === "types") {
+                        set({ enabled: Object.fromEntries(CATEGORIES.map((c) => [c, on])) as typeof enabled });
+                      } else {
+                        const codes = catalog ? [...new Set(catalog.objects.map((o) => o.owner))] : [];
+                        set({ hiddenOwners: on ? [] : codes });
+                      }
+                    }}
+                  >
+                    {k === "all" ? "All" : "None"}
+                  </button>
+                ))}
+              </span>
+              <Segmented
+                value={colorBy}
+                options={[
+                  { value: "category", label: "Type" },
+                  { value: "country", label: "Country" },
+                ]}
+                onChange={(v) => set({ colorBy: v as typeof colorBy })}
+                label="Color by"
+                id="color-by"
+                small
+              />
+            </div>
+            {tab === "types" ? (
+              <ul className="thin-scroll min-h-[96px] overflow-y-auto px-1.5 pb-1.5">
+                {CATEGORIES.map((c) => {
+                  const m = CATEGORY_META[c];
+                  const on = enabled[c];
+                  return (
+                    <li key={c}>
+                      <LayerRow
+                        on={on}
+                        swatch={colorBy === "category" ? m.color : null}
+                        label={
+                          <Tooltip label={m.hint} side="right" delay={600}>
+                            <span>{m.label}</span>
+                          </Tooltip>
+                        }
+                        count={catalog ? catalog.counts[c] : null}
+                        onToggle={() => {
+                          sfx.toggle(!on);
+                          toggle(c);
+                        }}
+                        onOnly={() => {
+                          sfx.click();
+                          solo(c);
                         }}
                       />
-                      <Tooltip label={m.hint} side="right" delay={600}>
-                        <span className={`text-[12px] transition-colors ${on ? "text-fg" : "text-faint"}`}>{m.label}</span>
-                      </Tooltip>
-                      <span className="ml-auto flex items-center gap-1">
-                        <button
-                          className="hidden h-5 rounded-[5px] px-1.5 text-[10px] text-muted hover:bg-white/10 hover:text-fg group-hover:block"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            sfx.click();
-                            solo(c);
-                          }}
-                        >
-                          Only
-                        </button>
-                        <span className={`mono tnum text-[11px] ${on ? "text-fg-2" : "text-faint"}`}>
-                          {catalog ? fmtInt(catalog.counts[c]) : "—"}
-                        </span>
-                        <span className="w-4 text-faint transition-colors group-hover:text-fg-2">
-                          {on ? <Eye size={12} /> : <EyeOff size={12} />}
-                        </span>
-                      </span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <CountryList />
+            )}
 
             {catalog && <DataCard meta={catalog.meta} objects={catalog.objects} />}
           </motion.aside>
@@ -244,6 +279,167 @@ function DataCard({
       <div className="mt-1.5 text-[10px] text-muted">
         Median element-set age <span className="mono text-fg-2">{fmtAgo(now - medianEpochAge)}</span>
       </div>
+    </div>
+  );
+}
+
+function Segmented({
+  value,
+  options,
+  onChange,
+  id,
+  small,
+  label,
+}: {
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (v: string) => void;
+  id: string;
+  small?: boolean;
+  label?: string;
+}) {
+  const control = (
+    <div className={`flex items-center rounded-[8px] bg-white/[0.035] p-[2px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)] ${small ? "h-[22px]" : "h-[24px]"}`}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          className={`relative h-full rounded-[6px] px-2 text-muted transition-colors hover:text-fg data-[active=true]:text-fg ${small ? "text-[10.5px]" : "text-[11px]"}`}
+          data-active={value === o.value}
+          onClick={() => {
+            if (value !== o.value) sfx.click();
+            onChange(o.value);
+          }}
+        >
+          {value === o.value && (
+            <motion.span layoutId={`${id}-pill`} className="seg-pill !rounded-[6px]" transition={{ type: "spring", stiffness: 520, damping: 38 }} />
+          )}
+          <span className="relative">{o.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+  if (!label) return control;
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="text-[10.5px] text-muted">{label}</span>
+      {control}
+    </span>
+  );
+}
+
+function LayerRow({
+  on,
+  swatch,
+  label,
+  count,
+  onToggle,
+  onOnly,
+}: {
+  on: boolean;
+  swatch: string | null;
+  label: ReactNode;
+  count: number | null;
+  onToggle: () => void;
+  onOnly: () => void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={(e) => e.key === "Enter" && onToggle()}
+      className="group flex h-[30px] cursor-pointer items-center gap-2.5 rounded-[8px] px-1.5 transition-colors hover:bg-white/[0.05]"
+    >
+      {swatch && (
+        <span
+          className="h-[7px] w-[7px] shrink-0 rounded-full transition-all duration-300"
+          style={{
+            background: on ? swatch : "transparent",
+            boxShadow: on ? `0 0 8px ${swatch}aa` : `inset 0 0 0 1px ${swatch}88`,
+          }}
+        />
+      )}
+      <span className={`min-w-0 truncate text-[12px] transition-colors ${on ? "text-fg" : "text-faint"}`}>{label}</span>
+      <span className="ml-auto flex shrink-0 items-center gap-1">
+        <button
+          className="hidden h-5 rounded-[5px] px-1.5 text-[10px] text-muted hover:bg-white/10 hover:text-fg group-hover:block"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOnly();
+          }}
+        >
+          Only
+        </button>
+        <span className={`mono tnum text-[11px] ${on ? "text-fg-2" : "text-faint"}`}>{count !== null ? fmtInt(count) : "—"}</span>
+        <span className="w-4 text-faint transition-colors group-hover:text-fg-2">{on ? <Eye size={12} /> : <EyeOff size={12} />}</span>
+      </span>
+    </div>
+  );
+}
+
+/** Every owner in the catalog, largest first, with flags and a search box. */
+function CountryList() {
+  const catalog = useOrbit((s) => s.catalog);
+  const hiddenOwners = useOrbit((s) => s.hiddenOwners);
+  const colorBy = useOrbit((s) => s.colorBy);
+  const set = useOrbit((s) => s.set);
+  const [q, setQ] = useState("");
+
+  const owners = useMemo(() => {
+    if (!catalog) return [];
+    const counts = new Map<string, number>();
+    for (const o of catalog.objects) counts.set(o.owner, (counts.get(o.owner) ?? 0) + 1);
+    return [...counts.entries()]
+      .map(([code, n]) => ({ info: ownerInfo(code, catalog.owners), code, n }))
+      .filter((x) => x.info !== null)
+      .sort((a, b) => b.n - a.n);
+  }, [catalog]);
+
+  const hidden = new Set(hiddenOwners);
+  const s = q.trim().toLowerCase();
+  const shown = s ? owners.filter((o) => `${o.info!.name} ${o.info!.fullName} ${o.code}`.toLowerCase().includes(s)) : owners;
+
+  const toggle = (code: string) => {
+    const on = !hidden.has(code);
+    sfx.toggle(!on);
+    set({ hiddenOwners: on ? [...hiddenOwners, code] : hiddenOwners.filter((c) => c !== code) });
+  };
+  const only = (code: string) => {
+    sfx.click();
+    const isOnly = hiddenOwners.length === owners.length - 1 && !hidden.has(code);
+    set({ hiddenOwners: isOnly ? [] : owners.map((o) => o.code).filter((c) => c !== code) });
+  };
+
+  return (
+    <div className="flex min-h-0 flex-col">
+      <div className="mx-3 mb-1 flex h-7 items-center gap-1.5 rounded-[8px] bg-white/[0.035] px-2 text-muted shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]">
+        <Search size={12} />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={`${owners.length} owners`}
+          className="h-full min-w-0 flex-1 bg-transparent text-[11.5px] text-fg outline-none placeholder:text-faint"
+        />
+      </div>
+      <ul className="thin-scroll max-h-[260px] overflow-y-auto px-1.5 pb-1.5">
+        {shown.map(({ info, code, n }) => (
+          <li key={code}>
+            <LayerRow
+              on={!hidden.has(code)}
+              swatch={colorBy === "country" ? ownerColor(code) : null}
+              label={<OwnerBadge owner={info!} h={10} />}
+              count={n}
+              onToggle={() => toggle(code)}
+              onOnly={() => only(code)}
+            />
+          </li>
+        ))}
+        {colorBy === "country" && !s && (
+          <li className="px-1.5 pt-1 text-[10px] leading-snug text-faint">
+            The {Object.keys(OWNER_COLORS).length} largest operators get their own color; the rest are grey.
+          </li>
+        )}
+      </ul>
     </div>
   );
 }

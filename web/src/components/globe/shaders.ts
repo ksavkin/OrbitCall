@@ -51,8 +51,13 @@ export const earthFragment = /* glsl */ `
   }
 
   float landMask(vec2 uv) {
-    // earth-water.png: oceans bright, land dark.
+    // earth-water.png (1600×800): oceans bright, land dark. Coarse, used for the hex grid.
     return 1.0 - smoothstep(0.35, 0.65, texture2D(uWater, uv).r);
+  }
+
+  float landMaskFine(vec2 uv) {
+    // 4K specular map: oceans bright. Smooth coastlines for close views.
+    return 1.0 - smoothstep(0.3, 0.7, texture2D(uSpec, uv).r);
   }
 
   // Signed distance to a pointy-top hexagon of inradius r.
@@ -117,17 +122,12 @@ export const earthFragment = /* glsl */ `
       col = texture2D(uDay, vUv).rgb * relief * 1.08;
       col += vec3(0.35, 0.55, 1.0) * fres * 0.35;
     } else if (uMode == 2) {
-      // Night: city lights everywhere, faint coastlines.
+      // Night: Black Marble city lights over a barely moonlit Earth.
       vec3 night = texture2D(uNight, vUv).rgb;
-      col = pow(night, vec3(1.35)) * vec3(1.0, 0.8, 0.55) * 2.0;
-      col += texture2D(uDay, vUv).rgb * vec3(0.06, 0.08, 0.11);
-      float land = landMask(vUv);
-      vec2 px = vec2(1.0 / 1600.0, 1.0 / 800.0);
-      float edge = abs(landMask(vUv + vec2(px.x, 0.0)) - landMask(vUv - vec2(px.x, 0.0)))
-                 + abs(landMask(vUv + vec2(0.0, px.y)) - landMask(vUv - vec2(0.0, px.y)));
-      col += vec3(0.02, 0.03, 0.05) + land * vec3(0.012, 0.014, 0.018);
-      col += vec3(0.25, 0.32, 0.42) * clamp(edge, 0.0, 1.0) * 0.35;
-      col += vec3(0.25, 0.4, 0.8) * fres * 0.25;
+      col = pow(night, vec3(1.5)) * vec3(1.0, 0.78, 0.5) * 2.4;
+      col += pow(texture2D(uDay, vUv).rgb, vec3(1.2)) * vec3(0.016, 0.022, 0.036);
+      col += vec3(0.005, 0.007, 0.012);
+      col += vec3(0.18, 0.3, 0.7) * fres * 0.22;
     } else if (uMode == 3) {
       // Terrain: shaded relief + hypsometric tint + contour lines.
       vec2 px = vec2(1.0 / 2048.0, 1.0 / 1024.0);
@@ -138,16 +138,12 @@ export const earthFragment = /* glsl */ `
       vec3 t = normalize(cross(vec3(0.0, 1.0, 0.0), vObjN) + vec3(1e-5));
       vec3 b = cross(vObjN, t);
       vec3 Nr = normalize(mat3(modelMatrix) * normalize(t * nT.x + b * nT.y + vObjN * nT.z));
-      float shade = clamp(dot(Nr, uLightView) * 0.75 + 0.35, 0.0, 1.3);
-      float land = landMask(vUv);
+      float shade = clamp(dot(Nr, uLightView) * 0.8 + 0.3, 0.0, 1.3);
+      float land = landMaskFine(vUv);
       vec3 sea = mix(vec3(0.030, 0.045, 0.070), vec3(0.055, 0.080, 0.115), fres);
-      vec3 low = vec3(0.16, 0.18, 0.20);
-      vec3 high = vec3(0.86, 0.88, 0.90);
-      vec3 ground = mix(low, high, pow(clamp(h * 1.15, 0.0, 1.0), 0.8));
-      col = mix(sea, ground * shade, land);
-      float lines = h * 14.0;
-      float c = abs(fract(lines - 0.5) - 0.5) / max(fwidth(lines), 1e-4);
-      col += land * (1.0 - min(c, 1.0)) * 0.07;
+      // same palette as the hillshade tiles, so zooming in doesn't change the tone
+      vec3 ground = mix(vec3(0.11, 0.12, 0.14), vec3(0.50, 0.52, 0.55), pow(clamp(h * 1.15, 0.0, 1.0), 0.8));
+      col = mix(sea, ground * (0.25 + 0.85 * shade * shade), land);
       col += vec3(0.6, 0.7, 0.85) * fres * 0.18;
     } else {
       // Tactical: hexagon dot-matrix continents on fixed density levels.
@@ -181,6 +177,7 @@ export const cloudsFragment = /* glsl */ `
   uniform sampler2D uClouds;
   uniform vec3 uSunDir;
   uniform float uOpacity;
+  uniform float uLive; // 1 = EUMETSAT geostationary IR mosaic, 0 = static cloud map
   varying vec2 vUv;
   varying vec3 vNormalW;
   varying vec3 vPosW;
@@ -189,11 +186,24 @@ export const cloudsFragment = /* glsl */ `
     vec3 N = normalize(vNormalW);
     float sunN = dot(N, uSunDir);
     float lit = smoothstep(-0.15, 0.35, sunN);
-    float c = texture2D(uClouds, vUv).r;
-    c = smoothstep(0.08, 0.9, c);
-    vec3 col = mix(vec3(0.02, 0.025, 0.035), vec3(1.0, 0.98, 0.96), lit);
+    float c;
+    if (uLive > 0.5) {
+      // 10.8 µm brightness: cold cloud tops are bright. Calibrated on the live frame:
+      // warm desert ≈ 0.18, clear ocean ≈ 0.28, high cloud 0.6–0.95.
+      vec4 ir = texture2D(uClouds, vUv);
+      c = smoothstep(0.34, 0.78, ir.r) * ir.a;
+      // ice sheets are as cold as cloud tops in IR; drop the polar caps
+      float lat = abs(vUv.y - 0.5) * 180.0;
+      c *= 1.0 - smoothstep(60.0, 70.0, lat);
+    } else {
+      c = smoothstep(0.08, 0.9, texture2D(uClouds, vUv).r);
+    }
+    // Infrared sees clouds day and night, so live clouds stay visible on the night side.
+    vec3 nightCol = uLive > 0.5 ? vec3(0.17, 0.19, 0.24) : vec3(0.02, 0.025, 0.035);
+    vec3 col = mix(nightCol, vec3(1.0, 0.98, 0.96), lit);
     col *= mix(vec3(1.0, 0.7, 0.5), vec3(1.0), smoothstep(0.0, 0.3, sunN));
-    gl_FragColor = vec4(col, c * uOpacity * (0.25 + 0.75 * lit));
+    float nightAlpha = uLive > 0.5 ? 0.75 : 0.25;
+    gl_FragColor = vec4(col, c * uOpacity * mix(nightAlpha, 1.0, lit));
     #include <colorspace_fragment>
   }
 `;

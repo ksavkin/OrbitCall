@@ -4,9 +4,11 @@ import { eciToGeodetic, gstime, jday, sunPos } from "satellite.js";
 import type { Catalog } from "@/lib/catalog/client";
 import { CATEGORIES, type Category } from "@/lib/catalog/types";
 import { EARTH_RADIUS_KM, MU_EARTH } from "@/lib/orbit/constants";
-import { CATEGORY_META } from "@/lib/theme";
+import { CATEGORY_META, ownerColor } from "@/lib/theme";
 import { debrisGeometry, satelliteGeometry } from "./models";
 import { TileLayer } from "./tiles";
+import { WeatherLayers, llToVec } from "./weather";
+import { DensityLayers, type AltitudeBin } from "./density";
 import { HeroSatellite } from "./hero";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
@@ -51,6 +53,7 @@ export interface SceneEvents {
   onCursor?: (latlon: { lat: number; lon: number } | null) => void;
   onReady?: () => void;
   onStats?: (s: { propagateMs: number; invalid: number; total: number }) => void;
+  onDensity?: (bins: AltitudeBin[], top: AltitudeBin[]) => void;
   onTexturesProgress?: (loaded: number, total: number) => void;
 }
 
@@ -148,6 +151,11 @@ export class GlobeScene {
   private starsMat: THREE.ShaderMaterial;
   private stars: THREE.Mesh;
   private tiles: TileLayer;
+  readonly weather = new WeatherLayers();
+  readonly density = new DensityLayers();
+  private lastDensity = 0;
+  private cloudsOn = true;
+  private lastFrame = performance.now();
 
   // catalog + propagation state
   private catalog: Catalog | null = null;
@@ -162,6 +170,10 @@ export class GlobeScene {
   private sampleId = 0;
   private enabledMask: boolean[] = CATEGORIES.map(() => true);
   private catOf: Uint8Array = new Uint8Array(0);
+  private ownerHidden: Uint8Array = new Uint8Array(0);
+  private colorBy: "category" | "country" = "category";
+  /** Current per-object color (category or country), for markers and lines. */
+  private colors: Float32Array = new Float32Array(0);
 
   // render objects for satellites
   private dots: THREE.Points | null = null;
@@ -282,6 +294,7 @@ export class GlobeScene {
         uClouds: { value: null },
         uSunDir: { value: new THREE.Vector3(1, 0, 0) },
         uOpacity: { value: 0.9 },
+        uLive: { value: 0 },
       },
       transparent: true,
       depthWrite: false,
@@ -291,6 +304,9 @@ export class GlobeScene {
     this.tiles = new TileLayer(this.renderer.capabilities.getMaxAnisotropy());
     this.earthGroup.add(this.tiles.group);
     this.earthGroup.add(this.clouds);
+    this.earthGroup.add(this.weather.group);
+    this.earthGroup.add(this.density.ground);
+    this.scene.add(this.density.shells);
     this.scene.add(this.earthGroup);
 
     this.atmoMat = new THREE.ShaderMaterial({
@@ -360,8 +376,8 @@ export class GlobeScene {
         depthWrite: false,
         worldUnits: false,
         dashed,
-        dashSize: 0.012,
-        gapSize: 0.01,
+        dashSize: 0.02,
+        gapSize: 0.012,
       });
       // Vertex colors carry the fade as brightness. Turn that into alpha so we can
       // use normal blending: additive double-counts where segment joints overlap
@@ -380,12 +396,14 @@ export class GlobeScene {
     this.selGlow = new Line2(new LineGeometry(), lineMat(7, 0.22));
     this.selOrbit = new Line2(new LineGeometry(), lineMat(2.2, 1));
     this.hovOrbit = new Line2(new LineGeometry(), lineMat(1.6, 0.85));
-    this.groundTrack = new Line2(new LineGeometry(), lineMat(1.2, 0.55, true));
+    this.groundTrack = new Line2(new LineGeometry(), lineMat(2.2, 0.95, true));
     for (const l of [this.selGlow, this.selOrbit, this.hovOrbit, this.groundTrack]) {
       l.frustumCulled = false;
       l.visible = false;
       l.renderOrder = 4;
     }
+    // drawn after the cloud layer (renderOrder 5), which would otherwise wash it out
+    this.groundTrack.renderOrder = 6;
     this.scene.add(this.selGlow, this.selOrbit, this.hovOrbit);
     this.earthGroup.add(this.groundTrack);
 
@@ -466,7 +484,7 @@ export class GlobeScene {
     u.uNormal.value = t("normal");
     u.uTopo.value = t("topo");
     u.uWater.value = t("water");
-    this.cloudsMat.uniforms.uClouds.value = t("clouds");
+    if (!this.cloudsMat.uniforms.uLive.value) this.cloudsMat.uniforms.uClouds.value = t("clouds");
     this.tiles.setShared({ night: t("night"), spec: t("spec"), topo: t("topo"), water: t("water") });
     this.starsMat.uniforms.uStars.value = t("stars");
   }
@@ -476,7 +494,7 @@ export class GlobeScene {
     if (mode === "terrain") void this.loadTextures(["topo", "water"]);
     const idx = { realistic: 0, imagery: 1, night: 2, terrain: 3, tactical: 4 }[mode];
     this.earthMat.uniforms.uMode.value = idx;
-    this.clouds.visible = mode === "realistic";
+    this.updateCloudVisibility();
     this.tiles.setMode(mode);
     const a = this.atmoMat.uniforms;
     const cfg: Record<ViewMode, { color: [number, number, number]; i: number; sw: number; stars: number; h: number }> = {
@@ -504,7 +522,8 @@ export class GlobeScene {
     this.sampleVel = new Float32Array(n * 3);
     this.sampleValid = new Uint8Array(n);
     this.catOf = new Uint8Array(n);
-    const colors = new Float32Array(n * 3);
+    this.ownerHidden = new Uint8Array(n);
+    const colors = (this.colors = new Float32Array(n * 3));
     const sat: number[] = [];
     const deb: number[] = [];
     objs.forEach((o, i) => {
@@ -637,7 +656,42 @@ export class GlobeScene {
   }
 
   private isVisible(i: number) {
-    return this.sampleValid[i] === 1 && this.enabledMask[this.catOf[i]];
+    return this.sampleValid[i] === 1 && this.enabledMask[this.catOf[i]] && this.ownerHidden[i] === 0;
+  }
+
+  /** Hide objects whose SATCAT owner code is in the list. */
+  setHiddenOwners(codes: string[]) {
+    if (!this.catalog) return;
+    const hidden = new Set(codes);
+    this.catalog.objects.forEach((o, i) => (this.ownerHidden[i] = hidden.has(o.owner) ? 1 : 0));
+    this.updateVisibility();
+    if (this.hovered !== null && !this.isVisible(this.hovered)) this.setHovered(null);
+  }
+
+  /** Recolor every object by category or by owner country. */
+  setColorBy(mode: "category" | "country") {
+    this.colorBy = mode;
+    if (!this.catalog || !this.dots || !this.satMesh || !this.debMesh) return;
+    const c = new THREE.Color();
+    this.catalog.objects.forEach((o, i) => {
+      c.set(mode === "country" ? ownerColor(o.owner) : CATEGORY_META[o.category].color);
+      this.colors.set([c.r, c.g, c.b], i * 3);
+    });
+    (this.dots.geometry.getAttribute("aColor") as THREE.BufferAttribute).copyArray(this.colors).needsUpdate = true;
+    for (const [mesh, idx] of [
+      [this.satMesh, this.satIdx],
+      [this.debMesh, this.debIdx],
+    ] as const) {
+      const a = mesh.geometry.getAttribute("aColor") as THREE.InstancedBufferAttribute;
+      const arr = a.array as Float32Array;
+      idx.forEach((ci, j) => arr.set(this.colors.subarray(ci * 3, ci * 3 + 3), j * 3));
+      a.needsUpdate = true;
+    }
+  }
+
+  /** The object's current marker color as a hex string. */
+  colorOf(i: number) {
+    return new THREE.Color(this.colors[i * 3], this.colors[i * 3 + 1], this.colors[i * 3 + 2]);
   }
 
   private updateVisibility() {
@@ -731,7 +785,7 @@ export class GlobeScene {
     const isHov = this.hovOrbit.userData.id === m.id && m.index === this.hovered;
     if ((!isSel && !isHov) || !m.points) return;
     const count = m.points.length / 3;
-    const color = new THREE.Color(CATEGORY_META[this.catalog!.objects[m.index].category].color);
+    const color = this.colorOf(m.index);
     if (isSel) {
       // white-hot at the satellite, cooling to the category color over one revolution
       this.setLine(this.selOrbit, m.points, new THREE.Color("#ffffff"), color, 0.25);
@@ -756,7 +810,9 @@ export class GlobeScene {
         toEarthFixed(v, gstime(new Date(t)), out).normalize().multiplyScalar(1.0015);
         out.toArray(gt, s * 3);
       }
-      this.setLine(this.groundTrack, gt, color, color, 0.15);
+      // brighter than the category color and only a gentle fade, so it reads on any imagery
+      const gtColor = color.clone().lerp(new THREE.Color("#ffffff"), 0.45);
+      this.setLine(this.groundTrack, gt, new THREE.Color("#ffffff"), gtColor, 0.55);
       this.groundTrack.computeLineDistances(); // for the dashes
       this.groundTrack.visible = this.showGroundTrack && !this.following;
     } else {
@@ -783,6 +839,80 @@ export class GlobeScene {
     g.setColors(colors);
     line.geometry.dispose();
     line.geometry = g;
+  }
+
+  /** Swap in the live IR cloud mosaic. */
+  setLiveClouds(tex: THREE.Texture) {
+    tex.colorSpace = THREE.NoColorSpace; // raw brightness temperatures
+    tex.anisotropy = 8;
+    const old = this.cloudsMat.uniforms.uClouds.value as THREE.Texture | null;
+    this.cloudsMat.uniforms.uClouds.value = tex;
+    this.cloudsMat.uniforms.uLive.value = 1;
+    if (old && old !== this.textures.get("clouds")) old.dispose();
+  }
+
+  setCloudsOn(on: boolean) {
+    this.cloudsOn = on;
+    this.updateCloudVisibility();
+  }
+
+  private updateCloudVisibility() {
+    // clouds work on every view except the dot-matrix ops view
+    this.clouds.visible = this.cloudsOn && this.viewMode !== "tactical";
+  }
+
+  /** Sub-satellite points and altitudes of every visible object, for the congestion layers. */
+  private computeDensity(gmst: number) {
+    const idx: number[] = [];
+    for (let i = 0; i < this.n; i++) if (this.isVisible(i)) idx.push(i);
+    const latlon = new Float32Array(idx.length * 2);
+    const deb = new Uint8Array(idx.length);
+    const alt = new Float32Array(idx.length);
+    const debrisCat = CATEGORIES.indexOf("debris");
+    const p = new THREE.Vector3();
+    const ef = new THREE.Vector3();
+    idx.forEach((i, k) => {
+      this.positionOf(i, p);
+      toEarthFixed(p, gmst, ef);
+      const r = ef.length();
+      latlon[k * 2] = THREE.MathUtils.radToDeg(Math.asin(ef.y / r));
+      latlon[k * 2 + 1] = THREE.MathUtils.radToDeg(Math.atan2(-ef.z, ef.x));
+      deb[k] = this.catOf[i] === debrisCat ? 1 : 0;
+      // altitude above the ellipsoid (WGS-72), not a sphere: up to ~21 km different at the poles
+      const sinLat = ef.y / r;
+      const cosLat = Math.sqrt(1 - sinLat * sinLat);
+      const A = EARTH_RADIUS_KM;
+      const B = 6356.751;
+      const surface = (A * B) / Math.hypot(B * cosLat, A * sinLat);
+      alt[k] = r * EARTH_RADIUS_KM - surface;
+    });
+    this.density.setSnapshot(latlon, deb, alt);
+    this.events.onDensity?.(this.density.bins, this.density.top);
+  }
+
+  /** Screen position of a point on (or above) the surface. */
+  projectLatLon(lat: number, lon: number, r = 1.012): ScreenPoint {
+    const p = this.earthGroup.localToWorld(llToVec(lat, lon, r));
+    return this.project(p);
+  }
+
+  flyToLatLon(lat: number, lon: number, dist = 2.4) {
+    if (this.following) this.setFollow(false);
+    this.tracking = false;
+    const dir = this.earthGroup.localToWorld(llToVec(lat, lon, 1)).normalize();
+    this.fly = {
+      t0: performance.now(),
+      dur: 1600,
+      fromDir: this.camera.position.clone().sub(this.controls.target).normalize(),
+      toDir: dir,
+      fromDist: this.camera.position.distanceTo(this.controls.target),
+      toDist: dist,
+      fromTarget: this.controls.target.clone(),
+      toTarget: new THREE.Vector3(),
+      world: true,
+      fromPos: this.camera.position.clone(),
+    };
+    this.targetDist = dist;
   }
 
   setShowGroundTrack(v: boolean) {
@@ -1233,6 +1363,14 @@ export class GlobeScene {
       this.satMat.uniforms.uPxFocus.value = fa.from + (fa.to - fa.from) * ease(t);
       if (t >= 1) this.focusAnim = null;
     }
+    const dt = (now - this.lastFrame) / 1000;
+    this.lastFrame = now;
+    this.weather.update(dt, now / 1000, sun, this.camera.position);
+    if ((this.density.vis.traffic || this.density.vis.debris) && this.sampleTime && now - this.lastDensity > 2000) {
+      this.lastDensity = now;
+      this.computeDensity(gmst);
+    }
+    this.density.update(dt, this.camera.position);
     this.updateHero();
     this.renderer.render(this.scene, this.camera);
 

@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 import { VIEW_MODES, type ViewMode } from "@/components/globe/shaders";
 import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
+import { CONGESTION_LAYERS, WeatherToggles } from "./Weather";
 
 export const VIEW_LABELS: Record<ViewMode, { label: string; hint: string }> = {
   realistic: { label: "Realistic", hint: "Real sun, night lights, clouds" },
@@ -21,7 +22,7 @@ function Thumb({ mode, size }: { mode: ViewMode; size: number }) {
       <div
         className="h-full w-full"
         style={{
-          background: `url(/thumbs/tactical.jpg) center/cover, radial-gradient(circle, rgba(220,224,230,.55) 1px, transparent 1.4px) 0 0/${size / 12}px ${size / 12}px, #0a0b0d`,
+          background: `radial-gradient(circle, rgba(220,224,230,.55) 1px, transparent 1.4px) 0 0/${size / 12}px ${size / 12}px, #0a0b0d`,
         }}
       />
     );
@@ -78,8 +79,9 @@ export function ViewSwitcher() {
             animate={{ opacity: 1, x: 0, scale: 1, filter: "blur(0px)" }}
             exit={{ opacity: 0, x: -8, scale: 0.97, filter: "blur(6px)" }}
             transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-            className="glass glass-strong relative flex gap-1 rounded-[13px] p-1.5"
+            className="glass glass-strong relative flex flex-col gap-1.5 rounded-[13px] p-1.5"
           >
+            <div className="flex gap-1">
             {VIEW_MODES.map((m, i) => {
               const active = m === viewMode;
               return (
@@ -111,6 +113,12 @@ export function ViewSwitcher() {
                 </motion.button>
               );
             })}
+            </div>
+            <div className="mx-1 h-px bg-white/[0.07]" />
+            <div className="eyebrow px-1">Live weather</div>
+            <WeatherToggles />
+            <div className="eyebrow px-1 pt-0.5">Orbital congestion</div>
+            <WeatherToggles layers={CONGESTION_LAYERS} />
           </motion.div>
         )}
       </AnimatePresence>

@@ -193,6 +193,7 @@ function Body({ obj, owners }: { obj: SatObject; owners: Record<string, string> 
           v={`${obj.epoch.toISOString().slice(0, 16).replace("T", " ")}`}
           hint={`${fmtAgo(epochAge)} ago`}
           warn={epochAge > 7 * 86400_000}
+          wrap
         />
       </Section>
 
@@ -277,9 +278,9 @@ function Row({ k, v, hint, warn, wrap }: { k: string; v: string; hint?: string; 
   return (
     <div className="flex items-baseline justify-between gap-3 py-[6px]">
       <span className="shrink-0 text-[11px] text-muted">{k}</span>
-      <span className={`mono tnum text-right text-[11px] ${warn ? "text-orange" : "text-fg"} ${wrap ? "" : "truncate"}`}>
+      <span className={`mono tnum min-w-0 text-right text-[11px] ${warn ? "text-orange" : "text-fg"} ${wrap ? "" : "truncate"}`}>
         {v}
-        {hint && <span className="ml-1.5 text-muted">{hint}</span>}
+        {hint && <span className={`text-muted ${wrap ? "block text-[10px]" : "ml-1.5"}`}>{hint}</span>}
       </span>
     </div>
   );

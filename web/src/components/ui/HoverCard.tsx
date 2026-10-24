@@ -5,7 +5,7 @@ import type { SatLive } from "@/components/globe/GlobeScene";
 import { fmtInt, fmtNum } from "@/lib/format";
 import { sceneRef } from "@/lib/sceneRef";
 import { useOrbit } from "@/lib/store";
-import { CATEGORY_META } from "@/lib/theme";
+import { CATEGORY_META, ownerColor } from "@/lib/theme";
 import { ownerInfo } from "@/lib/owners";
 import { OwnerBadge } from "./OwnerBadge";
 
@@ -15,6 +15,7 @@ export function HoverCard() {
   const selected = useOrbit((s) => s.selected);
   const obj = useOrbit((s) => (s.hovered !== null ? s.catalog?.objects[s.hovered] : undefined));
   const owners = useOrbit((s) => s.catalog?.owners);
+  const colorBy = useOrbit((s) => s.colorBy);
   const [live, setLive] = useState<SatLive | null>(null);
 
   useEffect(() => {
@@ -27,6 +28,7 @@ export function HoverCard() {
 
   if (!obj || hovered === selected) return null;
   const meta = CATEGORY_META[obj.category];
+  const dot = colorBy === "country" ? ownerColor(obj.owner) : meta.color;
   const owner = ownerInfo(obj.owner, owners ?? {});
 
   return (
@@ -38,13 +40,13 @@ export function HoverCard() {
           top: -9,
           width: 18,
           height: 18,
-          border: `1.5px solid ${meta.color}`,
-          boxShadow: `0 0 12px ${meta.color}66`,
+          border: `1.5px solid ${dot}`,
+          boxShadow: `0 0 12px ${dot}66`,
         }}
       />
       <div className="glass glass-strong absolute left-4 top-3 w-[212px] rounded-[11px] px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: meta.color, boxShadow: `0 0 6px ${meta.color}` }} />
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: dot, boxShadow: `0 0 6px ${dot}` }} />
           <span className="truncate text-[12px] font-medium text-fg">{obj.name}</span>
           <span className="mono ml-auto text-[10px] text-muted">{obj.norad}</span>
         </div>
