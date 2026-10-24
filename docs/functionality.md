@@ -349,19 +349,15 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 
 ---
 
-## 17. External agent access
+## 17. Agent runtime
 
-**System** (§11, Fetch.ai)
+Fetch.ai (uAgents, Agentverse, ASI:One) was dropped on 2026-10-24: its prize requires the whole workflow to run inside an ASI:One chat without our interface, which does not fit a two-operator room. Agents run inside our own backend instead.
 
-- **EXT-1** Each system role runs as a separate agent with its own address.
-- **EXT-2** Operator Advocates negotiate by real messages over a standard agent chat protocol.
-- **EXT-3** The complete primary workflow can be done inside an ASI:One conversation, without the OrbitCall web interface: see a red conjunction, read the summary and the Operator Advocates' negotiation, review the current proposal revision, and approve, veto or counter it. This is a Fetch.ai requirement at Cal Hacks 13.0: "Complete the primary user workflow entirely within an ASI:One conversation."
-- **EXT-4** ASI:One is another view of the same state, not a separate copy. It reads and writes the same events, proposal revisions, approvals and log as the web interface (SYNC-1). An approval given in ASI:One is the same approval record as one given in the room, bound to the same revision and the same identity rules (ROOM-7, ROOM-11). Status names, labels, numbers and units match the web interface exactly, and a change made in one appears in the other.
-- **EXT-5** Proposal and approval steps in ASI:One use interactive cards (ASI1 Interactive Cards) that carry the same fields as the room's proposal card: who moves, when, Δv, miss distance before → after, revision, and both sides' approval status. Private policy values are never shown, the same as in the room (POL-2).
+**System**
 
-**Demo**
-
-- **EXT-6** One project, two demos. The main demo is the two-laptop conjunction room. The second demo, for the Fetch.ai track, is the same incident completed inside ASI:One. Both run on the same backend and data, so the same incident can be shown in either.
+- **EXT-1** Each system role runs as a separate agent inside our backend service: its own instructions, its own context, and access only to the data its role allows. Each Operator Advocate sees only its own company's policy (POL-2).
+- **EXT-2** Operator Advocates negotiate by exchanging real messages through our backend. Every message is stored with the rest of the incident state (SYNC-1), so both rooms can show the negotiation live and the log keeps it (LOG-2).
+- **EXT-3..EXT-6** Retired with Fetch.ai: no ASI:One workflow, no interactive cards, no second demo. There is one demo, the two-laptop conjunction room.
 
 ---
 
@@ -390,6 +386,7 @@ From §12 "What we don't promise":
 - Automatic regulatory filing or a claim that the log alone is a complete compliant report.
 - Replacing the operator; no system role acts on a satellite.
 - Making operators share data; that is policy, not software.
+- Fetch.ai integration (uAgents, Agentverse, Agent Chat Protocol, ASI:One chat or cards); dropped 2026-10-24 (section 17).
 
 ---
 
@@ -409,4 +406,4 @@ The accepted decisions below retain the original question numbers so existing re
 10. **Reporting template:** verify the current FCC rule, applicability, periods and required fields; choose the human-readable export format and define completion of fields absent from the incident log (S3).
 11. **Evidence methods:** specify the candidate grid, approximation validity, feasibility and re-screen criteria, and the verification baseline/window/thresholds. Do not substitute an unsupported post-maneuver Pc for these checks (S1, M7, M8).
 12. **Missing Pc:** define review priority for events without a usable supplied probability; unavailable does not mean safe (M8).
-13. **ASI:One identity:** how does a person in an ASI:One conversation prove which operator they act for, so an approval there meets ROOM-7 and ACC-2 (EXT-4)?
+13. **Retired — ASI:One identity:** no longer applies; Fetch.ai and the ASI:One workflow were dropped (section 17).

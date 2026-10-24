@@ -1,8 +1,5 @@
 # OrbitCall
 
-![tag:innovationlab](https://img.shields.io/badge/innovationlab-3D8BD3)
-![tag:hackathon](https://img.shields.io/badge/hackathon-5F43F1)
-
 **A dispatcher for orbit.** OrbitCall watches the public satellite catalog, finds dangerous conjunctions, and brings both operators into one room. Each company's agent evaluates multiple computed proposals within its private policy. Humans compare the proposals, discuss them by voice or text in their own languages, and approve the same proposal revision. Agents use the discussion to revise the options. After the maneuver time, OrbitCall compares what was agreed with later observations and records the evidence.
 
 Nothing moves without a human. It is a handshake, not a law.
@@ -71,7 +68,7 @@ Principles:
 | Backend, live state, scheduler | Convex |
 | Orbital mechanics | SGP4 (`sgp4` npm or `python-sgp4`) |
 | Reasoning agents, translation | Claude (Sonnet; Haiku for Risk Monitor) |
-| Agent runtime | Fetch.ai uAgents, Agentverse, Agent Chat Protocol, ASI:One. The full workflow also runs inside an ASI:One chat with interactive cards (second demo, Fetch.ai track) |
+| Agent runtime | Our own backend: each agent is a separate Claude call with its own instructions and data access; agent messages are stored with the incident state. No agent framework. Fetch.ai was dropped on Oct 24, 2026 |
 | Orbit data format | OMM (JSON / CSV) only, no TLE |
 | Voice | STT → protect values → Claude translation → restore/check → TTS; text fallback. **Russian:** xAI Grok speech-to-text and voice (Cartesia's STT has no Russian). **Other languages:** Cartesia. Grok Voice via LiveKit for the Coordination Host under the same value checks |
 | Open | Russian on Grok STT / TTS: confirm with a short test clip; Cartesia TTS supports Russian as a fallback for voice output. Grok voice model name: `grok-voice-think-fast-1.0` is not in xAI's docs, `grok-voice-latest` is the fallback — decide later |
@@ -91,20 +88,6 @@ Public sources, with accounts or keys where required. The demo uses a real pair 
 | KeepTrack API v4 | Owner, purpose and country metadata for the Coordination Host |
 
 Validation reports recall over the full eligible SOCRATES list for a defined snapshot and catalog scope, plus separate timing/distance errors. Counts, exclusions and input differences are visible; the pitch uses measured results only. Every queue row links to the relevant CelesTrak source or object data.
-
-## Fetch.ai agents
-
-| Agent | Address |
-|---|---|
-| Risk Monitor | TBD |
-| Incident Analyst | TBD |
-| Operator Advocate A | TBD |
-| Operator Advocate B | TBD |
-| Coordination Host | TBD |
-| Maneuver Scheduler | TBD |
-| Maneuver Verifier | TBD |
-
-Addresses are filled in once the agents are registered on Agentverse.
 
 ## What we do not promise
 

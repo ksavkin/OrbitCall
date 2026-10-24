@@ -144,7 +144,7 @@ The latest selection did not authorize the following separate cuts. Existing fun
 | Cut local-backend/LAN fallback (SYNC-3 partial) | Not selected; existing resilience requirements remain to be implemented and tested. Cached data alone does not replace unavailable cloud services |
 | Defer production orbit exchange, covariance Pc, full optimization and other large integrations | Existing out-of-scope boundaries remain. A bounded candidate comparison under S1 does not promise a production optimizer |
 
-ASI:One and optional sponsor work retain the existing plan status. A role-switch URL can illustrate a simulated UI but cannot satisfy M2's privacy or ACC-2's authorization requirements.
+Fetch.ai (Agentverse, ASI:One) was dropped on Oct 24, 2026; agents run in our own backend. Other optional sponsor work retains the existing plan status. A role-switch URL can illustrate a simulated UI but cannot satisfy M2's privacy or ACC-2's authorization requirements.
 
 ## 4. Positioning and interface
 
