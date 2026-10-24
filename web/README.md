@@ -1,6 +1,6 @@
 # OrbitCall web
 
-The ops UI. First screen: the live orbit view.
+The ops UI prototype. The current first screen is the live orbit view. The approved target is [My Fleet + My Incidents + globe](../docs/user-flow.md), with four assigned spacecraft per enabled demo account, fleet-versus-catalog Run Scan over 72 hours, severity then closest-approach ordering, and a separate missing/stale-data review section. This target is not implemented yet. Backend integration follows [the specification](../docs/specification.md); simulator types require an adapter. TCA means Time of Closest Approach. Shared candidate selection and individual Approve are separate, with up to four computed candidates and a distinct unilateral debris workflow.
 
 ```sh
 npm install

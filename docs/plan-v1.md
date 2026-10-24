@@ -72,6 +72,8 @@ What all six share: there was a warning, there was data, the satellites could ma
 
 ## 3. User and use case
 
+**Current approved workflow (October 24):** [user-flow.md](user-flow.md) supersedes older global-queue and two-account-only descriptions. Each enabled demo dispatcher has four server-assigned spacecraft. Two accounts are required, with an optional third based in Russia, the US or China. Country and language are profile attributes, not authorization. The main screen is My Fleet + My Incidents + globe. Run Scan checks the full assigned fleet against the usable catalog over 72 hours, with measured progress, scope and coverage. Priority is severity then nearest time of closest approach (TCA); missing/stale data has a separate visible review section. Confirmed debris has a separate unilateral approval path; references to both owners below concern bilateral active-spacecraft events.
+
 The user is a flight dynamics engineer at a satellite operator. In the pitch we call them the dispatcher. The most painful version is a small operator with 5–50 spacecraft and no round-the-clock shift: Starlink has an autopilot, they have an inbox.
 
 ### What they do today (one conjunction with another company's active satellite)
@@ -114,7 +116,7 @@ The catalog is the demo week's real snapshot, with its sources and times. The de
 
 **0:00 — hook, 15 seconds.** "A collision warning still leaves two operators with a decision: who should move, when, and on what agreement? OrbitCall brings the data, the discussion and the decision into one shared record."
 
-**0:15 — demo, 60 seconds.** "The catalog is this week's real public data. You've just launched a satellite, and OrbitCall found it on a collision course with a real one. You're Operator A; my teammate is Operator B. Each agent evaluates these candidates against its own company's private limits. Compare the proposals and select one." Operator A approves that revision. The teammate introduces a meaningful constraint in Russian; the judge hears English with the original accessible. "The discussion changed the options. Here is the new revision, why it changed, and the visible reset of both approvals. Choose the revised candidate; both of you must approve it before scheduling."
+**0:15 — demo, 60 seconds.** "These are your four assigned satellites and their positions. Run Scan checks their trajectories against the catalog over the next 72 hours. The catalog is this week's real public data. One clearly labeled simulated satellite makes the conjunction reproducible, and OrbitCall found its close approach to a real one. You're Operator A; my teammate is Operator B. Each agent evaluates these candidates against its own company's private limits. Compare the proposals and select one." Operator A approves that revision. The teammate introduces a meaningful constraint in Russian; the judge hears English with the original accessible. "The discussion changed the options. Here is the new revision, why it changed, and the visible reset of both approvals. Choose the revised candidate; both of you must approve it before scheduling."
 
 **1:15 — evidence, 25 seconds.** "The maneuver is re-screened before its schedule entry is committed. These are our measured reference coverage and separate timing/distance errors for this snapshot. For verification, this separately labeled historical replay shows the agreed maneuver beside later observations; insufficient evidence stays pending."
 
@@ -126,16 +128,16 @@ The catalog is the demo week's real snapshot, with its sources and times. The de
 
 ## 5. Architecture: roles and flow
 
-Six agent roles, two humans, one source of truth. Public orbital data feeds deterministic screening and candidate calculation. Only each company's Operator Advocate receives that company's private policy. The Incident Analyst and shared room receive evidence, candidate results and shareable feasibility categories. Humans select and approve one exact proposal ID and revision; the Maneuver Scheduler checks that authorization again before writing the schedule.
+Six agent roles, two or three fleet-dispatcher demo accounts, one source of truth. A bilateral event involves its two assigned operator sides; confirmed debris involves only the assigned active-spacecraft operator. Public orbital data feeds deterministic screening and candidate calculation. Only each company's Operator Advocate receives that company's private policy. The Incident Analyst and shared room receive evidence, candidate results and shareable feasibility categories. Humans select and approve one exact proposal ID and revision; the Maneuver Scheduler checks that authorization again before writing the schedule.
 
 ```mermaid
 flowchart TD
-    D["Public orbit data<br/>CelesTrak GP/SupGP + SOCRATES<br/>Space-Track cdm_public<br/>KeepTrack catalog"] --> S[Risk Monitor<br/>screens pairs, ranks current evidence]
+    D["Public orbit data<br/>CelesTrak GP/SupGP + SOCRATES<br/>Space-Track cdm_public<br/>KeepTrack catalog"] --> S[Risk Monitor<br/>screens assigned fleet vs catalog, ranks personal incidents]
     S -- "red event" --> AN[Incident Analyst<br/>summary + multiple computed proposals]
     AN --> OA[Operator Advocate A<br/>private policy A]
     AN --> OB[Operator Advocate B<br/>private policy B]
     OA <-- "share feasibility outcomes" --> OB
-    OA --> DI[Coordination Host<br/>opens room, calls people,<br/>translates, logs]
+    OA --> DI[Coordination Host<br/>opens room,<br/>translates, logs]
     OB --> DI
     DI --> R{{"Conjunction room<br/>compare and select candidates<br/>voice + text, translated discussion"}}
     HA["Human Operator A<br/>laptop 1, English"] <--> R
@@ -154,12 +156,12 @@ flowchart TD
 | Incident Analyst | Gathers shared evidence and returns a five-line summary with computed candidate proposals | Read raw private policy values or represent one company |
 | Operator Advocate (one per company) | Evaluates proposals against its company's private hard constraints and preferences; shares outcomes and recommendations | Disclose private policy values, relax hard rules silently or authorize a maneuver |
 | Coordination Host | Opens the room, translates, follows discussion, posts and reads the end-of-call summary, and records shared actions | Read raw private policies or decide for the humans |
-| Maneuver Scheduler | Validates both approvals of the current selection, re-screens, then commits that exact maneuver | Accept stale approvals, infer consent or write outside the schedule location |
+| Maneuver Scheduler | Validates all workflow-required approvals of the current selection, re-screens, then commits that exact maneuver | Accept stale approvals, infer consent or write outside the schedule location |
 | Maneuver Verifier | Compares the promised maneuver with later evidence and records consistency, mismatch or missing evidence | Prove an exact burn from an isolated element-set jump |
 
 ### Principles
 
-- Deterministic tools produce numerical results; models explain and negotiate. Candidate calculation uses a bounded grid of moving satellite, burn time and delta-v, with 2–3 feasible proposals initially and an appropriate wait candidate. Approximate geometry is labeled indicative; no unsupported post-maneuver Pc or full optimizer is claimed.
+- Deterministic tools produce numerical results; models explain and negotiate. Candidate calculation uses a bounded grid of moving satellite, burn time and delta-v, with up to four computed proposals total, including wait when justified. Approximate geometry is labeled indicative; no unsupported post-maneuver Pc or full optimizer is claimed.
 - Humans decide between proposals. Selection is separate from approval. Both approvals identify the event, candidate and revision; changing the selected candidate or revising it visibly resets both. Switching back never revives old approvals.
 - A material change in policy, constraints or orbital evidence invalidates affected approvals. Unrelated conversation does not. Scheduled maneuvers are flagged for review and changed only after fresh approvals.
 - Every new incident asks both operators again. Company policies and past-incident memory can inform negotiation but never provide standing authorization.
@@ -176,24 +178,24 @@ flowchart TD
 ### System flow: one conjunction from data to a recorded outcome
 
 1. Refresh the public catalog and conjunction list subject to source limits; cache source IDs and epochs. The internal cycle is 5 minutes over cached data; it does not override source fetch limits.
-2. Propagate active objects and compute TCA, miss distance and relative velocity over a 3-day horizon. Attach supplied Pc from a matching CDM or labeled SOCRATES record; do not compute or invent it. Compare the full eligible SOCRATES reference snapshot and report coverage separately from numerical error.
-3. Rank by current evidence and time to conjunction. Unknown Pc is explicit and requires a defined review order, not a zero-risk assumption. Yellow stays in the feed; red (Pc > 1e-4 and TCA < 72 h) wakes the agents. Do not add action labels or heuristic dismissal rules.
+2. Pin the caller's assignments, catalog snapshot and 72-hour window. Propagate each assigned active object against every other usable catalog object, including debris and own-fleet peers, skipping self-pairs and deduplicating events across users. Compute TCA, miss distance and relative velocity. Attach supplied Pc from a matching CDM or labeled SOCRATES record; do not compute or invent it. Compare the full eligible SOCRATES reference snapshot and report coverage separately from numerical error.
+3. Rank the caller's active incidents by severity then earliest time of closest approach, with emergency flag, Pc and stable event ID as tie-breaks. Unknown/stale evidence goes into a separate visible Data needs review section sorted by TCA then miss distance. Yellow stays in the feed; red (Pc > 1e-4 and TCA < 72 h) wakes the agents. Do not add action labels or heuristic dismissal rules.
 4. Create each relevant person's inbox entry with the incident evidence, satellite details, contacts and source links. Incident Analyst computes multiple candidates; each Operator Advocate privately evaluates its company's constraints and returns shareable outcomes.
 5. Check the explanations against numerical results. Coordination Host opens the room; both owners see it in their queue and inbox (calling them and notifying affected operators come later). The room is accessible even if no feasible agreement is found.
 6. Humans compare and select a candidate. They speak or type in their own languages. Agents read the text and voice transcripts, distinguish hard constraints, preferences and corrections, and automatically revise affected candidates. Ambiguous inputs are clarified. There is no structured counter form.
-7. Both owners approve the same selected proposal ID and revision. A new selection or revision clears both approvals visibly. A veto or conversational counter returns to negotiation. If the selected plan is to wait, record a review condition and monitoring state with no burn.
-8. For a maneuver, re-screen the moved satellite against the whole catalog. A new conjunction returns to negotiation. Commit the exact schedule entry only while both approvals and its inputs remain current; a scheduled plan is never silently rewritten.
+7. Required operators approve the same selected proposal ID, revision and selection generation: both sides for two active operators, only the real active-object side for confirmed debris. A new selection or revision clears required approvals visibly. A veto or conversational counter returns to negotiation. If the selected plan is to wait, record a review condition and monitoring state with no burn.
+8. For a maneuver, re-screen the moved satellite against the whole catalog. A new conjunction returns to negotiation. Commit the exact schedule entry only while required approvals and its inputs remain current; a scheduled plan is never silently rewritten.
 9. After the maneuver time, compare later observations with the agreement. Record evidence consistent with the plan, mismatch, or awaiting sufficient data. Show the agreed values, observations, source epochs, method and limitations side by side.
 10. Retain shared messages, candidate choices/revisions, approvals, scheduling and verification in the incident log. Generate operator-scoped six-month report drafts and supporting records; mark coverage and missing information for review.
 
 ### User flow: Company A's dispatcher
 
-1. Opens the board or personal inbox, sees relevant incidents, source timestamps and contacts, and can follow the CelesTrak source link.
-2. Joins the room when invited or opens it independently from the inbox, whether or not B is present.
-3. Reviews the summary and compares multiple computed proposals, including assumptions, feasibility outcomes and any wait option. A sees A's private policy; B cannot retrieve it.
+1. Signs in and opens My Fleet + My Incidents + globe. Sees all four assigned spacecraft even if none has a detected event, with current positions, source epochs and freshness. Selecting one filters incidents and focuses the globe. Run Scan always checks all assigned spacecraft against the pinned usable catalog for the next 72 hours; progress and coverage are visible. Opens a relevant incident with sources and contacts.
+2. Opens the incident room from My Incidents or Inbox, whether or not the other operator is present. Both assigned accounts see one canonical event and room. An unrelated third account sees only its own fleet incidents.
+3. Reviews the summary and compares up to four computed proposals, including assumptions, feasibility outcomes and any justified wait option. A sees A's private policy; B cannot retrieve it.
 4. Selects a candidate for joint review and discusses it by voice or text. A counter is a message; the agent interprets it and explains any resulting revision. Translation keeps source numbers and units intact.
 5. Approves the exact candidate revision. Sees the other operator's approval state for that same choice. A revision or selection change resets both approvals; each person is asked again.
-6. Sees the scheduling result or the wait decision. Later sees the promised-versus-observed evidence, a mismatch or a pending-data explanation.
+6. For confirmed debris, follows the separate unilateral path: only the real assigned active-spacecraft operator approves, only that spacecraft can move, and the UI never invents a second approval. Missing active operators do not qualify. Sees the re-screened scheduling result or wait decision. Later sees promised-versus-observed evidence, a mismatch or a pending-data explanation.
 7. Can review the shared log and export an operator-scoped report draft with its supporting event records. The next incident requires a new decision, even for the same pair.
 
 ### Unresolved situations stay in the inbox
@@ -216,16 +218,16 @@ No agreement: show the candidates and shareable conflict categories. No response
 
 ## 7. Demo scene and screens
 
-> **Status: to be discussed.** The scene below is a draft from the final docs review (Oct 24). The team still has to agree on the exact flow, script and timing.
+> **Status: fleet flow approved, implementation pending.** The user approved My Fleet + incidents + globe, fleet-scoped scanning, severity/time sorting, independent approvals, up to four computed candidates and unilateral debris. The scene below is updated to that flow. Exact IDs and rehearsal timing remain to be tested.
 
-Two laptops show the same incident from different operator identities, each signed in as a pre-created test user. The judge is A; a teammate is B and speaks Russian. The catalog is the pinned real snapshot of the demo week; the judge launches one simulated satellite whose prefilled orbit crosses a real catalog satellite. Display snapshot time and sources; label the simulated satellite, demonstration policies and proposed actions as simulated. The following timing is a rehearsal target, not measured performance.
+Two laptops show fleet dashboards from different pre-created operator identities, with four assigned spacecraft each. An optional third account shows its own four-object fleet; it does not join an unrelated pair's room. When two fleets share a conjunction, both laptops show the same canonical incident. The judge is A; a teammate is B and speaks Russian. The catalog is the pinned real snapshot of the demo week; the judge launches one simulated satellite whose prefilled orbit crosses a real catalog satellite. Display snapshot time and sources; label the simulated satellite, demonstration policies and proposed actions as simulated. The following timing is a rehearsal target, not measured performance.
 
 ### Scene step by step
 
 | Sec | What the judge does | What they see and hear |
 |---|---|---|
-| 0 | Presses "Launch your satellite" on the prefilled form | The new object, in the simulated color, appears in the queue on a collision course with a real catalog satellite: the real object's IDs, source epochs and CelesTrak link, the TCA and the "simulated" label. The row turns red and blinks, with "agents working" |
-| 15 | Joins the room from the invitation; compares and selects a candidate | The Coordination Host speaks the five-line summary (Grok Voice); multiple computed cards, assumptions and feasibility outcomes; A's private policy indicator, with B's private limits inaccessible |
+| 0 | Opens My Fleet, sees four assigned spacecraft and their positions, then presses Run Scan. Optional Launch explicitly assigns the simulated object to this user | The new object, in the simulated color, appears in the queue on a collision course with a real catalog satellite: the real object's IDs, source epochs and CelesTrak link, the TCA and the "simulated" label. The row turns red and blinks, with "agents working" |
+| 15 | Opens the fleet incident from the completed scan; compares up to four computed candidates and selects one | The Coordination Host speaks the five-line summary (Grok Voice); multiple computed cards, assumptions and feasibility outcomes; A's private policy indicator, with B's private limits inaccessible |
 | 30 | Approves that candidate revision | Exact proposal ID/revision and "A approved; waiting for B" |
 | 40 | Listens to B's new constraint in Russian; it touches the proposed burn window (for example, an imaging pass at that time) | English translation preserving the original values; original wording accessible |
 | 50 | Reviews the automatically revised options | What changed and why; a new selected-plan revision and visible reset of both approvals |
@@ -239,7 +241,7 @@ If the judge changes a policy after scheduling, show "review required" and a pro
 
 | Screen | What's on it | Why |
 |---|---|---|
-| 1. Ops board | Queue: pair, TCA, distance, supplied Pc/provenance, existing red/yellow and lifecycle state; measured reference coverage and numerical agreement; CelesTrak links; globe | Show the real catalog and traceable evidence, with no forecast arrows, new action-label taxonomy or dismissal feature |
+| 1. Assigned-fleet dashboard | My Fleet with all assigned objects, propagated positions and freshness; fleet-focused globe; Run Scan scope/progress/coverage; separate data-review and follow-up sections. Queue: pair, TCA, distance, supplied Pc/provenance, existing red/yellow and lifecycle state; measured reference coverage and numerical agreement; CelesTrak links; globe | Show the real catalog and traceable evidence, with no forecast arrows, new action-label taxonomy or dismissal feature |
 | 2. Conjunction room | Orbits and countdown; summary; shareable negotiation; translated voice/text with original accessible; candidate comparison and selection; proposal ID/revision; Approve / Veto / conversational Counter; visible approval reset; own-policy privacy indicator; maneuver diff; historical observation chart | Let both humans decide between proposals and see exactly what they approve |
 | 3. Policy | Private hard constraints and preferences, with separate shareable contact/language settings | Agents can use internal limits without publishing them |
 | 4. Audit log and reports | Shared messages, proposal history and approvals, scheduling results, promised-versus-observed evidence; operator/period selection, report preview and download | Keep a traceable record and prepare a reporting draft |
@@ -348,7 +350,7 @@ Use public orbit sources, reference conjunction records and operator metadata. S
 | Cartesia | TTS after source values are restored and checked in the human translation path; also voices notifications | Voice must be core, not decoration; for us it is. A 2-minute, demo-first presentation; README with setup, Cartesia features used and known limitations; no keys in the repo | 1–2 | Cartesia track |
 | Backboard | Private agent context between incidents, such as a past concession; never standing authorization or reused approval | `pip install backboard-sdk`, `memory="Auto"`, $5 credits | 1 | Backboard track |
 | Tiger Data | Time series of Pc/distance per event: a "how risk grew" chart on screen and for Maneuver Verifier | Postgres + TimescaleDB, free tier | 1–2 | Tiger track |
-| Auth0 | Login for pre-created test users, one per operator (sign-ups disabled, no registration), roles "owner of SAT-A / SAT-B"; Convex verifies the identity; approve is signed by identity | Any use of Auth0 | 1 | MLH Auth0 track |
+| Auth0 | Login for pre-created test users, one per operator (sign-ups disabled, no registration), server-managed assigned-fleet responsibility, distinct from ownership and country; Convex verifies the identity; approve is signed by identity | Any use of Auth0 | 1 | MLH Auth0 track |
 
 ### Tier 3: almost free
 
@@ -382,7 +384,7 @@ Each item is a decision we made and a short answer for the table. Freya learns t
 1. **Why pairs, not groups?** A conjunction is always two objects at one point at one time; triples are statistically rare. But one satellite can be in several pairs in a week, so after a maneuver Maneuver Scheduler recomputes the moved satellite against the whole catalog, not only against its partner.
 2. **Who decides who moves?** Agents evaluate multiple computed candidates against private company policies. Humans compare them, select one and both approve the same proposal ID/revision. A different selection or revised plan resets both approvals; each new incident asks again. Notifying affected third parties comes after the base build; only the two owners decide.
 3. **What if they do not agree?** The room and personal inbox keep the evidence, candidate proposals, shareable disagreement categories and contact methods accessible. Operators continue by voice or text; agents follow the discussion. No agreement means no jointly authorized schedule entry.
-4. **What if an operator does not respond?** Keep the incident, public data and available contacts in the inbox. Show response status without inferring consent. Operators can contact each other or act through their own operational procedures; OrbitCall does not bypass its requirement for both approvals. Internal policy values remain private even when companies participate.
+4. **What if an operator does not respond?** Keep the incident, public data and available contacts in the inbox. Show response status without inferring consent. Operators can contact each other or act through their own operational procedures. For two active operators OrbitCall does not bypass its requirement for both approvals. Confirmed debris is a separately authorized unilateral workflow, never a response-time fallback. Internal policy values remain private even when companies participate.
 5. **How is the promise checked?** The Maneuver Verifier compares the agreed revision with later observations, using an object-specific noise baseline and documented method. It records evidence consistent with the plan, mismatch or insufficient data. Public orbital elements alone do not prove exact burn time or delta-v.
 6. **When to act: now or wait for refinement?** Industry thresholds: Pc > 1e-4 and TCA < 72 h is red, we wake the humans. Between 1e-5 and 1e-4 is yellow, agents prepare options, humans aren't bothered. We show GP/SupGP source disagreement with epochs, not a statistical confidence band; missing Pc is explicit. Waiting remains a joint decision with a review condition.
 7. **How are constraints represented?** Each company controls its own private hard constraints and preferences. Its advocate returns candidate feasibility and shareable categories, not raw fuel or mission limits. Humans see the actual proposed maneuver parameters and decide among the feasible alternatives.
@@ -405,6 +407,8 @@ Each item is a decision we made and a short answer for the table. Freya learns t
 ## 13. The 36-hour plan
 
 Counted from the start of hacking Friday evening (H0 ≈ 21:00). Devpost deadline is Sunday 9:00 (H36), judging 10:30–12:30.
+
+**Fleet amendment delivery:** Andrew implements fleet-versus-catalog scan jobs and snapshot/coverage provenance. Kostya implements assignments, scoped subscriptions, canonical events, selection-generation authorization and the unilateral debris path. Adil implements My Fleet positions, filtered incidents, the selected sort order and adapters for real scan/orbit data. Freya seeds the two required demo identities and optional third (four spacecraft each) with explicitly simulated assignments and rehearses both decision paths.
 
 **Roles.** Adil: queue/source links, inbox, candidate comparison, approval resets, privacy indicators and report preview. Andrew: the Python orbital service and its host, source matching, screening/validation, the simulated satellite's orbit, computed candidates, verification evidence and report aggregation. Kostya: private policy access, agent negotiation, approval/schedule authorization, protected translation, the live-call translation worker and optional sponsor integrations. Freya: real-event demo, report-template requirements, pitch, video and scenario checks. Accepted scope takes precedence over optional integrations; estimates must be rechecked against working progress.
 

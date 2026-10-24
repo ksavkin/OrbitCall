@@ -2,6 +2,14 @@
 
 Branch: `adil`. App: `web/`. Run with `cd web && npm run dev`, then open http://localhost:3000.
 
+## Accepted target workflow (October 24, implementation pending)
+
+The user selected [My Fleet + My Incidents + globe](../user-flow.md). Each enabled demo user has four assigned spacecraft; two users are required, with an optional third based in Russia, the US or China. Run Scan checks the full assigned fleet against all other usable catalog objects for 72 hours. Selecting a satellite filters incidents, not scan scope. Country/flag/language do not grant object access.
+
+Priority: severity first, then earliest closest approach; missing/stale data is a separate visible review section. Explain TCA as "Time until closest approach". Show up to four computed candidates. Selecting an existing card changes the shared selection without countering or approving. Each required side then presses Approve. Confirmed debris has one real active-object approver, never an auto-approved debris side.
+
+The historical implementation notes below describe the simulator. Its Pc/time sorting, fixed four options, auto-approved debris, private traces, affected-party notification and fast verification are not the accepted backend behavior. Country-based demo assignments and replay must remain visibly simulated.
+
 ## Where things stand
 
 The Orbit screen is done and the Conjunctions screen is built against the backend contract with a dev simulator. Rooms, Policy, Audit log and Inbox are not started.
@@ -29,7 +37,7 @@ The Orbit screen is done and the Conjunctions screen is built against the backen
 - **Globe**: both orbits of the focused event cross at the TCA point. The synthetic object is a real two-body orbit built to pass the real satellite at the stated miss distance (`web/src/lib/ops/encounter.ts`, checked by `measureMiss`). Preview TCA jumps the clock 70 s before TCA and frames the crossing. The Risk Monitor's screening pass shows as a sweep around the LEO shell that lights up the satellites it passes.
 - **Agents window** (right, expandable to full screen): agent graph with live call and answer pulses, "needs you" edges to the operators, check and failure badges. The Now card streams the thinking summary with tokens, latency and cost. Trace shows every step as a waterfall row with request, response, HTTP line and model. Logs show every line with filters.
 - **Scenarios** (bottom bar, dev only): six user stories from the docs. Veto then re-plan (the demo scene from plan-v1 §7), both approve, scheduler refuses, second opinion disagrees, debris with one side moving, no agreement. Pause, 1× / 2× / 4×, autopilot for the operator answers, reset.
-- **Backend contract**: `web/src/lib/ops/types.ts`, described for the backend team in `docs/specification.md`.
+- **Backend target contract**: `docs/specification.md`. `web/src/lib/ops/types.ts` is the current simulator view model, not an identical shared schema. Add an adapter for IDs, units, nullability, lifecycle, candidate revisions and selection generation.
 
 ## Checked in the browser (2026-10-24)
 
@@ -54,11 +62,11 @@ Run scan (queue, top) screens the catalog with the sweep and the camera pulled w
 
 - Grok model ids and prices are placeholders (`web/src/lib/ops/roster.ts`). Grok cost shows `—`.
 - SOCRATES, SupGP and KeepTrack request URLs in the traces are display placeholders until the backend spec fixes them.
-- The SOCRATES validation badge (47/50) comes from the simulator. In prod it should come from `events.validation()`.
+- The SOCRATES validation badge (47/50) comes from the simulator. In prod it comes from `validation.latest` with full declared eligible scope, not a hard-coded top-50 badge.
 - Synthetic B objects are drawn as glow points, not 3D models.
 
 ## Next
 
 1. Conjunction room screen: transcript with translation, proposal revisions, approve / veto / counter per side, maneuver diff.
-2. Backend adapter `web/src/lib/ops/backend.ts` once P0 of `docs/specification.md` exists.
+2. Backend adapter and common command interface for simulation/Convex. Use `fleet.listMine`, `scans.startMine`, `scans.getMine`, `events.myQueue`, `events.orbits` and the room APIs in `docs/specification.md`. Decouple geometry from `engine.encounters`, buttons from `engine.decide`, and backend availability from the Dev switch.
 3. Policy form, Audit log, Inbox.

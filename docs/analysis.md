@@ -9,11 +9,19 @@ Originally written Oct 24, 2026, ~00:40 PT (H≈4 of the hackathon). Updated Oct
 - **Estimates:** the original rough backend/frontend hour estimates preceded these decisions. Re-estimate against the updated build plan; they are not delivery commitments.
 - **Evidence boundary:** competitor comparisons cannot be fully checked from this repository because the research notes are absent. Do not turn “not found in the reviewed products” into a claim that no commercial product supports a capability.
 
+## Current workflow amendment: assigned fleet (October 24, 2026)
+
+The user approved [the fleet-first workflow](user-flow.md): My Fleet + personal incident queue + globe, with four assigned spacecraft per enabled demo dispatcher, two required demo users and an optional third based in Russia, the US and China. Identity and assignment determine access; country does not. Run Scan screens the caller's assigned fleet against every other usable object in the pinned catalog over the next 72 hours. It does not populate a global operator queue.
+
+Priority is severity first, then earliest time of closest approach within each group. Missing/stale evidence has a separate visible Data needs review section. This supersedes Pc/time scoring and the old rule putting every missing-Pc event at the bottom. TCA means Time of Closest Approach; the UI explains it as "Time until closest approach".
+
+Shared candidate selection is separate from each operator's Approve. Show up to four computed candidates, including wait when justified. Counter remains a conversation message, not a separate approval status. Two participating active-spacecraft operators each approve; confirmed debris uses a distinct unilateral path requiring the assigned active-spacecraft operator, never an invented approval for debris. Missing active operators do not qualify for that exception. Earlier references to both approvals below describe the bilateral path.
+
 ## 0. Decision summary
 
 | Item | Decision | Result |
 |---|---|---|
-| M1 | **Accept** | Both humans approve the same proposal ID and revision; selected-plan changes visibly reset both approvals |
+| M1 | **Accept** | Bilateral: both humans approve the same proposal ID and revision; debris: only the assigned active-object operator approves; selection changes reset required approvals |
 | M2 | **Accept** | Company policy values are private throughout data access, agent context, UI, logs and exports |
 | M3 | **Skip** | No structured counter-proposal form; keep ordinary voice/text counters and automatic agent revisions |
 | M4 | **Accept** | Protect technical values during translation, restoring them from their authoritative source |
@@ -23,7 +31,7 @@ Originally written Oct 24, 2026, ~00:40 PT (H≈4 of the hackathon). Updated Oct
 | M8 | **Accept with the reviewed evidence limits** | Supplied Pc with event/version provenance; source spread is not statistical uncertainty; no invented internal Pc |
 | M9 | **Remove forecasting completely** | No trained forecast, replacement baseline, forecasting rules, benchmark or predicted trend arrow |
 | M10 | **Accept** | Measured coverage over the full eligible reference snapshot, separate numerical errors and transparent input differences |
-| S1 | **Accept — decision between multiple proposals** | Humans compare calculated candidates, select one and both approve its exact revision |
+| S1 | **Accept — decision between multiple proposals** | Humans compare up to four calculated candidates, select separately from approval, and the workflow's required operators approve the exact revision |
 | S2 | **Skip — ask again** | No saved pair agreement or standing authorization; every new incident asks both operators again |
 | S3 | **Accept** | Operator-scoped six-month report draft and supporting event export, with reviewed FCC mapping and coverage |
 | S4 | **Skip** | Keep existing severity/lifecycle presentation; no additional action-label taxonomy |
@@ -100,7 +108,7 @@ Identify evidenced element-set/input differences separately from screening misse
 
 ### S1 — Humans decide between multiple proposals
 
-Generate a bounded grid of moving satellite, burn time and delta-v through deterministic tools. Start with 2–3 candidates when feasible and include waiting with a review condition when appropriate. Show who moves, time, delta-v, estimated fuel where available, computed geometry, assumptions and shareable policy feasibility. If only one or no feasible candidate exists, state that; do not manufacture alternatives.
+Generate a bounded grid of moving satellite, burn time and delta-v through deterministic tools. Show up to four computed candidates, including waiting with a review condition when appropriate. Show who moves, time, delta-v, estimated fuel where available, computed geometry, assumptions and shareable policy feasibility. If only one or no feasible candidate exists, state that; do not manufacture alternatives.
 
 Agents can recommend a candidate and update options from ordinary voice/text discussion. Humans compare, select and both approve one exact candidate revision. A simple along-track approximation can illustrate the demo with stated assumptions, but it is not a production optimizer or proof of a numerical Pc target; the selected maneuver still goes through the defined catalog re-screen.
 
@@ -150,6 +158,8 @@ Fetch.ai (Agentverse, ASI:One) was dropped on Oct 24, 2026; agents run in our ow
 
 ## 4. Positioning and interface
 
+The main screen is now explicitly My Fleet + My Incidents + globe. Public catalog exploration is contextual. The accepted fleet workflow supersedes earlier global-search presentation. Research, sources and acceptance scenarios are retained in [user-flow.md](user-flow.md).
+
 Emphasize the connected workflow: private policy evaluation → human choice among computed proposals → voice/text discussion changes options → both approve the same revision → later evidence compared with the agreement → reviewable report draft. Retain the personal inbox for nonresponse, no agreement, monitoring, updated evidence and pending verification.
 
 The original review suggested a room-first demo and a smaller globe. That presentation suggestion was not separately approved here; the updated plan follows the full queue/inbox-to-room workflow and makes candidate choice, private-policy boundaries, approval resets and original/translated text visible. No separate mockup brief is present in this repository.
@@ -160,7 +170,7 @@ Contact directories, rooms, logs, maneuver recommendations and screening compari
 
 Preserve the original numbers in [functionality.md section 20](functionality.md#20-open-questions-for-the-specification):
 
-- **Q3 resolved:** multiple computed proposals for human choice; 2–3 initially when feasible, without fabricated alternatives.
+- **Q3 resolved:** up to four computed proposals for human choice when feasible, without fabricated alternatives.
 - **Q4 resolved:** counters are voice/text; no structured form.
 - **Q5 resolved:** company policy values are private; share outcomes/categories and proposed maneuver parameters.
 - **Q1 and Q2 resolved:** 3-day screening horizon; Risk Monitor every 5 minutes over cached data, respecting source limits.

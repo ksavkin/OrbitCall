@@ -1,11 +1,11 @@
 # OrbitCall
 
-**A dispatcher for orbit.** OrbitCall watches the public satellite catalog, finds dangerous conjunctions, and brings both operators into one room. Each company's agent evaluates multiple computed proposals within its private policy. Humans compare the proposals, discuss them by voice or text in their own languages, and approve the same proposal revision. Agents use the discussion to revise the options. After the maneuver time, OrbitCall compares what was agreed with later observations and records the evidence.
+**A dispatcher for orbit.** Each dispatcher opens My Fleet: their assigned satellites, current positions, incident queue and globe. Run Scan checks those spacecraft against all other usable objects in a pinned catalog over the next 72 hours. An incident involving two participating operators opens one shared coordination room. Each company's agent evaluates multiple computed proposals within its private policy. Humans compare the proposals, discuss them by voice or text in their own languages, and approve the same proposal revision. Agents use the discussion to revise the options. After the maneuver time, OrbitCall compares what was agreed with later observations and records the evidence.
 
 Nothing moves without a human. It is a handshake, not a law.
 
 > Built at **Cal Hacks 13.0** (Oct 23–25, 2026).
-> **Status: planning.** This repo holds documentation, not an implemented application. Product decisions updated Oct 24, 2026; see [Feature decisions](docs/analysis.md).
+> **Status: frontend prototype with local simulation; backend integration pending.** Documents describe intended behavior, not completed capabilities. Product decisions updated Oct 24, 2026; see [Feature decisions](docs/analysis.md).
 
 ---
 
@@ -24,9 +24,13 @@ OrbitCall solves the communication and decision step between operators who are *
 
 ## How it works
 
+The accepted [assigned-fleet user flow](docs/user-flow.md) defines the dashboard, scan scope, priority order and approval paths. Demo: two required users and an optional third based in Russia, the US and China, each seeded with four assigned spacecraft. Country and language do not grant access. My Incidents is ordered by severity, then earliest closest approach. Missing/stale evidence stays visible in a separate review section.
+
+TCA means **Time of Closest Approach**, when two objects are predicted to be nearest. The interface uses "Time until closest approach" alongside miss distance. Detection does not itself determine collision probability.
+
 ```mermaid
 flowchart TD
-    D["Public orbit data<br/>CelesTrak GP / SupGP / SOCRATES<br/>Space-Track cdm_public · KeepTrack"] --> S[Risk Monitor<br/>screens every pair, ranks the queue]
+    D["Public orbit data<br/>CelesTrak GP / SupGP / SOCRATES<br/>Space-Track cdm_public · KeepTrack"] --> S[Risk Monitor<br/>screens assigned fleet vs catalog, ranks personal queues]
     S -- "red event" --> AN[Incident Analyst<br/>5-line summary + options]
     AN --> OA[Operator Advocate A<br/>private policy A]
     AN --> OB[Operator Advocate B<br/>private policy B]
@@ -42,11 +46,11 @@ flowchart TD
     VE -.-> S
 ```
 
-1. **Risk Monitor** propagates the catalog with SGP4, finds close pairs, and ranks them using current supplied probability and time to closest approach. Red (Pc > 1e-4 and TCA < 72 h) wakes the agents. Missing probability is explicit; there is no risk forecast.
-2. **Incident Analyst** prepares a five-line summary and multiple computed proposals, initially 2–3 when feasible, showing who moves, timing, delta-v, estimated consequences and assumptions. Waiting can be an option with a review condition.
+1. **Risk Monitor** propagates assigned spacecraft against the available catalog with SGP4, finds close pairs, and ranks each personal queue by severity then earliest closest approach. Red (Pc > 1e-4 and TCA < 72 h) wakes the agents. Missing probability is explicit; there is no risk forecast.
+2. **Incident Analyst** prepares a five-line summary and multiple computed proposals, up to four when feasible, showing who moves, timing, delta-v, estimated consequences and assumptions. Waiting can be an option with a review condition.
 3. **Operator Advocates A and B** evaluate candidates using their own private company policies. They exchange feasibility outcomes and constraint categories; raw policy values are inaccessible to the other side.
 4. **Coordination Host** opens the room, translates, logs and, when a call ends, posts and reads a summary of what was agreed. Each person also has a persistent inbox with incident details, operator contacts and history, including when the other operator is absent.
-5. **Two humans** compare and select a candidate, discuss it in the room's always-on chat or optional live call, and approve that exact revision by ticking a checkmark, or veto it. Speech never approves. Counters are ordinary voice or text, with automatic agent revisions. Switching the selected candidate or revising it visibly resets both approvals. Every new incident asks both people again.
+5. **The incident's assigned operators** compare and select a candidate, discuss it in the room's always-on chat or optional live call, and approve that exact revision by ticking a checkmark, or veto it. Speech never approves. Counters are ordinary voice or text, with automatic agent revisions. Switching the selected candidate or revising it visibly resets required approvals. Bilateral active-spacecraft coordination requires both sides; confirmed debris requires only the assigned active-object operator, without a fictional debris approval. Every new incident asks the required operators again.
 6. **Maneuver Scheduler** re-screens the moved satellite against the whole catalog and records only the currently approved maneuver. A new conflict returns to discussion; a wait agreement schedules no burn.
 7. **Maneuver Verifier** compares later observations with the agreed plan, showing evidence consistent with the plan, a mismatch, or insufficient data. The shared record supports an operator-scoped six-month report draft and supporting event export.
 
@@ -55,7 +59,7 @@ Principles:
 - Physics is deterministic code (SGP4), not a model. Models reason, explain and translate.
 - Every agent explanation is checked against the numbers before it reaches the screen.
 - Translation protects numbers, units, times and identifiers with placeholders and restores them from the original message or exact proposal revision.
-- Both approvals refer to one incident, proposal ID and revision. Past agreements never authorize a future event.
+- Bilateral approvals refer to one incident, shared selection generation, proposal ID and revision. Confirmed debris uses one real active-object approver, never a fictitious second approval. Past agreements never authorize a future event.
 - Policy privacy is enforced in data access, agent context, live updates, logs and exports, as well as the UI.
 - One source of truth: one reactive database, both laptops subscribe to it.
 - Agents run only for the top of the queue, not for every pair.
@@ -97,11 +101,12 @@ Validation reports recall over the full eligible SOCRATES list for a defined sna
 - We use supplied Pc with provenance; we do not invent covariance or a post-maneuver probability. Approximate candidate geometry is labeled indicative.
 - We compare a bounded set of computed maneuver candidates; this is not a production delta-v optimizer.
 - We do not forecast future risk estimates. Historical observations remain available.
-- Agents never touch a satellite. Scheduling requires two current approvals of the same candidate revision; a saved agreement cannot bypass the next incident's decision.
+- Agents never touch a satellite. Scheduling requires both assigned sides for bilateral active-spacecraft coordination, or the assigned active-object operator for confirmed debris, approving the same current candidate revision; a saved agreement cannot bypass the next incident's decision.
 - The report export is a reviewable draft with source coverage and missing fields. Its FCC field mapping and applicability must be verified before a filing-ready template is released; it does not file automatically.
 
 ## Docs
 
+- [Assigned-fleet user flow](docs/user-flow.md) — accepted dashboard, fleet screening, priority, bilateral/debris workflows, primary-source research and acceptance scenarios.
 - [Plan v1](docs/plan-v1.md) — the full pre-hackathon kit: problem, evidence, architecture, demo script, data sources, sponsors, judge Q&A, 36-hour plan.
 - [Functionality](docs/functionality.md) — what OrbitCall does: actors, domain objects, lifecycle, functions by area, open questions for the specification.
 - [Feature decisions](docs/analysis.md) — accepted and skipped recommendations, their rationale, and the remaining proposals that have not been adopted.

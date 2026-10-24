@@ -6,6 +6,8 @@ Updated Oct 24, 2026 with the decisions in [analysis.md](analysis.md): M1, M2, M
 
 Final review decisions (Oct 24, 2026, ~03:30 PT) are applied: the demo conjunction comes from one flagged simulated satellite against the real catalog (DATA-5, DATA-7, SCR-10); the schedule location is defined (EXE-1); sign-in uses pre-created test users (ACC-1); the open questions in section 20 are resolved with demo-first defaults. The room is an always-on chat with an optional live call; approval is only a checkmark, including on the end-of-call summary (ROOM-7, ROOM-13); calling operators and third-operator notices come after the base build.
 
+Current user-approved amendment: [assigned-fleet workflow](user-flow.md). My Fleet + My Incidents + globe is the main screen. Run Scan checks assigned objects against the usable catalog for 72 hours. Severity then nearest closest approach determines order; missing/stale evidence is a separate visible review section. Up to four computed options are shown. Selection and Approve are separate. Confirmed debris has a distinct unilateral approval path. References to two owners/both approvals describe bilateral events unless noted.
+
 This document lists functionality only. Priorities, owners and the schedule belong to the roadmap. Endpoints and data formats belong to `specification.md`, which is written from this document.
 
 Each function has a stable ID (for example `ROOM-3`) so the specification and the roadmap can refer to it. Inside each area, **System** is what OrbitCall does on its own and **User** is what a person sees or does.
@@ -18,7 +20,7 @@ Each function has a stable ID (for example `ROOM-3`) so the specification and th
 
 | Actor | Who | What they do in OrbitCall |
 |---|---|---|
-| Dispatcher | Flight dynamics engineer at a satellite operator; one per company in a conjunction (Operator A, Operator B) | Watches the queue and personal inbox, reviews incident details and contacts, joins rooms, talks, approves / vetoes / counters, edits the company policy |
+| Dispatcher | Flight dynamics engineer at a satellite operator, with a server-assigned fleet; A/B are stable incident sides, not fixed user identities | Watches the queue and personal inbox, reviews incident details and contacts, joins rooms, talks, approves / vetoes / counters, edits the company policy |
 | Affected third operator | Owner of a satellite that ends up on the new path after a maneuver | Receives a notice before the maneuver |
 | Head of operations | Reads the record after the fact | Reads the audit log to see who said what and when |
 
@@ -26,14 +28,14 @@ Each function has a stable ID (for example `ROOM-3`) so the specification and th
 
 | Role | Does | Does not |
 |---|---|---|
-| Risk Monitor | Screens every pair, ranks the queue using current evidence, starts the agents on red events | Decide who moves or forecast future risk estimates |
+| Risk Monitor | Screens assigned fleet objects against the catalog, ranks each user's relevant queue using current evidence, starts the agents on red events | Decide who moves or forecast future risk estimates |
 | Incident Analyst | Gathers shareable evidence on a pair and produces a five-line summary with multiple computed proposals | Read either company's private policy or represent either side |
 | Operator Advocate (one per company) | Negotiates on behalf of its company within that company's policy | Step outside the policy or execute anything |
 | Coordination Host | Opens the room, calls the right people, translates, runs the conversation, writes the log | Vote or decide |
-| Maneuver Scheduler | After two approvals of the same proposal ID and revision, re-screens and writes the maneuver to the schedule | Act without current approvals; write outside the one schedule location |
+| Maneuver Scheduler | After all required approvals for the workflow (two active-operator sides, or one active side for confirmed debris) of the same proposal ID and revision, re-screens and writes the maneuver to the schedule | Act without current approvals; write outside the one schedule location |
 | Maneuver Verifier | Compares the agreed maneuver with later observations and records the evidence in the shared log | Treat sparse orbit changes as proof of an exact burn |
 
-No system role can act on a satellite. Agents read, compute, propose, call, translate and write a file. Only two human approvals put a maneuver into the schedule (§12 item 8).
+No system role can act on a satellite. Agents read, compute, propose, call, translate and write a file. Only the workflow's required authenticated human approvals can put a maneuver into the schedule (ROOM-14).
 
 ---
 
@@ -44,7 +46,9 @@ Names and meaning only; fields and formats are defined in the specification.
 | Object | What it is |
 |---|---|
 | Space object | A satellite or debris object from the catalog, with its orbit (from one or more sources) and metadata: owner, purpose, country, launch date |
-| Operator | A company that owns satellites; has a contact, a language and a policy |
+| Operator | A company that owns or operates satellites; has shareable contacts and a private policy |
+| Fleet assignment | Server-managed user-to-object responsibility within a company, with a version and validity. Distinct from ownership, user country and display language |
+| Scan run | One authenticated assigned-fleet screening job with pinned assignments, snapshot, 72-hour window, progress, results and explicit coverage |
 | Policy | One operator's private hard constraints and preferences: minimum fuel reserve, protected or preferred mission windows, acceptable risk and mission priority per satellite. Language and shareable operator contact details are separate company settings |
 | Conjunction event | Two objects predicted to pass close: time of closest approach (TCA), miss distance, supplied probability (Pc) with source and epoch, relative velocity, color (red / yellow where evidence supports it), status, GP/SupGP source spread, and reference matches. No risk forecast |
 | Inbox item | A persistent entry for one person and one conjunction event, with unread updates, the current situation, relevant satellite information, operator contacts and contact methods, and links to the room and log |
@@ -68,7 +72,7 @@ The states below come from §6 and §7. The specification turns them into shared
 **Event**
 
 ```
-new ──(yellow)──▶ stays in the feed and inbox; agents may prepare options, humans are not called
+new ──(yellow)──▶ stays in the feed and inbox; no prepared options in this build
  │
  └─(red)──▶ agents ──▶ proposal ──▶ communication ──▶ approved
                                                        ├─(maneuver)──▶ scheduled
@@ -90,10 +94,10 @@ The verification branches apply after the maneuver time.
 - **new** — the pair is in the queue.
 - **agents** — the event turned red; Incident Analyst and Operator Advocates are working ("agents working").
 - **proposal** — computed candidate proposals are ready; the room, created when the event turned red (Q-3), is ready and both owners see it in their queue and inbox. If only one feasible candidate exists, or none, the room explains that instead of inventing alternatives.
-- **communication** — the human operators compare proposals, select one for joint review, and discuss it by voice or text with translation. Agents follow both the voice transcripts and text messages, using relevant facts, constraints, preferences and corrections to revise the proposals. Each person can access the incident from their inbox even if the other person has not joined. They approve by ticking the checkmark, veto with a button, or counter in conversation; there is no structured counter form. With one approval the event stays in **communication** and identifies the candidate and revision awaiting the other side.
-- **approved** — both owners approved the same selected proposal ID and revision for this incident.
+- **communication** — the human operators compare proposals, select one for joint review, and discuss it by voice or text with translation. Agents follow both the voice transcripts and text messages, using relevant facts, constraints, preferences and corrections to revise the proposals. Each person can access the incident from their inbox even if the other person has not joined. They approve by ticking the checkmark, veto with a button, or counter in conversation; there is no structured counter form. In the bilateral path, one approval leaves the event in **communication**, identifying the candidate and revision awaiting the other side. In unilateral debris avoidance, the single required approval completes human authorization (ROOM-14).
+- **approved** — all required sides for this workflow approved the same selection generation, proposal ID and revision for this incident (ROOM-14).
 - **scheduled** — Maneuver Scheduler wrote the maneuver and the re-screen found no new conjunction.
-- **monitoring** — both owners agreed to wait; the decision and any agreed review time or condition stay visible in the inbox, and no maneuver is scheduled.
+- **monitoring** — all workflow-required operators agreed to wait; the decision and any agreed review time or condition stay visible in the inbox, and no maneuver is scheduled.
 - **awaiting verification data** — the maneuver time has passed, but there is not enough new orbit data to determine whether the maneuver matched the promise.
 - **verified** — after the maneuver time, sufficient observations are consistent with the promised maneuver ("evidence consistent with plan"), with the comparison and its limits visible.
 - **flagged** — new orbit data does not match the promise; both sides are warned.
@@ -146,7 +150,7 @@ Inbox access does not depend on reaching agreement. Reading an entry or receivin
 
 **System**
 
-- **SCR-1** Propagates active objects ahead with SGP4 (deterministic code, not a model) and finds pairs that pass closer than 5 km within the 3-day horizon (the same threshold as SOCRATES, so validation compares like with like).
+- **SCR-1** Propagates each assigned active spacecraft against every other usable object in the selected catalog snapshot with SGP4 (deterministic code, not a model), including debris and own-fleet peers, and finds pairs that pass closer than 5 km in the 3-day horizon. Skips self-pairs and deduplicates unordered pairs. A separate reference validation run can have a broader scope; show its scope explicitly.
 - **SCR-2** Computes TCA, miss distance and relative velocity, and attaches supplied Pc from a matching public CDM where available, or a labeled SOCRATES value. Matches object IDs, encounter time and data version; retains source, epoch and metric type, including whether the source reports a maximum probability. Missing Pc stays unavailable. Does not invent a probability or covariance, use fixed sigma, or reuse the original event's Pc as a post-maneuver estimate. The one exception is a simulated event (DATA-7): its supplied Pc is the scenario's simulated CDM value, flagged `simulated` and never shown as coming from a real source.
 - **SCR-3** Validates detection over the complete SOCRATES reference list within the selected catalog coverage and horizon on one pinned snapshot. Matches by data timestamp: the validation run uses, for each object, the element set with the same epoch that SOCRATES used for that run. Newer orbit data moves objects by a kilometre or more, so comparing runs on different data measures the data difference, not the screening. Events where our input epoch differs from SOCRATES' are reported as "data differs", not as misses. Reports matched / eligible reference events, recall, matching tolerances, exclusions and unmatched events. Separately reports TCA and miss-distance error for matched events. Identifies verified input/element-set differences separately from screening misses; unexplained differences remain unresolved and in the reported denominator.
 - **SCR-4** Computes the same conjunction from GP and SupGP where both are available and shows the two results and their min–max spread, with epochs. Labels this as source disagreement, not a calibrated uncertainty interval or probability range.
@@ -162,18 +166,31 @@ Inbox access does not depend on reaching agreement. Reading an entry or receivin
 
 ---
 
+## 5.1 Assigned fleet and manual scans
+
+- **FLEET-1** Resolves a user's current assignments server-side. Empty fleets stay empty; no global fallback.
+- **FLEET-2** Lists every assigned satellite with ID, current propagated position/time, orbit epoch, freshness, unique unresolved incident count and scan coverage, even when it has no incidents.
+- **FLEET-3** Selecting a fleet member focuses the globe and filters My Incidents. Run Scan always scans the full assigned fleet and labels its scope.
+- **FLEET-4** Seeds two required demo users and an optional third based in Russia, the US and China, four assigned objects each. User country and language are separate from real spacecraft metadata. Assignments and participants are simulated.
+- **SCAN-1** Pins server-resolved assignments/version, snapshot and start-to-start+72h window. Screens fleet-versus-catalog, skips self-pairs and deduplicates canonical encounters across users.
+- **SCAN-2** Streams queued/running/completed/failed, phase, counters and coverage; reuses active duplicate requests. Manual screening does not bypass source fetch limits.
+- **SCAN-3** Distinguishes complete-zero-result, partial, failed and never-scanned states. Keeps previous results labeled with their run time and reports exclusions and stale inputs.
+- **ROOM-14** Bilateral active-spacecraft incidents require both assigned sides. Confirmed debris avoidance requires only the assigned active-spacecraft operator, with no fictitious debris approval; only that active spacecraft may move. Missing/unregistered active operators are not debris. Same-company active pairs remain visible for internal review with scheduling disabled until their approval rule is specified.
+
+---
+
 ## 6. Conjunction queue
 
 **System**
 
-- **Q-1** Ranks events using current supplied probability and time to TCA, with source emergency flags and cross-source matches where available. Does not use risk forecasts or expose private fuel constraints in a shared score. Missing Pc is marked unavailable and routed for review, not treated as zero risk; its ordering rule is specified separately.
+- **Q-1** Ranks only incidents involving the caller's assigned fleet. Known-current-evidence groups: red, yellow, then other usable-Pc events; within a group sort by earliest TCA, emergency flag, descending Pc and stable event ID. No Pc/time score or private-policy score. Missing/stale evidence appears in a separate always-visible Data needs review section, ordered by TCA then miss distance. Preserve last-known severity marked stale; unknown Pc is never zero risk. Follow-up cases stay visible separately (user-flow.md section 4).
 - **Q-2** Colors events: **red** when Pc > 1e-4 and TCA < 72 h; **yellow** when Pc is between 1e-5 and 1e-4, or when Pc > 1e-4 and TCA ≥ 72 h.
-- **Q-3** On red, starts the agents and creates a room. On yellow, agents may prepare options without calling humans.
+- **Q-3** On red, starts the agents and creates a room. On yellow, stays in the feed and inbox with no prepared options in this build (section 20 Q9).
 - **Q-4** Agents run only for the top of the queue, not for every pair.
 
 **User**
 
-- **Q-5** Sees the feed of conjunctions for their company's satellites: pair, time to conjunction, distance, supplied probability and source, status. Keeps the existing red/yellow and lifecycle presentation; no additional action-label system or heuristic dismissal feature is added.
+- **Q-5** Sees My Incidents for their assigned spacecraft, including both involved fleet members on one deduplicated row when applicable: pair, time to conjunction, distance, supplied probability and source, status. Keeps the existing red/yellow and lifecycle presentation; no additional action-label system or heuristic dismissal feature is added.
 - **Q-6** Sees an "agents working" mark on events where the agents are running.
 - **Q-7** Sees on the row when a proposal is ready and opens the room from there (calls come later, DSP-2).
 - **Q-8** Sees the outcome on the row afterwards: evidence consistent with the plan, a mismatch warning, or awaiting verification data.
@@ -181,7 +198,7 @@ Inbox access does not depend on reaching agreement. Reading an entry or receivin
 
 ### 6.1. Personal inbox
 
-The queue ranks conjunctions for the company. The inbox gives each person a persistent place on the website to find the incidents and updates relevant to them, including those they could not resolve through a call or agent negotiation.
+The working queue ranks conjunctions for the user's assigned fleet. Company-wide reports are separately authorized. The inbox gives each person a persistent place on the website to find the incidents and updates relevant to them, including those they could not resolve through a call or agent negotiation.
 
 **System**
 
@@ -221,7 +238,7 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 **System**
 
 - **AGT-1** Incident Analyst gathers shareable evidence: both orbits, source spread, supplied Pc and provenance, owner/purpose/country, and shared incident history. Each Operator Advocate evaluates fuel, mission windows and other private constraints locally and returns shareable feasibility outcomes.
-- **AGT-2** Incident Analyst produces a five-line summary and multiple computed candidate proposals for joint human choice. Deterministic tools evaluate a small grid of moving satellite, burn time and delta-v; each card shows estimated geometry, available fuel estimates, assumptions and policy feasibility. Start with 2–3 candidates when feasible, plus waiting with a review condition where appropriate. A simple along-track approximation may support the demo, but is labeled indicative and followed by the defined re-screen; it is not a production optimizer or proof of a target Pc. Insufficient data and fewer feasible candidates are shown honestly.
+- **AGT-2** Incident Analyst produces a five-line summary and multiple computed candidate proposals for joint human choice. Deterministic tools evaluate a small grid of moving satellite, burn time and delta-v; each card shows estimated geometry, available fuel estimates, assumptions and policy feasibility. Show up to four computed candidates total, including waiting with a review condition where appropriate. A simple along-track approximation may support the demo, but is labeled indicative and followed by the defined re-screen; it is not a production optimizer or proof of a target Pc. Insufficient data and fewer feasible candidates are shown honestly.
 - **AGT-3** Operator Advocates A and B evaluate and discuss candidates within their private policies and can recommend a preferred candidate with a shareable explanation. Humans can compare alternatives and select one for joint approval; the agents do not choose or authorize a maneuver for them.
 - **AGT-4** A relevant new fact, constraint, preference or correction from human discussion, a veto, a counter or a Maneuver Scheduler refusal makes the agents reconsider the proposal and recompute candidate outcomes as needed.
 - **AGT-5** Every number in a rationale comes from computation, not generation; each explanation passes a deterministic check against the numbers before it reaches a person.
@@ -261,9 +278,9 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 **System**
 
 - **ROOM-1** Holds the room state: participants, summary, shareable negotiation, conversation, candidate proposals, selected proposal ID and revision, approval state of each side.
-- **ROOM-2** Schedules only when both owners have current approvals for the same incident, selected proposal ID and revision. Approving different alternatives does not reach agreement. If both approve a wait candidate, records it and moves to monitoring without a maneuver. A veto or conversational counter returns to negotiation.
+- **ROOM-2** Schedules only when all required sides (ROOM-14) have current approvals for the same incident, selected proposal ID, revision and selection generation. Approving different alternatives does not reach agreement. If both approve a wait candidate, records it and moves to monitoring without a maneuver. A veto or conversational counter returns to negotiation.
 - **ROOM-3** Shows each side only its own controls and private policy panel, with a visible privacy indicator, and translates shared lines into that side's language. The opposing policy is inaccessible, not merely hidden in the browser.
-- **ROOM-11** Tracks approvals by incident, proposal ID and revision. Selection changes and new revisions reset both approvals visibly (for example, "P2 · R2 created — both approvals reset"). The backend rejects stale approvals and rechecks the current selection, revision and both authorizations atomically before scheduling. Earlier approvals remain historical and cannot be revived by switching back. Changes to an already scheduled maneuver remain proposed changes until explicitly approved.
+- **ROOM-11** Tracks approvals by incident, proposal ID, revision and selection generation. Selection changes and new revisions reset required approvals visibly, with bilateral or unilateral wording. The backend rejects stale approvals and rechecks current selection, revision, evidence, policy and fleet authorization before reserving the idempotent schedule write. Earlier approvals remain historical and cannot be revived by switching back. Changes to an already scheduled maneuver remain proposed changes until explicitly approved.
 
 **User**
 
@@ -301,7 +318,7 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 
 **System** (§5, §6)
 
-- **EXE-1** After both owners approve the same selected proposal ID and revision and its re-screen passes, writes that exact maneuver to the operator's schedule file, `operators/<operator>/schedule.json` in the demo repository, through Factory Droid. Before approval, Droid prepares the change and the room shows its diff (EXE-4, ROOM-9); after both approvals and the re-screen, Droid writes exactly that change. Droid has write access to that folder only. Convex keeps the maneuver record and its diff. The backend writes the file itself only if Droid fails (plan section 13 cut order). Rechecks that the approvals and inputs are current before committing; retries cannot create duplicate schedule entries.
+- **EXE-1** After the workflow-required operators (ROOM-14) approve the same selection generation, proposal ID and revision and its re-screen passes, writes that exact maneuver to the operator's schedule file, `operators/<operator>/schedule.json` in the demo repository, through Factory Droid. Before approval, Droid prepares the change and the room shows its diff (EXE-4, ROOM-9); after all required approvals and the re-screen, Droid writes exactly that change. Droid has write access to that folder only. Convex keeps the maneuver record and its diff. The backend writes the file itself only if Droid fails (plan section 13 cut order). Rechecks that the approvals and inputs are current before committing; retries cannot create duplicate schedule entries.
 - **EXE-2** Re-screens the moved satellite against the whole catalog, not only against its partner.
 - **EXE-3** If the re-screen finds a new conjunction, refuses and returns to negotiation with that as a constraint.
 - **EXE-4** Before approval, Droid prepares the diff of what will change, for the room (ROOM-9).
@@ -342,10 +359,10 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 
 **System**
 
-- **ACC-1** Each person signs in as an operator of their company, with the role "owner of" specific satellites. Accounts are pre-created test users, one per operator; there is no registration. Login goes through Auth0 with sign-ups disabled, and Convex verifies the identity. If Auth0 fails, the same test users move to Convex Auth (plan section 11 cut rule).
-- **ACC-2** An approval is tied to the authenticated person's company, incident, proposal ID and revision. The server authorizes each read and write, including live subscriptions and report exports; changing a browser role label cannot expose another company's policy or approve for it.
+- **ACC-1** Each person signs in as an operator of their company with explicit server-managed responsibility assignments for individual spacecraft. Assignments do not confer ownership and country/language confer no permissions. Accounts are pre-created test users, two required and an optional third, with four assigned objects per enabled demo user; there is no registration. Login goes through Auth0 with sign-ups disabled, and Convex verifies the identity. If Auth0 fails, the same test users move to Convex Auth (plan section 11 cut rule).
+- **ACC-2** An approval is tied to the authenticated person, company, current fleet authorization, incident, proposal ID, revision and selection generation. Every approval and schedule commit rechecks the assignment. Revocation invalidates affected approvals. The server authorizes each read and write, including live subscriptions and report exports; changing a browser role label cannot expose another company's policy or approve for it.
 - **ACC-3** The same screens serve both companies; content and controls depend on whose side the viewer is on.
-- **ACC-4** Roles: an operator sees their company's policy, inbox and the rooms of their events, and approves; a head of operations reads their company's log and reports and cannot approve; an affected third operator sees only the notice in their inbox. The demo has test users for operators A and B only.
+- **ACC-4** Roles: an operator sees their company's policy, inbox and the rooms of their events, and approves; a head of operations reads their company's log and reports and cannot approve; an affected third operator sees only the notice in their inbox. The demo has two required dispatcher accounts and an optional third, each with its own assigned fleet. The third can be an ordinary party in another pair, independent of deferred affected-third-operator notices.
 
 ---
 
@@ -378,7 +395,7 @@ Which functions each screen shows (§7).
 
 | Screen | What's on it | Functions |
 |---|---|---|
-| 1. Ops board | Conjunction queue, globe with the constellation, measured reference coverage and numerical agreement, source links, refresh, "Launch your satellite" form (feature flag) with simulated objects in a distinct color | Q-5..Q-9, SCR-8, DATA-4, DATA-7 |
+| 1. Assigned-fleet dashboard | My Fleet list with current propagated positions and freshness, fleet-highlighted globe, filtered My Incidents queue, Data needs review and follow-up sections, fleet-scoped Run Scan and coverage, measured reference coverage and numerical agreement, source links, refresh, "Launch your satellite" form (feature flag) with simulated objects in a distinct color | Q-5..Q-9, SCR-8, DATA-4, DATA-7 |
 | 2. Conjunction room | Orbits and countdown, summary, shareable negotiation, always-on chat with an optional live call, candidate comparison and selection, revisions and visible approval resets, approval checkmarks / Veto / conversational Counter, end-of-call summary form, both sides' status, own-policy privacy indicator, maneuver diff, historical observations, second-model disagreement flag | ROOM-3..ROOM-13, AGT-6, AGT-8, AGT-9, LANG-8, SCR-9 |
 | 3. Policy | Private company policy form; separate shareable contact/language settings | POL-1, POL-2, POL-4, POL-5 |
 | 4. Audit log and reports | Shared history, promised-versus-observed evidence, operator-scoped reporting period, coverage preview and report export | LOG-4, LOG-7..LOG-9 |
@@ -409,7 +426,7 @@ The accepted decisions below retain the original question numbers so existing re
 
 1. **Resolved — screening horizon:** 3 days ahead.
 2. **Resolved — Risk Monitor cadence:** every 5 minutes over cached data; source fetch limits (DATA-3) are unchanged.
-3. **Resolved — proposal choice:** multiple computed candidates; start with 2–3 when feasible, with explicit selection and both approvals of the same candidate revision (S1).
+3. **Resolved — proposal choice:** up to four computed candidates when feasible, with explicit shared selection followed by the workflow-required independent approvals of the same candidate revision (S1, ROOM-14).
 4. **Resolved — Counter:** voice and free text feed automatic revisions; no structured counter form (M3 skipped).
 5. **Resolved — policy visibility:** raw policy values are private to the company and its Operator Advocate; shared outcomes/categories and the proposed maneuver are visible (M2).
 6. **Deferred — calling people:** the base build does not call or invite anyone; both operators see the event in their queue and inbox and open the room themselves. Contact details stay visible in the inbox (INBOX-4). Idea for later: click a satellite to send a message to its operator.
@@ -418,13 +435,13 @@ The accepted decisions below retain the original question numbers so existing re
 9. **Resolved — yellow events:** this build prepares no options for yellow events; they stay in the feed and inbox only (Q-3's "may" is not used).
 10. **Resolved — reporting template:** an on-screen summary plus a CSV of supporting event records. FCC fields are shown as "to verify"; there is no filing-ready template in this build (S3).
 11. **Resolved — evidence methods (demo-first defaults):**
-    - Candidate grid: moving satellite A or B × burn time T−12 h, T−6 h or T−3 h × along-track Δv 0.02, 0.05, 0.1 or 0.2 m/s, plus a wait candidate. The 2–3 feasible candidates with the largest miss distance for the least fuel are shown. Geometry uses Δa ≈ 2·Δv/n and is labeled indicative.
+    - Candidate grid: moving satellite A or B × burn time T−12 h, T−6 h or T−3 h × along-track Δv 0.02, 0.05, 0.1 or 0.2 m/s, plus a wait candidate. Up to four computed candidates are shown with fuel/geometry tradeoffs and explicit feasibility. Do not manufacture alternatives. Geometry uses Δa ≈ 2·Δv/n and is labeled indicative.
     - Re-screen passes when the original pair's new miss distance is at least 1 km and no other catalog object comes within 1 km of the moved satellite over the 3-day horizon; otherwise EXE-3 refuses.
     - Verification: a series of at least 8 element sets; semi-major-axis changes scored with a robust z-score (median and MAD); a change counts when |z| ≥ 5 and |Δa| ≥ 50 m. "Evidence consistent with plan" when the sign matches and the size is within ±50% of the expected 2·Δv/n; fewer than 8 sets means "awaiting verification data". No post-maneuver Pc is substituted (S1, M7, M8).
-12. **Resolved — missing Pc:** events without a usable supplied Pc are listed after all events with Pc, ordered by TCA and then miss distance, labeled "Pc unavailable — review". They never turn red on their own (M8).
+12. **Resolved, amended — priority and missing Pc:** severity first, then nearest closest approach. Missing/stale evidence belongs in a separate visible Data needs review section, sorted by TCA then miss distance. Retain last-known severity as stale; missing Pc is never zero risk. This supersedes the previous missing-Pc-at-bottom rule (Q-1; user-flow.md section 4).
 13. **Retired — ASI:One identity:** no longer applies; Fetch.ai and the ASI:One workflow were dropped (section 17).
 14. **Draft, to refine later — schedule history:** git-style. Each written maneuver is a Droid commit to `operators/<operator>/schedule.json` in the demo repository, and the room and log link to the commit's diff.
 15. **Resolved — leaving monitoring:** at the agreed review time, or when new data changes the event's color or miss distance, the Risk Monitor returns the event to the agents and both owners see it again in their queue and inbox.
-16. **Resolved — after a veto:** the selected candidate stays selected, both approvals reset, the agents revise (AGT-4) and the event returns to communication with a new revision or the remaining candidates.
+16. **Resolved — after a veto:** the selected candidate stays selected, required approvals reset, the agents revise (AGT-4) and the event returns to communication with a new revision or the remaining candidates.
 
-**Later, after the base works:** calling and inviting operators (DSP-2), including "click a satellite to message its operator"; third-operator notices (DSP-3, DSP-6); the details of schedule history (question 14). The base is the room itself: chat, optional call, agents, end-of-call summary and two checkmarks.
+**Later, after the base works:** calling and inviting operators (DSP-2), including "click a satellite to message its operator"; third-operator notices (DSP-3, DSP-6); the details of schedule history (question 14). The base starts at My Fleet and Run Scan, then the incident room: chat, optional call, agents, end-of-call summary and workflow-specific approvals.
