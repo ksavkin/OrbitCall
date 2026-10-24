@@ -112,7 +112,7 @@ Steps 1, 2 and 6 are automated everywhere. Steps 3, 4, 5, 7 and 8 are by hand an
 
 **0:00 — hook, 15 seconds.** "Two weeks ago SpaceX said Starlink had close calls with 650 satellites this year, and only half of those operators shared where they were going. In December a satellite passed 200 meters from a Starlink with 14 minutes' notice. Nobody had talked. The coordination layer between satellite operators is still email."
 
-**0:15 — demo, 60 seconds.** "This is this week's real catalog. Watch the queue — that pair just turned red: 180 meters on Sunday 03:14 UTC. Our dispatcher opened a room and called both operators. You're Operator A. My teammate is Operator B, in Russia." (teammate speaks Russian, the judge hears English) "He just said his satellite has an imaging pass Wednesday and can't move. The agents re-settled: you move, 0.2 m/s, Sunday 03:14 minus six hours. Miss distance 180 m to 3.2 km. Approve?" (judge clicks) "Both approved. Scheduled. Verified against the whole catalog — no new conjunctions."
+**0:15 — demo, 60 seconds.** "This is this week's real catalog. Watch the queue — that pair just turned red: 180 meters on Sunday 03:14 UTC. Our Coordination Host opened a room and called both operators. You're Operator A. My teammate is Operator B, in Russia." (teammate speaks Russian, the judge hears English) "He just said his satellite has an imaging pass Wednesday and can't move. The agents re-settled: you move, 0.2 m/s, Sunday 03:14 minus six hours. Miss distance 180 m to 3.2 km. Approve?" (judge clicks) "Both approved. Scheduled. Verified against the whole catalog — no new conjunctions."
 
 **1:15 — how it works, 25 seconds.** "Public orbit data in, same propagator Space Force uses. Screening runs all the time and ranks by probability and time. Agents wake up only for the red top of the queue. Each company's agent knows its own fuel, mission windows and risk policy. They settle inside those rules; humans approve. Every step is logged. Validated against CelesTrak's conjunction list: 47 of 50 matched within 500 meters."
 
@@ -124,28 +124,28 @@ Steps 1, 2 and 6 are automated everywhere. Steps 3, 4, 5, 7 and 8 are by hand an
 
 ## 5. Architecture: roles and flow
 
-Five agent roles, two humans, one source of truth. Data flows top down, humans stand on the same level as the room, and nothing passes below them without two "yes" votes.
+Six agent roles, two humans, one source of truth. Data flows top down, humans stand on the same level as the room, and nothing passes below them without two "yes" votes.
 
-**Agents gather, negotiate and propose; two humans approve; the system verifies.** Reading the architecture figure from the original top down: public orbit data (CelesTrak TLE + SOCRATES, Space-Track public CDMs, KeepTrack catalog, ESA Kelvins history) feeds the **Scout**, which screens every pair, ranks the queue and wakes the agents on red. The **Analyst** packs messy data into 5 lines + 2 options; **Operator agents A and B** each know their company policy and settle who moves, when and by how much; the **Dispatcher** opens the room, calls the right people, translates and logs. **Human Operator A** (laptop 1, English) and **Human Operator B** (laptop 2, Russian) meet in the **Conjunction room** (voice + text, live translation, a proposal card, both must say yes) with approve / veto / counter. Below them, the **Executor** writes the burn and re-screens against the whole catalog, and the **Verifier** compares new orbit data to the agreed burn and flags a mismatch to both sides; a dashed line returns to the Scout.
+**Agents gather, negotiate and propose; two humans approve; the system verifies.** Reading the architecture figure from the original top down: public orbit data (CelesTrak TLE + SOCRATES, Space-Track public CDMs, KeepTrack catalog, ESA Kelvins history) feeds the **Risk Monitor**, which screens every pair, ranks the queue and wakes the agents on red. The **Incident Analyst** packs messy data into 5 lines + 2 options; **Operator Advocates A and B** each know their company policy and settle who moves, when and by how much; the **Coordination Host** opens the room, calls the right people, translates and logs. **Human Operator A** (laptop 1, English) and **Human Operator B** (laptop 2, Russian) meet in the **Conjunction room** (voice + text, live translation, a proposal card, both must say yes) with approve / veto / counter. Below them, the **Maneuver Scheduler** writes the burn and re-screens against the whole catalog, and the **Maneuver Verifier** compares new orbit data to the agreed burn and flags a mismatch to both sides; a dashed line returns to the Risk Monitor.
 
-From the top: open data; Scout keeps the queue and wakes the others only on red; Analyst packs, operator agents bargain, Dispatcher calls people into the room; after two approvals Executor records the maneuver and rechecks it against the whole catalog, Verifier later confirms the maneuver happened.
+From the top: open data; Risk Monitor keeps the queue and wakes the others only on red; Incident Analyst packs, Operator Advocates bargain, Coordination Host calls people into the room; after two approvals Maneuver Scheduler records the maneuver and rechecks it against the whole catalog, Maneuver Verifier later confirms the maneuver happened.
 
 Diagram reconstructed from the text above (the original figure is not part of the kit):
 
 ```mermaid
 flowchart TD
-    D["Public orbit data<br/>CelesTrak GP/SupGP + SOCRATES<br/>Space-Track cdm_public<br/>KeepTrack catalog<br/>ESA Kelvins history"] --> S[Scout<br/>screens every pair, ranks queue]
-    S -- "red event" --> AN[Analyst<br/>5 lines + options]
-    AN --> OA[Operator agent A<br/>policy A]
-    AN --> OB[Operator agent B<br/>policy B]
+    D["Public orbit data<br/>CelesTrak GP/SupGP + SOCRATES<br/>Space-Track cdm_public<br/>KeepTrack catalog<br/>ESA Kelvins history"] --> S[Risk Monitor<br/>screens every pair, ranks queue]
+    S -- "red event" --> AN[Incident Analyst<br/>5 lines + options]
+    AN --> OA[Operator Advocate A<br/>policy A]
+    AN --> OB[Operator Advocate B<br/>policy B]
     OA <-- negotiate --> OB
-    OA --> DI[Dispatcher<br/>opens room, calls people,<br/>translates, logs]
+    OA --> DI[Coordination Host<br/>opens room, calls people,<br/>translates, logs]
     OB --> DI
     DI --> R{{"Conjunction room<br/>voice + text, live translation<br/>proposal card"}}
     HA["Human Operator A<br/>laptop 1, English"] <--> R
     HB["Human Operator B<br/>laptop 2, Russian"] <--> R
-    R -- "two approves" --> EX[Executor<br/>writes burn, re-screens catalog]
-    EX --> VE[Verifier<br/>new orbit data vs agreed burn]
+    R -- "two approves" --> EX[Maneuver Scheduler<br/>writes burn, re-screens catalog]
+    EX --> VE[Maneuver Verifier<br/>new orbit data vs agreed burn]
     VE -. "mismatch flag / next cycle" .-> S
 ```
 
@@ -153,12 +153,12 @@ flowchart TD
 
 | Role | What it does | What it doesn't do |
 |---|---|---|
-| Scout | Continuous screening, queue by probability and time, forecast "risk will rise or fall," trigger on red | Doesn't decide who moves |
-| Analyst | Gathers everything on the pair: orbits, uncertainty, fuel, mission windows, history of concessions; gives a five-line summary and two or three options | Doesn't represent either side |
-| Operator agent (one per company) | Knows its company's policy, proposes, objects, converges with the other agent | Can't step outside the policy, doesn't execute |
-| Dispatcher | Opens the room, finds and calls the right people (the two owners plus anyone the fix affects), translates, runs the conversation, writes the log | Doesn't vote or decide |
-| Executor | After two "yes" votes writes the maneuver to the schedule, rechecks the satellite against the whole catalog, refuses if a new conjunction appears | Access only to one schedule folder |
-| Verifier | Checks against new orbital data that the maneuver happened and matched what was promised | — |
+| Risk Monitor | Continuous screening, queue by probability and time, forecast "risk will rise or fall," trigger on red | Doesn't decide who moves |
+| Incident Analyst | Gathers everything on the pair: orbits, uncertainty, fuel, mission windows, history of concessions; gives a five-line summary and two or three options | Doesn't represent either side |
+| Operator Advocate (one per company) | Knows its company's policy, proposes, objects, converges with the other agent | Can't step outside the policy, doesn't execute |
+| Coordination Host | Opens the room, finds and calls the right people (the two owners plus anyone the fix affects), translates, runs the conversation, writes the log | Doesn't vote or decide |
+| Maneuver Scheduler | After two "yes" votes writes the maneuver to the schedule, rechecks the satellite against the whole catalog, refuses if a new conjunction appears | Access only to one schedule folder |
+| Maneuver Verifier | Checks against new orbital data that the maneuver happened and matched what was promised | — |
 
 ### Principles
 
@@ -177,12 +177,12 @@ flowchart TD
 1. Every 15 minutes pull the public catalog and conjunction list; cache it.
 2. Propagate all active objects 7 days ahead, find pairs closer than the threshold, compute distance, time and probability. Cross-check with SOCRATES, store the match count.
 3. Sort the queue: probability divided by hours to conjunction, adjusted for fuel and risk forecast. Yellow goes to the feed. Red (above 1 in 10,000 and under 72 hours) wakes the agents.
-4. Analyst gathers a summary for the pair. Operator A and Operator B read their companies' policies and converge: who moves, when, by how much, what miss distance results.
-5. The explanation passes a check against the numbers. Dispatcher opens the room, calls both owners and anyone the proposed maneuver affects.
+4. Incident Analyst gathers a summary for the pair. Operator Advocates A and B read their companies' policies and converge: who moves, when, by how much, what miss distance results.
+5. The explanation passes a check against the numbers. Coordination Host opens the room, calls both owners and anyone the proposed maneuver affects.
 6. People talk and write in their own language; the room translates. A new fact from a human ("can't move on Wednesday") makes the agents recompute.
 7. Both owners click "yes." One "no" returns to step 4 with a new constraint.
-8. Executor records the maneuver, rechecks the moved satellite against the whole catalog. A new conjunction means refusal and a return to step 4.
-9. After the maneuver time Verifier compares the new orbit with the promised one. Match: "resolved"; no match: a flag to both sides.
+8. Maneuver Scheduler records the maneuver, rechecks the moved satellite against the whole catalog. A new conjunction means refusal and a return to step 4.
+9. After the maneuver time Maneuver Verifier compares the new orbit with the promised one. Match: "resolved"; no match: a flag to both sides.
 10. Every step is a line in the log, visible to both sides.
 
 ### User flow: Company A's dispatcher
@@ -228,7 +228,7 @@ Two laptops on the table, one web UI on both, a headset with a mic for the teamm
 | Screen | What's on it | Why |
 |---|---|---|
 | 1. Ops board (feed) | Left: conjunction queue — pair, time to conjunction, distance, probability, "risk rising/falling" arrow, status (new / agents / proposal / approved / verified). Right: globe with the constellation. In the corner: the validation number | The judge sees it is a system with a queue, not a single case |
-| 2. Conjunction room | Top: two orbits, conjunction point, countdown. Middle: Analyst's five-line summary; agents' negotiation transcript; human channel, voice and text, each line in the reader's language. Bottom: proposal card (who, when, delta-v, fuel, distance before → after) and three buttons: Approve / Veto / Counter. Status of both sides | This is where the judge acts |
+| 2. Conjunction room | Top: two orbits, conjunction point, countdown. Middle: Incident Analyst's five-line summary; agents' negotiation transcript; human channel, voice and text, each line in the reader's language. Bottom: proposal card (who, when, delta-v, fuel, distance before → after) and three buttons: Approve / Veto / Counter. Status of both sides | This is where the judge acts |
 | 3. Policy (operator policy) | One-page form: minimum fuel reserve, "don't move" mission windows, acceptable risk, mission priority per satellite | Shows that people write the rules; changes the outcome in front of them |
 | 4. Audit log | Log: time, who (agent or human), what they said or did, numbers before and after; maneuver verification mark | The answer to "what if there's a dispute later" |
 
@@ -261,7 +261,7 @@ No third participant-translator is needed: translation goes directly from one pe
 | B. Speech-to-speech via one API | Grok Voice realtime (OpenAI Realtime-compatible, via LiveKit or directly) | < 1 s | Fast, one integration | Less control over text, transcript has to be pulled separately | SpaceXAI (requires Grok Voice) |
 | C. Text only (fallback) | Room chat → Claude translates | < 1 s | Works in a noisy hall, two hours of work | No voice | Anthropic |
 
-**Plan:** C first (Saturday morning, once the room works), then A on top (Saturday afternoon). B for voicing the Dispatcher and a spoken "approve" command, to cover SpaceXAI if there is time left. Two voice sponsors in one project is fine as long as each has its own role: Cartesia is the humans' voice, Grok is the dispatcher's voice.
+**Plan:** C first (Saturday morning, once the room works), then A on top (Saturday afternoon). B for voicing the Coordination Host and a spoken "approve" command, to cover SpaceXAI if there is time left. Two voice sponsors in one project is fine as long as each has its own role: Cartesia is the humans' voice, Grok is the Coordination Host's voice.
 
 **What to tell the judge honestly.** Translation doesn't fix unwillingness to share data. It removes one of the reasons an email in English goes unanswered.
 
@@ -277,8 +277,8 @@ We take five open sources with different roles: two sets of orbits of different 
 | CelesTrak SupGP | Orbits from the operators themselves: Starlink (from SpaceX public ephemerides), OneWeb, Kuiper, Iridium, Planet, SES, Telesat, ISS; 5–15× more precise than GP per CelesTrak tests | No registration; `supgp.php?FILE=starlink&FORMAT=csv` | Daily | Second set of orbits: compute the conjunction on GP and on SupGP, show the difference; that is the agent's "uncertainty" |
 | CelesTrak SOCRATES | 7-day-ahead conjunction list (all active vs. whole catalog, 5 km threshold): TCA, min distance, max probability, relative velocity; CSV | No registration | 3× a day | Reference #1 to validate our screening; source of live pairs for the demo |
 | Space-Track cdm_public | Public CDMs from the Space Force: TCA, MIN_RNG, PC, both objects, type, radar cross-section, EMERGENCY_REPORTABLE flag; JSON/CSV/XML | Free account, cookie auth; limit: 3 full-conjunction requests a day, 30/min, 300/hour | Continuous | Reference #2: official alerts, compared with SOCRATES and with us; the "emergency" flag feeds queue priority |
-| KeepTrack API v4 | Catalog of 63,000+ objects with type, purpose, country, launch date in one request (`/v4/sats/brief`) | Free key, 500/hour; non-commercial license | Daily | Metadata for Analyst: whose satellite, what for, from which country; what the Dispatcher needs to call the right people |
-| ESA Kelvins CDM dataset | History of real ESA CDMs 2015–2019: a row per message, 103 features, events as time series, target = final risk; 221 MB, CC BY 4.0 | Open | Static | Training the "risk will rise or fall" model for Scout |
+| KeepTrack API v4 | Catalog of 63,000+ objects with type, purpose, country, launch date in one request (`/v4/sats/brief`) | Free key, 500/hour; non-commercial license | Daily | Metadata for Incident Analyst: whose satellite, what for, from which country; what the Coordination Host needs to call the right people |
+| ESA Kelvins CDM dataset | History of real ESA CDMs 2015–2019: a row per message, 103 features, events as time series, target = final risk; 221 MB, CC BY 4.0 | Open | Static | Training the "risk will rise or fall" model for Risk Monitor |
 
 ### How we compare sources against each other (the technical story for judges)
 
@@ -299,17 +299,17 @@ We take five open sources with different roles: two sets of orbits of different 
 
 | Task | Model | Why |
 |---|---|---|
-| Scout, Analyst, Operator A/B, Executor, Verifier: reasoning, tool calling, explaining decisions | Claude (Sonnet by default, Haiku for Scout where speed and cost matter) | The most reliable tool use and structured output available; Anthropic judges score "thoughtful use of Claude"; Fetch.ai doesn't require a specific model inside an agent |
+| Risk Monitor, Incident Analyst, Operator Advocates A/B, Maneuver Scheduler, Maneuver Verifier: reasoning, tool calling, explaining decisions | Claude (Sonnet by default, Haiku for Risk Monitor where speed and cost matter) | The most reliable tool use and structured output available; Anthropic judges score "thoughtful use of Claude"; Fetch.ai doesn't require a specific model inside an agent |
 | Translation in the room with conjunction context (STT → translate → TTS mode) | Claude | Needs a translation that knows "burn" here is a maneuver, not an injury; a generic translator loses that |
-| Dispatcher's voice, live speech-to-speech conversation | Grok Voice | OpenAI Realtime-compatible API, sub-second latency, LiveKit plugin; the SpaceXAI track requires Grok Voice |
-| Independent check of the rationale ("second doctor") | Grok (text API), optional | A second vendor looks at the same Executor explanation and says whether it agrees; if not, we highlight it to the human. A nice answer to "who checks the agents" |
+| Coordination Host's voice, live speech-to-speech conversation | Grok Voice | OpenAI Realtime-compatible API, sub-second latency, LiveKit plugin; the SpaceXAI track requires Grok Voice |
+| Independent check of the rationale ("second doctor") | Grok (text API), optional | A second vendor looks at the same Maneuver Scheduler explanation and says whether it agrees; if not, we highlight it to the human. A nice answer to "who checks the agents" |
 | Risk forecast on Kelvins | Not an LLM | Gradient boosting on 103 features, trained in half an hour; no LLM needed here |
 
 **Why not "everything on Grok."** Text Grok gives no track advantage (SpaceXAI looks at Grok Voice/Imagine + Cursor), and losing the Anthropic track over it would be a shame. Plus we know tool use on Claude; 36 hours is no time to learn a new vendor on the critical path.
 
 **Why not "everything on Claude."** Claude has no speech-to-speech mode; through STT → Claude → TTS the latency is 1.5–2.5 s, noticeable in live dialogue. Grok Voice closes exactly that gap, and there is a separate prize for it.
 
-**Keys and limits.** Anthropic key: our own; Haiku for Scout costs pennies even polling every 5 minutes. `XAI_API_KEY`: via the SpaceXAI track (check with the sponsor on Friday whether they give credits). Bitdeer Model Studio only if we want a third model to compare in the rationale; not on the critical path.
+**Keys and limits.** Anthropic key: our own; Haiku for Risk Monitor costs pennies even polling every 5 minutes. `XAI_API_KEY`: via the SpaceXAI track (check with the sponsor on Friday whether they give credits). Bitdeer Model Studio only if we want a third model to compare in the rationale; not on the critical path.
 
 **What we tell the judge.** "Three different providers, not because it's fashionable, but because each role has its own job: one thinks, another speaks, a third double-checks. None of them presses the maneuver button."
 
@@ -324,18 +324,18 @@ We take five open sources with different roles: two sets of orbits of different 
 | Sponsor | Role in OrbitCall | What they require | Hours | Prize |
 |---|---|---|---|---|
 | Anthropic (Claude) | Brain of all reasoning agents + translation with context | A named community (small satellite operators), a lived problem (interviews/quotes from dispatchers), works on Monday, thoughtful use of Claude | 0 beyond the main work | Anthropic track |
-| Fetch.ai (uAgents / Agentverse / ASI:One) | Each role is a separate uAgent with an address; Operator A and Operator B really negotiate via messages; the main scenario is reachable from ASI:One chat | Register on Agentverse, Agent Chat Protocol, innovationlab + hackathon badges in README, agent addresses, 3–5 min video, submission via the Submission Agent in ASI:One | 5–6 | $1,250 / $750 / $500 + two × $250 |
+| Fetch.ai (uAgents / Agentverse / ASI:One) | Each role is a separate uAgent with an address; Operator Advocates A and B really negotiate via messages; the main scenario is reachable from ASI:One chat | Register on Agentverse, Agent Chat Protocol, innovationlab + hackathon badges in README, agent addresses, 3–5 min video, submission via the Submission Agent in ASI:One | 5–6 | $1,250 / $750 / $500 + two × $250 |
 
 ### Tier 2: strengthen the project if we're on plan
 
 | Sponsor | Role in OrbitCall | What they require | Hours | Prize |
 |---|---|---|---|---|
-| Convex | Database and event bus: conjunction queue, room state, decision log; `useQuery` gives live updates on both laptops with no custom websockets; actions call CelesTrak/Space-Track; the scheduler wakes Scout | Convex must be the primary backend | 3–4 (saves more than it costs) | $5,000 |
-| xAI Grok Voice | Dispatcher's voice in the room: speech-to-speech, latency < 1 s | SpaceXAI track: Cursor + Grok Voice; model `grok-voice-think-fast-1.0`, LiveKit plugin `livekit-agents[xai]` | 4–5 | Keyboards (raffle) + the main wow moment of the demo |
-| Factory Droid SDK | Executor: Droid writes the maneuver file to the operator's repo and returns a diff; the human sees "what will change" before approve | `pip install droid-sdk`, `FACTORY_API_KEY`, `restrict_tools` to edit/create only, autonomy OFF, `on_permission` → our approve | 3 | $2,000 |
+| Convex | Database and event bus: conjunction queue, room state, decision log; `useQuery` gives live updates on both laptops with no custom websockets; actions call CelesTrak/Space-Track; the scheduler wakes Risk Monitor | Convex must be the primary backend | 3–4 (saves more than it costs) | $5,000 |
+| xAI Grok Voice | Coordination Host's voice in the room: speech-to-speech, latency < 1 s | SpaceXAI track: Cursor + Grok Voice; model `grok-voice-think-fast-1.0`, LiveKit plugin `livekit-agents[xai]` | 4–5 | Keyboards (raffle) + the main wow moment of the demo |
+| Factory Droid SDK | Maneuver Scheduler: Droid writes the maneuver file to the operator's repo and returns a diff; the human sees "what will change" before approve | `pip install droid-sdk`, `FACTORY_API_KEY`, `restrict_tools` to edit/create only, autonomy OFF, `on_permission` → our approve | 3 | $2,000 |
 | Cartesia | TTS for the "STT → Claude → Cartesia" mode (fallback if Grok Voice gives no keys) and voicing notifications | Voice must be core, not decoration; for us it is | 1–2 | Cartesia track |
-| Backboard | Agent memory between incidents: Operator A remembers it yielded last time | `pip install backboard-sdk`, `memory="Auto"`, $5 credits | 1 | Backboard track |
-| Tiger Data | Time series of Pc/distance per event: a "how risk grew" chart on screen and for Verifier | Postgres + TimescaleDB, free tier | 1–2 | Tiger track |
+| Backboard | Agent memory between incidents: Operator Advocate A remembers it yielded last time | `pip install backboard-sdk`, `memory="Auto"`, $5 credits | 1 | Backboard track |
+| Tiger Data | Time series of Pc/distance per event: a "how risk grew" chart on screen and for Maneuver Verifier | Postgres + TimescaleDB, free tier | 1–2 | Tiger track |
 | Auth0 | Login for two operators on two laptops, roles "owner of SAT-A / SAT-B"; approve is signed by identity | Any use of Auth0 | 1 | Auth0 track |
 
 ### Tier 3: almost free
@@ -367,11 +367,11 @@ Tier 1 is ~13 hours of sponsor integration on top of the main work, tier 2 anoth
 
 Each item is a decision we made and a short answer for the table. Freya learns the first eight.
 
-1. **Why pairs, not groups?** A conjunction is always two objects at one point at one time; triples are statistically rare. But one satellite can be in several pairs in a week, so after a maneuver Executor recomputes the moved satellite against the whole catalog, not only against its partner.
+1. **Why pairs, not groups?** A conjunction is always two objects at one point at one time; triples are statistically rare. But one satellite can be in several pairs in a week, so after a maneuver Maneuver Scheduler recomputes the moved satellite against the whole catalog, not only against its partner.
 2. **Who decides who moves?** Not a vote and not a central arbiter. Two agents with their companies' policies arrive at a proposal, two humans approve it. Third parties are notified only if the maneuver affects them.
 3. **What if they don't agree?** Then the system does what nobody does today: it brings the people into one room in two minutes instead of two days of correspondence. The agents show both sides the same numbers. If even the humans don't agree, each acts by their own policy, but at least knowing what the other will do. That already beats today's "both dodged in the same direction."
 4. **Half of operators don't share data. What then?** The system works on the public catalog without them; whoever connects gets SupGP precision and negotiation, whoever doesn't becomes the "non-responding party," and the agent plans a unilateral maneuver with margin. The incentive to connect: people stop dodging you blindly and burning your fuel.
-5. **Why trust the other company's agent?** You don't have to. The agent says "we'll shift by 200 m," Verifier looks at new TLEs a day later and writes to the log whether they shifted. Trust but verify, and the history of kept promises becomes the operator's reputation.
+5. **Why trust the other company's agent?** You don't have to. The agent says "we'll shift by 200 m," Maneuver Verifier looks at new TLEs a day later and writes to the log whether they shifted. Trust but verify, and the history of kept promises becomes the operator's reputation.
 6. **When to act: now or wait for refinement?** Industry thresholds: Pc > 1e-4 and TCA < 72 h is red, we wake the humans. Between 1e-5 and 1e-4 is yellow, agents prepare options, humans aren't bothered. We show the GP/SupGP difference as a measure of uncertainty so the human decides whether to wait for the next update.
 7. **Fairness: why does the small one always move?** The operator's policy is their word: remaining fuel, mission lifetime, imaging windows. The big one with a full tank and a cheap maneuver moves first, and that is visible in the log. In the demo it's exactly that: changing the policy changes the outcome.
 8. **What can the agent do on its own?** Nothing with the satellite. Agents read, compute, propose, call, translate, write a file. Two humans on two devices press approve, and only then does the file enter the operator's queue.
@@ -391,18 +391,18 @@ Each item is a decision we made and a short answer for the table. Freya learns t
 
 Counted from the start of hacking Friday evening (H0 ≈ 21:00). Devpost deadline is Sunday 9:00 (H36), judging 10:30–12:30.
 
-**Roles.** Adil: the whole front end (queue, room, globe, log). Andrew: data and orbital mechanics (fetch, SGP4, screening, validation, Verifier). Kostya: agents, Fetch.ai, voice, sponsor integrations. Freya: product: demo script, pitch, Devpost, video, sponsors on site, answers from section 12, tests as the judge.
+**Roles.** Adil: the whole front end (queue, room, globe, log). Andrew: data and orbital mechanics (fetch, SGP4, screening, validation, Maneuver Verifier). Kostya: agents, Fetch.ai, voice, sponsor integrations. Freya: product: demo script, pitch, Devpost, video, sponsors on site, answers from section 12, tests as the judge.
 
 | Window | Adil (UI) | Andrew (data) | Kostya (agents) | Freya (product) |
 |---|---|---|---|---|
 | H0–H2, Fri 21–23 | Repo, Next.js + Convex, two stub pages `/queue` and `/room/[id]` | Download and commit the cache: GP, SupGP (starlink, oneweb, planet), SOCRATES CSV, cdm_public, KeepTrack brief | Keys: Anthropic, Agentverse, xAI (ask at the SpaceXAI table), Factory. Convex schema: events, rooms, messages, approvals, log | Agree with Atlassian/Hyphenate on criteria; pin the demo script from section 7 on one page |
-| H2–H6, Fri 23 – Sat 3 | Queue screen on live data from Convex: cards, color, sort by P | SGP4 (sgp4 npm or python-sgp4), screen active vs. catalog 3 days ahead, write to events | Scout as a Convex cron (every 5 min): computes P, colors events, creates a room on red. Analyst on Claude: 5 lines + 3 options | One-page policies for operators A and B (fuel, mission, language, contact); first pitch draft |
-| ✅ **H6** | **Queue is live, events from the real catalog, Analyst writes a summary. Sleep 3–4 hours in shifts.** | | | |
-| H6–H14, Sat 3–11 | Room: summary, agent negotiation feed, two approve buttons, "waiting for the other" status | Validation: our pairs vs. SOCRATES top 50, match count on screen. GP vs. SupGP on one pair | Operator A/B as uAgents with Freya's policies, 2–3 rounds of message exchange, Agentverse registration, Chat Protocol. Dispatcher creates the room and writes the log | Run the script manually on what exists; list what a judge won't understand without explanation → to Adil as captions |
+| H2–H6, Fri 23 – Sat 3 | Queue screen on live data from Convex: cards, color, sort by P | SGP4 (sgp4 npm or python-sgp4), screen active vs. catalog 3 days ahead, write to events | Risk Monitor as a Convex cron (every 5 min): computes P, colors events, creates a room on red. Incident Analyst on Claude: 5 lines + 3 options | One-page policies for operators A and B (fuel, mission, language, contact); first pitch draft |
+| ✅ **H6** | **Queue is live, events from the real catalog, Incident Analyst writes a summary. Sleep 3–4 hours in shifts.** | | | |
+| H6–H14, Sat 3–11 | Room: summary, agent negotiation feed, two approve buttons, "waiting for the other" status | Validation: our pairs vs. SOCRATES top 50, match count on screen. GP vs. SupGP on one pair | Operator Advocates A/B as uAgents with Freya's policies, 2–3 rounds of message exchange, Agentverse registration, Chat Protocol. Coordination Host creates the room and writes the log | Run the script manually on what exists; list what a judge won't understand without explanation → to Adil as captions |
 | ✅ **H14** | **End-to-end pass in text: red event → room → agents agree → two approves from two laptops. No voice, no globe. This is the minimum submittable version.** | | | |
-| H14–H24, Sat 11–21 | Globe (globe.gl / CesiumJS) with two orbits and the TCA point; log screen; maneuver diff in the room | Executor re-screening: moved satellite vs. catalog; Verifier on historical TLEs (find a real Starlink maneuver in the archive and show the jump) | Voice: LiveKit room + Grok Voice, two participants, each hears the other in their own language; subtitles in the room. If Grok hasn't taken off by H20: STT → Claude → Cartesia mode | Hyphenate workshop; second pitch draft with timing; Devpost draft; README with Fetch.ai badges |
+| H14–H24, Sat 11–21 | Globe (globe.gl / CesiumJS) with two orbits and the TCA point; log screen; maneuver diff in the room | Maneuver Scheduler re-screening: moved satellite vs. catalog; Maneuver Verifier on historical TLEs (find a real Starlink maneuver in the archive and show the jump) | Voice: LiveKit room + Grok Voice, two participants, each hears the other in their own language; subtitles in the room. If Grok hasn't taken off by H20: STT → Claude → Cartesia mode | Hyphenate workshop; second pitch draft with timing; Devpost draft; README with Fetch.ai badges |
 | ✅ **H24, Sat 21:00** | **Cut-off point. Voice works: go to tier 2 sponsors. No voice: all remaining time on voice, everything else frozen.** | | | |
-| H24–H30, Sat 21 – Sun 3 | Polish: empty states, errors, dark theme, large font for the table; a "change policy" button for the judge | Tiger Data: Pc series per event, chart in the room; cache tested against Wi-Fi loss by unplugging the network | Factory Droid writes `maneuver.yaml` to the operator's repo, diff in the UI; Backboard memory for Operator A; Auth0 for two roles; second model checks the rationale | Record the 3–5 min video for Fetch.ai (also the backup demo if the network drops); pitch run with a timer ×3 |
+| H24–H30, Sat 21 – Sun 3 | Polish: empty states, errors, dark theme, large font for the table; a "change policy" button for the judge | Tiger Data: Pc series per event, chart in the room; cache tested against Wi-Fi loss by unplugging the network | Factory Droid writes `maneuver.yaml` to the operator's repo, diff in the UI; Backboard memory for Operator Advocate A; Auth0 for two roles; second model checks the rationale | Record the 3–5 min video for Fetch.ai (also the backup demo if the network drops); pitch run with a timer ×3 |
 | ✅ **H30, Sun 3:00** | **Features frozen. Only bugs on the demo path from here.** | | | |
 | H30–H36, Sun 3–9 | Demo run on two laptops on venue network ×5; screenshots for Devpost | Fresh fetch at 8:00 so the queue is today's; pick and pin the "demo pair" | Submit via ASI:One Submission Agent; check agent addresses in README; keys in `.env` and not in the repo | Devpost by 8:30 with the table number, all tracks ticked; printout of section 12 answers; team at the table at 10:15 |
 
@@ -412,8 +412,8 @@ Counted from the start of hacking Friday evening (H0 ≈ 21:00). Devpost deadlin
 2. Room with agent negotiation and two approves: not cut.
 3. The judge changing a policy changes the outcome: not cut.
 4. Voice call in two languages (at least in STT → Claude → TTS mode).
-5. Executor with diff and re-screening.
-6. Verifier on a historical maneuver.
+5. Maneuver Scheduler with diff and re-screening.
+6. Maneuver Verifier on a historical maneuver.
 7. Globe.
 8. Fetch.ai Agentverse registration and Chat Protocol (if cut, we lose only their track; agents stay as plain processes).
 9. Grok Voice instead of the STT/TTS chain.
