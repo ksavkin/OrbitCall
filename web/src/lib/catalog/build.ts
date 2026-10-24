@@ -1,30 +1,15 @@
 import "server-only";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { ALL_GROUPS, classify, GROUPS } from "./classify";
 import {
   CATEGORY_INDEX,
   type CatalogPayload,
   type CatalogRow,
   type CatalogSource,
-  type Category,
 } from "./types";
 
 const CELESTRAK = "https://celestrak.org";
-
-/** CelesTrak GP groups we load. `active` covers every operating payload. */
-export const GROUPS = {
-  active: "active",
-  stations: "stations",
-  gnss: "gnss",
-  debris: ["cosmos-2251-debris", "iridium-33-debris", "fengyun-1c-debris"],
-} as const;
-
-const ALL_GROUPS = [
-  GROUPS.active,
-  GROUPS.stations,
-  GROUPS.gnss,
-  ...GROUPS.debris,
-];
 
 const SNAPSHOT_DIR = path.join(process.cwd(), "data", "snapshot");
 const CACHE_DIR = path.join(process.cwd(), ".cache", "celestrak");
@@ -137,24 +122,6 @@ function orbitOf(l2: string) {
   };
 }
 
-function classify(
-  t: Tle,
-  norad: number,
-  sets: { stations: Set<number>; gnss: Set<number>; debris: Set<number> },
-  satcat: SatcatEntry | undefined,
-): Category {
-  if (sets.debris.has(norad) || satcat?.objectType === "DEB") return "debris";
-  if (sets.stations.has(norad)) return "station";
-  if (sets.gnss.has(norad)) return "gnss";
-  const n = t.name.toUpperCase();
-  if (n.startsWith("STARLINK")) return "starlink";
-  if (n.startsWith("ONEWEB")) return "oneweb";
-  const { meanMotion, ecc } = orbitOf(t.l2);
-  // Geosynchronous: ~1 rev per sidereal day, near-circular.
-  if (Math.abs(meanMotion - 1.0027) < 0.05 && ecc < 0.05) return "geo";
-  return "other";
-}
-
 function build(
   texts: Record<string, string>,
   satcatText: string,
@@ -178,7 +145,7 @@ function build(
       if (seen.has(norad)) continue;
       seen.add(norad);
       const sc = satcat.get(norad);
-      const cat = classify(t, norad, sets, sc);
+      const cat = classify({ name: t.name, norad, ...orbitOf(t.l2), objectType: sc?.objectType }, sets);
       rows.push([
         norad,
         t.name,

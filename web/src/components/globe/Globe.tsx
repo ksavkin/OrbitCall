@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { parseCatalog } from "@/lib/catalog/client";
+import { parseCatalog, type Catalog } from "@/lib/catalog/client";
+import { loadOmmCatalog } from "@/lib/catalog/omm";
 import type { CatalogPayload } from "@/lib/catalog/types";
+import { useOps } from "@/lib/ops/store";
 import { liveStats, sceneRef } from "@/lib/sceneRef";
 import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
@@ -10,6 +12,8 @@ import { GlobeScene, type ScreenPoint } from "./GlobeScene";
 import { HoverCard } from "@/components/ui/HoverCard";
 
 export function Globe({ dev }: { dev: boolean }) {
+  // Real mode draws only the OMM catalog the backend names; until it names one the globe stays empty.
+  const ommUrl = useOps((s) => (!dev && s.backendSnapshot && s.backendSnapshot !== "error" ? s.backendSnapshot.ommUrl : null));
   const host = useRef<HTMLDivElement>(null);
   const hoverRef = useRef<HTMLDivElement>(null);
   const selRef = useRef<HTMLDivElement>(null);
@@ -62,16 +66,23 @@ export function Globe({ dev }: { dev: boolean }) {
     let cancelled = false;
     const request = new AbortController();
     // Never carry a TLE catalog or its selected object into real mode.
-    useOrbit.getState().set({ catalog: null, selected: null, hovered: null, following: false, density: null, error: null, stage: dev ? "catalog" : "ready" });
-    if (dev) void (async () => {
+    useOrbit.getState().set({ catalog: null, selected: null, hovered: null, following: false, density: null, error: null, stage: dev || ommUrl ? "catalog" : "ready" });
+    // Dev: the TLE catalog from /api/catalog. Real mode: the pinned OMM catalog, never /api/catalog.
+    const load = dev
+      ? async (): Promise<Catalog | null> => {
+          const res = await fetch("/api/catalog", { signal: request.signal });
+          if (cancelled) return null;
+          if (!res.ok) throw new Error(`Catalog request failed (HTTP ${res.status})`);
+          useOrbit.getState().set({ stage: "parse" });
+          return parseCatalog((await res.json()) as CatalogPayload);
+        }
+      : ommUrl
+        ? () => loadOmmCatalog(ommUrl, request.signal)
+        : null;
+    if (load) void (async () => {
       try {
-        const res = await fetch("/api/catalog", { signal: request.signal });
-        if (cancelled) return;
-        if (!res.ok) throw new Error(`Catalog request failed (HTTP ${res.status})`);
-        useOrbit.getState().set({ stage: "parse" });
-        const payload = (await res.json()) as CatalogPayload;
-        if (cancelled) return;
-        const catalog = parseCatalog(payload);
+        const catalog = await load();
+        if (cancelled || !catalog) return;
         useOrbit.getState().set({ catalog, stage: "propagate" });
         scene.setCatalog(catalog);
         const st = useOrbit.getState();
@@ -105,7 +116,7 @@ export function Globe({ dev }: { dev: boolean }) {
       sceneRef.set(null);
       scene.dispose();
     };
-  }, [dev]);
+  }, [dev, ommUrl]);
 
   return (
     <div className="absolute inset-0">
