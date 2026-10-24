@@ -6,6 +6,12 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   partialPrefetching: true,
   turbopack: {
+    resolveAlias: {
+      // `next build` (Turbopack) never finishes while it bundles satellite.js's pthreads WASM build, and
+      // the app never creates the multi-thread runtime. Point that dynamic import at the single-thread
+      // build, which satellite.js already ships, so the production build can complete.
+      "#wasm-multi-thread": "./node_modules/satellite.js/wasm-build/base-release/index.js",
+    },
     rules: {
       "*.css": {
         loaders: ["@tailwindcss/turbopack"],

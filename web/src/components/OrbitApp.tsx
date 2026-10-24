@@ -16,6 +16,8 @@ import { WeatherSync } from "@/components/globe/WeatherSync";
 import { StormLabels, WeatherCard } from "@/components/ui/Weather";
 import { toggleDev } from "@/components/ui/Navbar";
 import { AgentsExpanded, AgentsPanel } from "@/components/ops/AgentsPanel";
+import { BackendSync } from "@/components/ops/BackendSync";
+import { CONVEX_ENABLED } from "@/lib/backend/provider";
 import { ConjunctionMarkers } from "@/components/ops/ConjunctionMarkers";
 import { ConjunctionQueue } from "@/components/ops/ConjunctionQueue";
 import { OpsSync } from "@/components/ops/OpsSync";
@@ -43,6 +45,8 @@ export function OrbitApp() {
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/50 to-transparent" />
       <WeatherSync />
       <OpsSync />
+      {/* backend half of the Dev Switch: only with a Convex client, and never in synthetic mode */}
+      {!dev && CONVEX_ENABLED && <BackendSync />}
       <StormLabels />
       <ConjunctionMarkers />
       <Navbar />

@@ -15,6 +15,12 @@ npm run dev        # http://localhost:3000
 - Zooming in streams map tiles (`src/components/globe/tiles.ts`): Esri World Imagery, Esri World Hillshade and NASA GIBS VIIRS Black Marble. Attribution follows the source on screen.
 - The selected object gets a detailed PBR model (`hero.ts`). Its reflections come from a cube camera at the satellite's position, so the arrays show the real Earth below.
 
+## Backend (Convex)
+
+Set `NEXT_PUBLIC_CONVEX_URL` (in `web/.env.local`, never committed, and in the Vercel project) to the public URL of the Convex deployment. With the **Dev** switch off, the Conjunctions tab shows `events.catalogPairs` live, the catalog snapshot time, and the Incident Analyst's checked summary (`agentSummaries.get`) for the selected event. Without the variable the app still runs: the queue shows "Backend not connected" and the Dev switch gives the synthetic scenarios.
+
+The web app does not import the root `convex/` package. Functions are referenced by name with `anyApi` and the response types are declared in `src/lib/backend/types.ts` (from `docs/specification.md` §2.2).
+
 ## Live weather
 
 Toggle in the Layers popover. Clouds show in every view except Tactical.
