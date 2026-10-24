@@ -16,7 +16,10 @@ The Orbit screen is done and the Conjunctions screen is built against the backen
 | `ee190a7` | Live weather (clouds, wind, currents, storms, tornadoes, aurora, Kp), congestion layers, country filter and coloring, night and terrain fixes |
 | `c72790a` | Congestion as a thermal map, ground track stays on while following |
 | `d004fda` | Thermal map without clipped plateaus |
-| next commit | Dev switch, Conjunctions screen, agents window, scenario simulator, these docs |
+| `9ef2617`, `b1766c2` | Dev switch, Conjunctions screen, agents window, scenario simulator, these docs |
+| `cf2d9c8` | Cinematic camera that follows the agents' work, call feed (newest open, older collapse), real Claude and Grok marks, conjunction icon, summary card first |
+| `05706dd` | Event parties on the agent graph with dispatcher flags (2+ parties), affected third operator notice |
+| next commit | Night lights: Black Marble snow and ice no longer glow as tile-shaped rectangles |
 
 ## Conjunctions screen (this round)
 

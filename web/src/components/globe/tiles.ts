@@ -108,9 +108,15 @@ const tileFragment = /* glsl */ `
     // equirectangular lookup into the global masks
     vec2 eq = vec2(atan(-vObjN.z, vObjN.x) / (2.0 * PI) + 0.5, asin(clamp(vObjN.y, -1.0, 1.0)) / PI + 0.5);
     // city lights: the sharp Black Marble tile when present, else the global 8K map
-    vec3 lightsTex = uHasLights > 0.5
-      ? texture2D(uLights, uLightsUv.xy + vUv * uLightsUv.zw).rgb
-      : texture2D(uNight, eq).rgb * uNightK;
+    vec3 lightsTex = texture2D(uNight, eq).rgb * uNightK;
+    if (uHasLights > 0.5) {
+      // Black Marble also carries bluish snow, sea ice and moonlit ground; boosted like lights
+      // they light up whole tiles at high latitudes. Keep only warm, bright pixels (cities).
+      vec3 bm = texture2D(uLights, uLightsUv.xy + vUv * uLightsUv.zw).rgb;
+      float warm = smoothstep(-0.02, 0.10, bm.r - bm.b);
+      float bright = smoothstep(0.10, 0.45, max(bm.r, bm.g));
+      lightsTex = bm * warm * bright;
+    }
     vec3 lights = pow(lightsTex, vec3(1.5)) * vec3(1.0, 0.78, 0.52) * 2.2;
     // moonlit ground so the night side keeps its texture
     vec3 moon = tile * vec3(0.05, 0.065, 0.09);
