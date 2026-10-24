@@ -1,99 +1,170 @@
-# OrbitCall — Feature analysis
+# OrbitCall — Feature analysis and decisions
 
-What to add, change or cut in [functionality.md](functionality.md) after the competitor research. This is a proposal for the team to decide on; `functionality.md` is not changed yet.
+Originally written Oct 24, 2026, ~00:40 PT (H≈4 of the hackathon). Updated Oct 24 after product review. This document now records the accepted and skipped recommendations; [functionality.md](functionality.md), [plan-v1.md](plan-v1.md) and the [README](../README.md) reflect those decisions. They describe planned behavior, not implemented features.
 
-Written Oct 24, 2026, ~00:40 PT (H≈4 of the hackathon).
+## How the original analysis was made
 
-## How this was made
+- **Inputs:** three research notes kept locally, not included in this repository: `features_commercial.md` (~27 commercial/government products), `features_github.md` (open-source projects and libraries), and `hackathons.md` (projects across 54 events).
+- **Reviewers:** the author plus three independent model reviews (`hy3`, `glm-5.3-flash`, `deepseek-v4-flash`). Their votes were recommendations, not validation of market uniqueness or implementation feasibility.
+- **Estimates:** the original rough backend/frontend hour estimates preceded these decisions. Re-estimate against the updated build plan; they are not delivery commitments.
+- **Evidence boundary:** competitor comparisons cannot be fully checked from this repository because the research notes are absent. Do not turn “not found in the reviewed products” into a claim that no commercial product supports a capability.
 
-- **Inputs:** three research notes (in Russian, kept locally, not in this repo):
-  - `features_commercial.md` — ~27 commercial and government products compared by function (Satcat, Slingshot Beacon, OKAPI, LeoLabs, TraCSS, EU SST, ESA, NASA CARA, …).
-  - `features_github.md` — open-source competitor repos (SpaceATC, PARLEY, Detour, Orbit Watch, Scutaris, orbitscreen, OrbitSense, …) and libraries.
-  - `hackathons.md` — prior hackathon projects in this space across 54 events and what won.
-- **Reviewers:** my own analysis plus three independent outside reviewers (models `hy3`, `glm-5.3-flash`, `deepseek-v4-flash`), each given the same raw task and inputs, not my draft. The **Votes** column shows who backed each item ("me" = my own analysis).
-- **Function IDs** refer to [functionality.md](functionality.md). Costs are rough hours; **BE** = backend, **FE** = frontend.
+## 0. Decision summary
 
-## 0. Already in functionality.md
+| Item | Decision | Result |
+|---|---|---|
+| M1 | **Accept** | Both humans approve the same proposal ID and revision; selected-plan changes visibly reset both approvals |
+| M2 | **Accept** | Company policy values are private throughout data access, agent context, UI, logs and exports |
+| M3 | **Skip** | No structured counter-proposal form; keep ordinary voice/text counters and automatic agent revisions |
+| M4 | **Accept** | Protect technical values during translation, restoring them from their authoritative source |
+| M5 | **Accept** | Use a real conjunction from the demo week's reference snapshot, with provenance |
+| M6 | **Already done** | Keep the chosen clear role names |
+| M7 | **Accept** | Shared promised-versus-observed verification with evidence, method and pending-data state |
+| M8 | **Accept with the reviewed evidence limits** | Supplied Pc with event/version provenance; source spread is not statistical uncertainty; no invented internal Pc |
+| M9 | **Remove forecasting completely** | No trained forecast, replacement baseline, forecasting rules, benchmark or predicted trend arrow |
+| M10 | **Accept** | Measured coverage over the full eligible reference snapshot, separate numerical errors and transparent input differences |
+| S1 | **Accept — decision between multiple proposals** | Humans compare calculated candidates, select one and both approve its exact revision |
+| S2 | **Skip — ask again** | No saved pair agreement or standing authorization; every new incident asks both operators again |
+| S3 | **Accept** | Operator-scoped six-month report draft and supporting event export, with reviewed FCC mapping and coverage |
+| S4 | **Skip** | Keep existing severity/lifecycle presentation; no additional action-label taxonomy |
+| S5 | **Skip** | No heuristic dismissal feature based on co-orbiting, same launch or relative speed |
+| S6 | **Accept** | Relevant CelesTrak source link on every queue row |
 
-Commits 938d7a8 ("Updated functionality") and 78fef39 ("updated names of agents") landed while this analysis was being written. Against them:
+The original analysis's separate cut list and interface suggestions were not automatically accepted by this selection. Their status is recorded below.
 
-| Item | Status |
+## 1. Accepted requirements and implementation meaning
+
+### M1 — Approvals identify one plan
+
+Each approval identifies the incident, selected proposal ID and immutable revision, plus the authenticated operator and time. Both must match. Selecting a candidate is not an approval, and approvals of different candidates cannot be combined.
+
+A new selected candidate or revision visibly clears both approvals, for example: “P2 · R2 created — both approvals reset.” Returning to an older selection does not revive an old approval. Material changes to policy inputs, constraints or orbital evidence invalidate affected approvals; unrelated conversation does not. The backend rejects stale approvals and checks both authorizations against the current selection before committing the schedule. A scheduled maneuver is flagged for review, never silently replaced.
+
+**Functions:** ROOM-1, ROOM-2, ROOM-5, ROOM-7, ROOM-8, ROOM-11, ACC-2, EXE-1, LOG-2, LOG-6.
+
+### M2 — Private company policy
+
+Only authorized company users and their Operator Advocate receive raw policy values. The opposing company, Incident Analyst and Coordination Host receive shareable candidate outcomes or categories such as “fuel” or “mission window.” The actual proposed maneuver parameters remain visible to both humans; the private limits used to evaluate them do not.
+
+Enforce the boundary in API/database access, live subscriptions, model context, negotiation messages, UI, shared logs and exports. A hidden UI panel alone is insufficient. Keep shareable contacts and language separate from private operational policy. Private past-incident memory is context only and cannot authorize a later event.
+
+**Functions:** POL-1, POL-2, POL-6, POL-7, AGT-1, AGT-3, AGT-7, AGT-8, ROOM-3, LOG-1, ACC-2.
+
+### M4 — Preserve values through translation
+
+Protect numbers, units, signs, dates/times, time zones and satellite identifiers with typed placeholders before translating the surrounding language. Restore and check values before display or speech. For proposal content, use the exact proposal revision; for human messages, use the original message, including newly introduced numbers. Never replace a new spoken counter with an older card value.
+
+Retain original wording and speaker identity. A failed placeholder check retries or falls back to the original; ambiguous speech recognition is clarified before changing a plan. Spoken approval must unambiguously identify the current candidate/revision and the authenticated speaker.
+
+**Functions:** LANG-1..LANG-8, ROOM-7, AGT-11..AGT-13.
+
+### M5 — Real event, traceable demo
+
+Pin a real pair from the demo week's SOCRATES or public CDM snapshot, retaining source URLs, object IDs, epochs and fetch times. Use actual source/computed values in the presentation. Label demonstration policies, participants and proposed actions as simulated. A sourced historical verification replay is separate from this current event; do not present it as proof that the live demo's proposed maneuver occurred.
+
+**Functions:** DATA-1, DATA-5, VER-3; plan sections 4, 7, 9 and 13.
+
+### M7 — Promised versus observed
+
+The Maneuver Verifier records the agreed candidate/revision beside later observations, with sources, epochs, method, thresholds and limitations. The demo method examines semi-major-axis or mean-motion changes against the object's own noise baseline using a time series, then compares the direction and approximate size with the expected change from deterministic tools.
+
+A single element-set jump does not prove exact delta-v or execution time. Results are evidence consistent with the plan, mismatch, or awaiting sufficient data. Sparse, noisy, stale or conflicting data stays pending; a scheduled maneuver is not automatically an executed maneuver. Use a sourced historical event such as an ISS reboost or documented Starlink maneuver for the replay.
+
+**Functions:** VER-1..VER-4, LOG-2, INBOX-3, INBOX-5; plan sections 6, 9 and 12.
+
+### M8 — Probability and source spread
+
+Prefer supplied Pc from a matching public CDM, with labeled SOCRATES values as available. Match object IDs, encounter time and data version; keep source, epoch and metric definition, including maximum probability where applicable. Missing values remain unavailable, never zero risk. The original event's Pc is not automatically a post-maneuver Pc.
+
+Display GP and SupGP results and their min–max range as **source disagreement**, not a calibrated uncertainty interval. Use no invented covariance, fixed sigma or internally generated Pc. This adopts the reviewed correction to the original suggestion of an “indicative Pc”: approximate candidate geometry may be labeled indicative, but that label does not justify making up a probability.
+
+**Functions:** SCR-2, SCR-4, SCR-5, SCR-9, Q-1, INBOX-3, AGT-2.
+
+### M9 — Forecasting removed
+
+Remove the entire risk-forecasting feature, including the ESA Kelvins training/data dependency, prediction model, persistence baseline, threshold-based forecast, forecast benchmark and predicted trend arrow. Do not replace the trained model with another forecast. SCR-6 stays as a retired ID so references are not reassigned.
+
+The queue uses current supplied evidence. Historical probability and distance observations can still be plotted, with source timestamps; they are history, not a prediction. Deterministic orbital propagation for conjunction screening remains in scope.
+
+**Functions:** SCR-6 retired; Q-1, Q-5, ROOM-10, DATA-1 and Risk Monitor responsibilities updated.
+
+### M10 — Measured and reproducible validation
+
+Evaluate detection recall over the full eligible SOCRATES reference set for a pinned snapshot, selected catalog and horizon. Show matched / eligible counts, scope, tolerances, exclusions and unmatched events. Report encounter-time and miss-distance errors separately from coverage.
+
+Identify evidenced element-set/input differences separately from screening misses. Unexplained discrepancies stay unresolved and in the reported denominator. Do not hard-code a success count or compare percentages from other projects without comparable inputs and evaluation methods.
+
+**Functions:** SCR-3, SCR-8; plan sections 4, 7, 9 and 13.
+
+### S1 — Humans decide between multiple proposals
+
+Generate a bounded grid of moving satellite, burn time and delta-v through deterministic tools. Start with 2–3 candidates when feasible and include waiting with a review condition when appropriate. Show who moves, time, delta-v, estimated fuel where available, computed geometry, assumptions and shareable policy feasibility. If only one or no feasible candidate exists, state that; do not manufacture alternatives.
+
+Agents can recommend a candidate and update options from ordinary voice/text discussion. Humans compare, select and both approve one exact candidate revision. A simple along-track approximation can illustrate the demo with stated assumptions, but it is not a production optimizer or proof of a numerical Pc target; the selected maneuver still goes through the defined catalog re-screen.
+
+**Functions:** AGT-1..AGT-4, AGT-8, ROOM-1, ROOM-2, ROOM-5, ROOM-7, ROOM-11, EXE-1..EXE-4.
+
+### S3 — Report draft from the log
+
+An authorized operator selects a six-month reporting period, previews the report and downloads a draft plus supporting event CSV. Include operator/satellite scope, unique conjunction count, events with coordination, events with maneuvers, unresolved events, provenance and source coverage. Revisions/repeated alerts are not separate events. Coordination and maneuver categories can overlap. Separate planned/scheduled maneuvers from observed or operator-confirmed execution; unresolved event matches and missing coverage are explicit.
+
+Target a reviewed mapping to the FCC space-system safety report referenced in the original proposal as **FCC 26-47, §100.201(d)**. Verify the final rule, applicability, effective dates, reporting-period definition and required fields before releasing a filing-ready template. Preserve the mapping version. Fields outside OrbitCall's incident data require explicit operator-supplied information and provenance; never invent zero counts or assume a partial log covers the entire fleet. Export excludes private policy values and does not file automatically.
+
+The [2025 FCC proposal](https://www.govinfo.gov/content/pkg/FR-2025-12-05/html/2025-22019.htm) documents the reporting concept; the [July 2026 draft](https://docs.fcc.gov/public/attachments/DOC-422740A1.pdf) is further research context. Neither substitutes for verifying the final rule and current applicability. The final-order PDF could not be retrieved during this documentation update, so a compliant field mapping is not claimed.
+
+**Functions:** LOG-7..LOG-9, ACC-2; plan sections 6, 7, 12 and 13.
+
+### S6 — Source links
+
+Every queue row provides a “Verify on CelesTrak” link to the relevant report or object data, with source timestamps in the incident. If the exact historical event is not addressable, label the available source accurately. The link verifies source information, not OrbitCall's proposed maneuver.
+
+**Functions:** Q-9, DATA-1; plan sections 6, 7 and 9.
+
+## 2. Skipped recommendations
+
+| Item | What is excluded | What remains |
+|---|---|---|
+| M3 | Structured counter fields for who moves, earliest/latest time, maximum delta-v or fuel | Voice and free-text counters, with agent interpretation, clarification and automatic candidate revisions |
+| S2 | Saved agreements or standing rules for a satellite pair, including automatic authorization of later events | Explicit company policies and incident history can inform negotiation; every new incident and revised selected plan asks both humans again |
+| S4 | Additional “No action / Wait for update / Plan mitigation / Coordinate” queue taxonomy | Existing red/yellow severity, lifecycle states and unresolved inbox situations |
+| S5 | Heuristic dismissal rules or a dismissed-row feature based on same launch, co-orbiting or relative speed | Normal event identity/deduplication and evidence-based updates; a source update may still show no action currently needed |
+
+**M6 remains complete:** Risk Monitor, Incident Analyst, Operator Advocate, Coordination Host, Maneuver Scheduler, Maneuver Verifier.
+
+## 3. Other original cut recommendations — not adopted by this decision
+
+The latest selection did not authorize the following separate cuts. Existing functionality remains as documented, including optional sponsor-related capabilities; their priority can still follow plan section 13.
+
+| Original suggestion | Current status |
 |---|---|
-| M1 approvals per revision | **Covered** by ROOM-11 and LOG-6: approvals are tracked per proposal version and do not carry over. Left for the UI: make the reset visible ("R2 created — approvals reset"). |
-| M3 counter-proposal | **Partly covered** by AGT-11..AGT-13, ROOM-12 and POL-6: agents follow the voice and text discussion and separate hard constraints from preferences. Still open: whether Counter also has structured fields (open question 4). |
-| M6 role names | **Done**, with different names: Risk Monitor, Incident Analyst, Operator Advocate, Coordination Host, Maneuver Scheduler, Maneuver Verifier. They no longer match the Detour / Scutaris pipeline or SpaceATC's "Maneuver Executor". |
-| M7 verifier | **Partly covered** by VER-4 (awaiting sufficient data). The "promised vs done, not detection" framing and the detection method are still open. |
-| M2 private policies | **Still open.** INBOX-5 and ROOM-12 refer to "policy visibility rules", which are not defined yet (open question 5). |
+| Cut a second model checking explanations (AGT-6) | Not selected; existing capability remains, optional in the build plan; deterministic checks remain required |
+| Cut agent memory between incidents (AGT-7) | Not selected; memory remains context only, restricted to its company and never standing authorization |
+| Cut third-operator notices (DSP-3, DSP-6) | Not selected; requirement remains and delivery channel is unresolved. Never describe an unbuilt invitation as working |
+| Limit outreach to in-app only (DSP-2 partial) | Not selected; outreach channel remains unresolved. The inbox always retains available phone/email/contact instructions |
+| Cut local-backend/LAN fallback (SYNC-3 partial) | Not selected; existing resilience requirements remain to be implemented and tested. Cached data alone does not replace unavailable cloud services |
+| Defer production orbit exchange, covariance Pc, full optimization and other large integrations | Existing out-of-scope boundaries remain. A bounded candidate comparison under S1 does not promise a production optimizer |
 
----
+ASI:One and optional sponsor work retain the existing plan status. A role-switch URL can illustrate a simulated UI but cannot satisfy M2's privacy or ACC-2's authorization requirements.
 
-## 1. MUST — do in this hackathon
+## 4. Positioning and interface
 
-| # | Type | IDs | What | Why | Cost | Votes |
-|---|---|---|---|---|---|---|
-| M1 | CHANGE | ROOM-2, ROOM-7, ACC-2 | **Bind each approval to a proposal revision.** Any new constraint, counter, policy edit or recompute creates a new revision and resets both approvals. The card shows "R2 · A approved · waiting for B". | No product or repo found where both humans approve the exact same revision. This is the most defensible unique mechanism. | 3 h BE+FE | deepseek, glm, hy3, me |
-| M2 | CHANGE | POL-2, ROOM-3 | **Policies are private in the API and the UI.** The other side sees only the outcome or a constraint category ("mission window", "fuel"), never the values. Answers open question 5. | Satcat's "Rules of the Road" are advisory and know nothing about fuel or mission windows; private policies only count if they are visibly separated. | 2–4 h BE+FE | deepseek, glm, hy3, me |
-| M3 | ADD | new (ROOM-7, AGT-4) | **Structured counter-proposal.** Free text plus optional fields: who should move, not-before / not-after time, max Δv, max fuel. It becomes a constraint and forces a recompute. Answers open question 4. | No commercial product or open repo has a human counter-proposal inside a two-party negotiation. | 3 h BE+FE | deepseek, glm, hy3, me |
-| M4 | CHANGE | LANG-2 | **Numbers in translation come from the proposal card, never from the model.** The translator gets placeholders and the numbers are inserted afterwards. | Orbit Watch's voice agent calls a tool for every number; otherwise a translation can turn 180 m into 18 m. | 0.5–1 h BE | hy3, deepseek, me |
-| M5 | CHANGE | DATA-1, demo | **Demo on a real pair from this week** (SOCRATES or `cdm_public`), not a synthetic pair. | SpaceATC and PARLEY inject synthetic pairs; Orbit Watch won SpaceXAI with a real event of the week. | 2 h BE | all |
-| M6 | CHANGE | §1 roles, all docs and UI labels | **Rename the agent roles** away from Scout / Analyst / Executor / Verifier. *Done in 78fef39 — see section 0.* | Detour (TreeHacks 2026) and Scutaris (HackMIT 2026, SpaceXAI winner) use the same Scout → Analyst → Planner → Safety → Ops Brief pipeline; SpaceATC has a "Maneuver Executor" node. A judge who saw them will recognise the diagram. | 1 h docs+UI | all |
-| M7 | CHANGE | VER-1..VER-4 | **Maneuver Verifier = "promised vs done" in the shared log, not maneuver detection.** Detect the burn as a jump in semi-major axis / mean motion between consecutive element sets (above the object's own noise), and check sign and size against the promised Δv. Demo on a real historical maneuver (an ISS reboost or a Starlink burn). | LeoLabs (>2,000 maneuvers/day, ~1 orbit latency), Stargaze and Kratos detect maneuvers far faster than next-day TLEs. The gap is the shared promise-vs-fact record. | 2–3 h BE | all |
-| M8 | CHANGE | SCR-2, SCR-4, SCR-9 | **Pc: use the official value from `cdm_public` where the pair matches; label our own Pc "indicative"; show the GP vs SupGP spread as a range.** No fixed σ. | SpaceATC hard-codes σ = 1 km, which reads as a toy. Satcat, LeoLabs and Space-Track compute real Pc from covariances; we don't have covariances. | 1–2 h BE | hy3, glm, me (deepseek: skip own Pc) |
-| M9 | CUT / CHANGE | SCR-6 | **Drop the ML risk-trend model.** Use the naive rule "final risk = latest risk" plus the challenge winner's threshold rules; show an honest comparison table. | In the ESA Kelvins challenge only 12 of 97 teams beat the naive rule; a 2026 open LLM-agent attempt scored 2.4× worse. ESA's CREAM AutoCA already forecasts CDM evolution. | saves ~4 h; 1–2 h BE | all |
-| M10 | CHANGE | SCR-3, SCR-8, pitch | **Remove "47 of 50 within 500 m" from the pitch.** If a validation number is shown, make it recall over the whole SOCRATES list for our objects on one snapshot, split into "different element set (SupGP)" vs "our miss". | orbitscreen (MIT, pushed Oct 23) claims 99.84% of 206,222 SOCRATES pairs; OrbitSense claims 85.8% recall. "47/50" looks weak next to them. | 1 h BE | all |
+Emphasize the connected workflow: private policy evaluation → human choice among computed proposals → voice/text discussion changes options → both approve the same revision → later evidence compared with the agreement → reviewable report draft. Retain the personal inbox for nonresponse, no agreement, monitoring, updated evidence and pending verification.
 
-## 2. SHOULD — do if the core path works
+The original review suggested a room-first demo and a smaller globe. That presentation suggestion was not separately approved here; the updated plan follows the full queue/inbox-to-room workflow and makes candidate choice, private-policy boundaries, approval resets and original/translated text visible. No separate mockup brief is present in this repository.
 
-| # | Type | IDs | What | Why | Cost | Votes |
-|---|---|---|---|---|---|---|
-| S1 | CHANGE | AGT-2, §19 | **Replace "raise / lower / wait" with computed candidates:** a small grid of Δv × burn time using the along-track approximation (shift ≈ 3·Δv·Δt), target Pc ≈ 3.2e-6 (NASA handbook post-maneuver goal). Agents bargain over these points. Fallback: 2–3 candidates, no chart. | Satcat, GMV, OKAPI, Neuraspace, ESA CORAM all optimise Δv; three fixed options is the plan's own admitted weakness. | 2–3 h BE + 1 h FE | glm (must), hy3, me; deepseek: 2 candidates only |
-| S2 | ADD | new (POL) | **"Save as standing rule for this pair"** after both approve, plus SSC best-practice classes as the default policy when an operator has none. | OKAPI:Astrolabe (built with ESA) already offers "agree who maneuvers once, and the protocol applies automatically to every future event". This will be the first judge question. | 1–2 h BE+FE | glm (must), hy3, me; deepseek: skip |
-| S3 | ADD | new (LOG) | **Export the FCC 26-47 §100.201(d) semi-annual report from the log** (count of conjunction events, including those that led to a maneuver or coordination with another operator). | Not found in any of ~27 products; Beacon only offers "logs". "The log is your regulator report" is a strong slide. | 1 h BE | glm (must), hy3, me; deepseek: skip |
-| S4 | ADD | new (Q) | **Industry action label per queue row:** No action · Wait for update · Plan mitigation · Coordinate (NASA CARA categories, as Satcat uses). "Coordinate" is what opens a room. | Makes the queue speak the industry's language. | 0.5–1 h BE+FE | hy3, glm, me |
-| S5 | ADD | new (Q) | **Dismissed rows with a visible reason:** co-orbiting (relative speed < 0.1 km/s), same launch, duplicate, below threshold. | Orbit Watch and satguard do this; it turns "1,000 pairs" into "3 decisions" on screen. | 0.5–1 h BE+FE | deepseek, me |
-| S6 | ADD | new (Q) | **"Verify on CelesTrak" link** per row. | Orbit Watch uses it; shows the data is real. | 0.25 h FE | deepseek, me |
+Contact directories, rooms, logs, maneuver recommendations and screening comparisons should not be pitched as individually unique. The absent research notes do not substantiate a market-wide exclusivity claim for the full workflow either; describe the product's concrete behavior.
 
-## 3. CUT or SKIP
+## 5. Resolved and remaining specification questions
 
-| IDs | What | Why | Votes |
-|---|---|---|---|
-| AGT-6 | Second independent model checking the rationale | Doesn't sell as a market feature; SpaceATC already checks LLM text against numbers. Keep only the cheap deterministic check (AGT-5). | glm, deepseek |
-| AGT-7 | Agent memory between incidents / reputation | Beacon already claims "responsiveness indicators". If cut, we lose the Backboard sponsor track. | glm, deepseek |
-| DSP-3, DSP-6 | Building the third-operator notice | Narrow claim; keep it as wording only: "the affected third operator is invited into the room before signature". hy3 wanted it built (3 h). | glm, deepseek |
-| DSP-2 (partial) | Calling by phone / email / push; Slack or webhook alerts | In-app only. Satcat and OKAPI do alerts better. | all |
-| SYNC-3 (partial) | Serving the backend from one laptop to the other over the LAN | Fragile, no judge value. **Keep** the cached data snapshot: it is just files. | glm, deepseek, me |
-| — | CDM KVN / OEM export, operator ephemeris upload (OEM/OCM), true Pc from covariances, Δv optimizer, Space-Track account linking, own sensors, launch COLA, re-entry, GEO, 24×7 support | Competitors own these; each is days of work. Answer verbally ("same parser, another endpoint"; "in production the facts come from LeoLabs or TraCSS"). | all |
+Preserve the original numbers in [functionality.md section 20](functionality.md#20-open-questions-for-the-specification):
 
-**Disagreement kept open:** deepseek also proposed cutting the ASI:One entry point (EXT-3), the offline snapshot and real sign-in. I don't recommend cutting EXT-3: it is a Fetch.ai track requirement. Sign-in already has a fallback (`?role=A` / `?role=B`).
-
-## 4. Do not pitch these as unique
-
-They already exist elsewhere:
-
-- Auto-opened room — Neuraspace.
-- Operator contact directory — Satcat, TraCSS, OKAPI:Astrolabe, SDA.
-- Audit log — OKAPI:Astrolabe, Beacon logs.
-- Re-screening a maneuver against the catalog — everyone (TraCSS, LeoLabs, EU SST, Space-Track, Satcat).
-- Risk-trend forecast — ESA CREAM AutoCA.
-- Automatic maneuver recommendation — Satcat, OKAPI, Neuraspace, GMV, Vyoma.
-- A "who moves" rule — Satcat Rules of the Road, OKAPI:Astrolabe.
-- Checking LLM text against numbers — SpaceATC (`content_review.py`).
-- Validation against SOCRATES — orbitscreen, OrbitSense, TCA-engine, Orbit Watch.
-
-**What is unique (no product or repo found with the full chain):** each operator's agent negotiates within its company's **private** policy → a **human counter-proposal** becomes a constraint → **both humans approve the same revision** → each in **their own language** → **promised vs done** recorded in one shared log. In the pitch say "no commercial product", not "nobody": ESA's CREAM#3 AutoSTM pilots multi-agent negotiation, and PARLEY and SpaceATC showed parts of it at hackathons.
-
-## 5. Open questions this answers
-
-From [functionality.md §20](functionality.md#20-open-questions-for-the-specification):
-
-- **Q3, Incident Analyst options:** replaced by computed candidates (S1), or 2–3 candidates as the fallback.
-- **Q4, Counter:** structured counter (M3).
-- **Q5, Policy visibility:** private; the other side sees only the outcome or a constraint category (M2).
-- **Q6, Calling people:** in-app only for the hackathon.
-- **Q7, Third-party notice:** wording only; not built (section 3).
-
-Still open: Q1 screening horizon, Q2 cadence, Q8 event identity across sources, Q9 yellow events.
-
-## 6. Interface
-
-An interface brief for mockups is being prepared separately. All three reviewers agreed: the **Conjunction Room is the first demo screen**, the globe is a small inset, and the screen must show both sides, the private policy lock, the counter → new revision → approvals reset, and translation with the original one click away.
+- **Q3 resolved:** multiple computed proposals for human choice; 2–3 initially when feasible, without fabricated alternatives.
+- **Q4 resolved:** counters are voice/text; no structured form.
+- **Q5 resolved:** company policy values are private; share outcomes/categories and proposed maneuver parameters.
+- **Q1 and Q2 remain:** screening horizon and refresh/internal screening cadence, respecting source limits.
+- **Q6 and Q7 remain:** outreach channels and third-operator notice/room behavior.
+- **Q8 remains:** canonical event identity and matching across screening, SOCRATES and CDMs; required for deduplicated reporting.
+- **Q9 remains:** persistence and presentation of prepared options for yellow events.
+- **Q10 added:** final report mapping, applicability, periods, format and missing-field completion.
+- **Q11 added:** candidate grid/approximation limits, re-screen criteria, and verification baseline/window/thresholds.
+- **Q12 added:** review priority when usable supplied Pc is unavailable.
