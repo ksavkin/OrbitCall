@@ -1,48 +1,34 @@
-import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v, ConvexError } from "convex/values";
-import type { Id } from "./_generated/dataModel";
 import { checkAndRenderSummary, inputKey, STALLED_AFTER_MS, validateFacts } from "./lib/analyst";
-import { factsFromEvent } from "./lib/events";
-
-async function refreshFlags(ctx: MutationCtx, eventId: Id<"events">) {
-  const active = await ctx.db.query("agentRuns").withIndex("by_event_status", q =>
-    q.eq("eventId", eventId).eq("status", "running")).collect();
-  if (await ctx.db.get(eventId)) await ctx.db.patch(eventId, {
-    agentsWorking: active.length > 0,
-    agentsStalled: active.some(run => run.stalled),
-  });
-}
+import { loadFacts } from "./lib/events";
+import { currentSummary, latestRun, runFlags, runsWithAttempt, stageOf, supersede } from "./lib/runs";
+import { runStage } from "./lib/validators";
 
 export const begin = internalMutation({
   args: { eventId: v.id("events") },
   handler: async (ctx, { eventId }) => {
     const event = await ctx.db.get(eventId);
     if (!event) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
-    const input = factsFromEvent(event);
+    const input = await loadFacts(ctx, event);
     validateFacts(input);
     const key = inputKey(input);
-    const previous = await ctx.db.query("agentRuns").withIndex("by_event_role", q =>
-      q.eq("eventId", eventId).eq("role", "incident_analyst")).order("desc").first();
+    const previous = await latestRun(ctx, eventId);
     if (previous?.inputKey === key && ["running", "succeeded"].includes(previous.status)) return null;
-    const now = Date.now();
-    if (previous?.status === "running") await ctx.db.patch(previous._id, {
-      status: "superseded", finishedAt: now, stalled: false, stage: "superseded",
-    });
+    if (previous?.status === "running") await supersede(ctx, previous._id);
     const runId = await ctx.db.insert("agentRuns", {
-      eventId, role: "incident_analyst", inputKey: key, input,
-      status: "running", attempt: (previous?.attempt ?? 0) + 1,
-      startedAt: now, lastProgressAt: now, finishedAt: null, stalled: false,
-      stage: "loading", errorCode: null, errorMessage: null, model: null, usage: null,
+      eventId, inputKey: key, status: "running", stage: "loading",
+      lastProgressAt: Date.now(), stalled: false,
     });
-    await refreshFlags(ctx, eventId);
     await ctx.scheduler.runAfter(STALLED_AFTER_MS, internal.agentRuns.watchdog, { runId });
+    // The input travels to the action; it is not stored with the run.
     return { runId, input };
   },
 });
 
 export const progress = internalMutation({
-  args: { runId: v.id("agentRuns"), stage: v.string(), model: v.optional(v.string()) },
+  args: { runId: v.id("agentRuns"), stage: runStage, model: v.optional(v.string()) },
   handler: async (ctx, { runId, stage, model }) => {
     const run = await ctx.db.get(runId);
     if (!run || run.status !== "running") return;
@@ -50,7 +36,6 @@ export const progress = internalMutation({
       ...(model ? { model } : {}) });
     // A stalled watchdog has stopped polling. Resume monitoring if work resumes.
     if (run.stalled) await ctx.scheduler.runAfter(STALLED_AFTER_MS, internal.agentRuns.watchdog, { runId });
-    await refreshFlags(ctx, run.eventId);
   },
 });
 
@@ -65,7 +50,6 @@ export const watchdog = internalMutation({
       return;
     }
     await ctx.db.patch(runId, { stalled: true });
-    await refreshFlags(ctx, run.eventId);
   },
 });
 
@@ -78,25 +62,18 @@ export const finish = internalMutation({
     const run = await ctx.db.get(runId);
     if (!run || run.status !== "running") return { published: false };
     const event = await ctx.db.get(run.eventId);
-    const latest = await ctx.db.query("agentRuns").withIndex("by_event_role", q =>
-      q.eq("eventId", run.eventId).eq("role", "incident_analyst")).order("desc").first();
-    if (!event || latest?._id !== runId || inputKey(factsFromEvent(event)) !== run.inputKey) {
-      await ctx.db.patch(runId, { status: "superseded", stage: "superseded", finishedAt: Date.now(), stalled: false });
-      await refreshFlags(ctx, run.eventId);
+    const latest = await latestRun(ctx, run.eventId);
+    const facts = event && await loadFacts(ctx, event);
+    if (!facts || latest?._id !== runId || inputKey(facts) !== run.inputKey) {
+      await supersede(ctx, runId);
       return { published: false };
     }
     // Validate again inside the publishing transaction. A caller cannot bypass the gate.
-    const summaryLines = checkAndRenderSummary(raw, run.input);
-    const previous = await ctx.db.query("eventSummaries").withIndex("by_event", q => q.eq("eventId", run.eventId)).unique();
-    const summary = {
-      eventId: run.eventId, runId, inputKey: run.inputKey, summaryLines,
-      numbersChecked: true as const, originalLang: "en" as const,
-      createdAt: new Date().toISOString(), simulated: event.simulated,
-    };
-    if (previous) await ctx.db.replace(previous._id, summary);
-    else await ctx.db.insert("eventSummaries", summary);
-    await ctx.db.patch(runId, { status: "succeeded", stage: "completed", finishedAt: Date.now(), stalled: false, model, usage });
-    await refreshFlags(ctx, run.eventId);
+    checkAndRenderSummary(raw, facts);
+    await ctx.db.patch(runId, {
+      status: "succeeded", stage: undefined, finishedAt: Date.now(), stalled: false,
+      model, usage, checkedOutput: raw,
+    });
     return { published: true };
   },
 });
@@ -107,10 +84,9 @@ export const fail = internalMutation({
     const run = await ctx.db.get(runId);
     if (!run || run.status !== "running") return;
     await ctx.db.patch(runId, {
-      status: "failed", stage: "failed", finishedAt: Date.now(), stalled: false,
+      status: "failed", stage: undefined, finishedAt: Date.now(), stalled: false,
       errorCode: code, errorMessage: message,
     });
-    await refreshFlags(ctx, run.eventId);
   },
 });
 
@@ -118,13 +94,12 @@ export const inspect = internalQuery({
   args: { eventId: v.id("events") },
   handler: async (ctx, { eventId }) => {
     const event = await ctx.db.get(eventId);
-    const runs = await ctx.db.query("agentRuns").withIndex("by_event_role", q =>
-      q.eq("eventId", eventId).eq("role", "incident_analyst")).order("desc").take(10);
-    const summary = await ctx.db.query("eventSummaries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
+    const summary = event && await currentSummary(ctx, eventId, await loadFacts(ctx, event));
+    const runs = (await runsWithAttempt(ctx, eventId)).slice(0, 10);
     return {
-      agentsWorking: event?.agentsWorking ?? false, agentsStalled: event?.agentsStalled ?? false,
-      summary: event && summary?.inputKey === inputKey(factsFromEvent(event)) ? summary.summaryLines : null,
-      runs: runs.map(({ input: _input, inputKey: _key, ...run }) => run),
+      ...await runFlags(ctx, eventId),
+      summary: summary?.lines ?? null,
+      runs: runs.map(({ inputKey: _key, checkedOutput: _output, ...run }) => ({ ...run, stage: stageOf(run) })),
     };
   },
 });

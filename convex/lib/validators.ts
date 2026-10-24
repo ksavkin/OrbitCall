@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 
+// Stored values.
 export const sourceName = v.union(
-  v.literal("celestrak_gp"), v.literal("celestrak_supgp"),
-  v.literal("socrates"), v.literal("cdm_public"), v.literal("gp_history"),
-  v.literal("keeptrack"), v.literal("simulated"),
+  v.literal("celestrak_gp"), v.literal("celestrak_supgp"), v.literal("celestrak_satcat"),
+  v.literal("socrates"), v.literal("simulated"),
 );
 export const sourceRef = v.object({
   name: sourceName,
@@ -11,10 +11,24 @@ export const sourceRef = v.object({
   epochUtc: v.union(v.string(), v.null()),
   fetchedAt: v.union(v.string(), v.null()),
 });
+export const color = v.union(v.literal("red"), v.literal("yellow"), v.literal("none"));
+export const runStatus = v.union(
+  v.literal("running"), v.literal("succeeded"),
+  v.literal("failed"), v.literal("superseded"),
+);
+export const runStage = v.union(v.literal("loading"), v.literal("calling_model"), v.literal("checking"));
+// What ingestion stores about an object; everything else in SpaceObject is derived.
+export const objectInput = v.object({
+  objectId: v.string(), name: v.string(),
+  country: v.union(v.string(), v.null()),
+  launchDate: v.union(v.string(), v.null()),
+});
+
+// Analyst input in the spec §2.2 shapes, assembled from the tables by lib/events.ts.
 export const spaceObject = v.object({
   objectId: v.string(), name: v.string(),
   ownerName: v.union(v.string(), v.null()),
-  ownerCompanyId: v.union(v.id("companies"), v.null()),
+  ownerCompanyId: v.null(),
   country: v.union(v.string(), v.null()),
   purpose: v.union(v.string(), v.null()),
   launchDate: v.union(v.string(), v.null()),
@@ -43,13 +57,3 @@ export const eventFacts = v.object({
   pc: probability, sources: v.array(sourceRef),
   spread: v.union(sourceSpread, v.null()), simulated: v.boolean(),
 });
-export const agentRole = v.union(
-  v.literal("risk_monitor"), v.literal("incident_analyst"),
-  v.literal("operator_advocate"), v.literal("coordination_host"),
-  v.literal("maneuver_scheduler"), v.literal("maneuver_verifier"),
-  v.literal("second_model"),
-);
-export const runStatus = v.union(
-  v.literal("running"), v.literal("succeeded"),
-  v.literal("failed"), v.literal("superseded"),
-);

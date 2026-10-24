@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { internal, api } from "../convex/_generated/api";
 import { FIXTURE_NOW, redEvent } from "../fixtures/events";
-import { backend, draft, insertEvent } from "./helpers";
+import { backend, draft, ingestArgs, insertEvent, insertSnapshot } from "./helpers";
 import { callClaude } from "../convex/lib/claude";
 
 vi.mock("../convex/lib/claude", async importOriginal => {
@@ -23,13 +23,14 @@ describe("agent run lifecycle", () => {
   it("publishes a checked summary through the real action path and does not change the incident decision", async () => {
     const t = backend();
     const eventId = await insertEvent(t);
+    const before = await t.run(ctx => ctx.db.get(eventId));
     await t.action(internal.agents.analyst.start, { eventId });
     const result = await t.query(internal.agentRuns.inspect, { eventId });
     expect(result.summary).toHaveLength(5);
     expect(result.runs[0].status).toBe("succeeded");
     expect(result.agentsWorking).toBe(false);
     expect(callClaude).toHaveBeenCalledTimes(1);
-    expect((await t.run(ctx => ctx.db.get(eventId)))?.status).toBe("new");
+    expect(await t.run(ctx => ctx.db.get(eventId))).toEqual(before);
     await t.action(internal.agents.analyst.start, { eventId });
     expect(callClaude).toHaveBeenCalledTimes(1);
   });
@@ -107,7 +108,7 @@ describe("agent run lifecycle", () => {
     result = await t.query(internal.agentRuns.inspect, { eventId });
     expect(result.runs[0].attempt).toBe(2);
     expect(result.summary).toHaveLength(5);
-    expect(await t.run(ctx => ctx.db.query("eventSummaries").collect())).toHaveLength(1);
+    expect((await t.run(ctx => ctx.db.query("agentRuns").collect())).filter(run => run.checkedOutput)).toHaveLength(1);
   });
 
   it("sanitizes unknown upstream failures", async () => {
@@ -131,8 +132,9 @@ describe("agent run lifecycle", () => {
 
   it("ingestion schedules the Analyst once for a newly red event", async () => {
     const t = backend();
-    const first = await t.mutation(internal.events.ingest, { sourceKey: "source:pair", facts: redEvent });
-    const second = await t.mutation(internal.events.ingest, { sourceKey: "source:pair", facts: redEvent });
+    const snapshotId = await insertSnapshot(t);
+    const first = await t.mutation(internal.events.ingest, ingestArgs(snapshotId));
+    const second = await t.mutation(internal.events.ingest, ingestArgs(snapshotId));
     expect(first.scheduled).toBe(true); expect(second.scheduled).toBe(false);
     expect(second.eventId).toBe(first.eventId);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -140,44 +142,44 @@ describe("agent run lifecycle", () => {
     expect((await t.query(internal.agentRuns.inspect, { eventId: first.eventId })).summary).toHaveLength(5);
   });
 
-  it("requires identity and party membership for private incident summaries", async () => {
+  it("ingestion keeps one event per pair within sixty seconds of TCA and one record per object", async () => {
     const t = backend();
-    const [a, b] = await t.run(async ctx => {
-      const a = await ctx.db.insert("companies", { name: "A" });
-      const b = await ctx.db.insert("companies", { name: "B" });
-      await ctx.db.insert("users", { authSubject: "owner-a", companyId: a, role: "operator" });
-      await ctx.db.insert("users", { authSubject: "owner-b", companyId: b, role: "operator" });
-      return [a, b];
-    });
-    const eventId = await insertEvent(t, { ...redEvent, objectA: { ...redEvent.objectA, ownerCompanyId: a } });
+    const snapshotId = await insertSnapshot(t);
+    const first = await t.mutation(internal.events.ingest, ingestArgs(snapshotId));
+    const shifted = { ...redEvent, tcaUtc: "2026-10-25T03:15:07Z", missKm: 0.2 };
+    const near = await t.mutation(internal.events.ingest, ingestArgs(snapshotId, shifted));
+    const far = await t.mutation(internal.events.ingest, ingestArgs(snapshotId, { ...redEvent, tcaUtc: "2026-10-25T03:16:08Z" }));
+    expect(near.eventId).toBe(first.eventId);
+    expect(far.eventId).not.toBe(first.eventId);
+    expect(await t.run(ctx => ctx.db.query("spaceObjects").collect())).toHaveLength(2);
+    expect((await t.run(ctx => ctx.db.get(first.eventId)))?.missKm).toBe(0.2);
+  });
+
+  it("serves the current checked summary without sign-in and hides it once the evidence changes", async () => {
+    const t = backend();
+    const eventId = await insertEvent(t);
     await t.action(internal.agents.analyst.start, { eventId });
-    await expect(t.query(api.agentSummaries.get, { eventId })).rejects.toThrow("UNAUTHENTICATED");
-    await expect(t.withIdentity({ subject: "owner-b" }).query(api.agentSummaries.get, { eventId })).rejects.toThrow("FORBIDDEN");
-    const result = await t.withIdentity({ subject: "owner-a" }).query(api.agentSummaries.get, { eventId });
+    const result = await t.query(api.agentSummaries.get, { eventId });
     expect(result.summaryLines).toHaveLength(5);
     expect(result.numbersChecked).toBe(true);
+    expect(result.run?.attempt).toBe(1);
     expect(JSON.stringify(result)).not.toContain("inputKey");
+    expect(JSON.stringify(result)).not.toContain("{{");
     await t.run(ctx => ctx.db.patch(eventId, { missKm: 0.5 }));
-    const updated = await t.withIdentity({ subject: "owner-a" }).query(api.agentSummaries.get, { eventId });
+    const updated = await t.query(api.agentSummaries.get, { eventId });
     expect(updated.summaryLines).toEqual([]);
+    expect(updated.numbersChecked).toBe(false);
     expect(updated.run).toBeNull();
   });
 
-  it("only a party operator can retry; a stuck old attempt cannot publish afterward", async () => {
+  it("retry waits for a stall; a stuck old attempt cannot publish afterward", async () => {
     const t = backend();
-    const a = await t.run(async ctx => {
-      const a = await ctx.db.insert("companies", { name: "A" });
-      await ctx.db.insert("users", { authSubject: "operator", companyId: a, role: "operator" });
-      await ctx.db.insert("users", { authSubject: "viewer", companyId: a, role: "head_of_ops" });
-      return a;
-    });
-    const eventId = await insertEvent(t, { ...redEvent, objectA: { ...redEvent.objectA, ownerCompanyId: a } });
+    const eventId = await insertEvent(t);
     const claimed = await t.mutation(internal.agentRuns.begin, { eventId });
-    await expect(t.withIdentity({ subject: "viewer" }).mutation(api.agents.rerun, { eventId })).rejects.toThrow("FORBIDDEN");
-    await expect(t.withIdentity({ subject: "operator" }).mutation(api.agents.rerun, { eventId })).rejects.toThrow("INVALID_STATE");
+    await expect(t.mutation(internal.agents.rerun, { eventId })).rejects.toThrow("INVALID_STATE");
     vi.setSystemTime(FIXTURE_NOW + 61_000);
     await t.mutation(internal.agentRuns.watchdog, { runId: claimed!.runId });
-    await t.withIdentity({ subject: "operator" }).mutation(api.agents.rerun, { eventId });
+    await t.mutation(internal.agents.rerun, { eventId });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect((await t.query(internal.agentRuns.inspect, { eventId })).runs[0].status).toBe("succeeded");
     expect((await t.mutation(internal.agentRuns.finish, {

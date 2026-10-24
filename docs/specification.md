@@ -86,7 +86,7 @@ type VerificationResult = "awaiting_data" | "consistent" | "mismatch";
 
 type SourceName =
   | "celestrak_gp" | "celestrak_supgp" | "socrates" | "cdm_public"
-  | "gp_history" | "keeptrack" | "simulated";
+  | "gp_history" | "keeptrack" | "simulated" | "celestrak_satcat";
 ```
 
 ### 2.2 Objects and events
