@@ -39,6 +39,21 @@ export interface PcPoint {
 
 export type Action = "raise" | "lower" | "wait";
 
+/**
+ * A person the event involves: the two deciding operators, plus operators whose
+ * satellites the fix affects (DSP-3). Country is the dispatcher's, for the flag.
+ */
+export interface Party {
+  id: HumanId;
+  role: "a" | "b" | "affected";
+  operator: string;
+  /** SATCAT owner code of the operator's satellite. */
+  owner: string;
+  /** ISO 3166-1 alpha-2 of the dispatcher, lower case; null when unknown. */
+  country: string | null;
+  language: string | null;
+}
+
 export interface Proposal {
   version: number;
   mover: "a" | "b" | "none";
@@ -81,6 +96,8 @@ export interface ConjunctionEvent {
   approvals: { a: Approval; b: Approval };
   /** Five-line Incident Analyst summary (AGT-2). */
   summary: string[] | null;
+  /** Everyone involved; length 2+ (A, B, then affected operators). Optional until the backend sends it. */
+  parties?: Party[];
   createdAt: number;
   scenario?: string;
 }
@@ -100,7 +117,7 @@ export type ToolId =
   | "room"
   | "schedule";
 
-export type HumanId = "humanA" | "humanB";
+export type HumanId = "humanA" | "humanB" | "humanC" | "humanD";
 
 export type NodeId = AgentId | ToolId | HumanId;
 

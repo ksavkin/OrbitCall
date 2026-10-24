@@ -63,7 +63,7 @@ export function ModelGlyph({ model, size = 16 }: { model?: string; size?: number
 
 export function NodeGlyph({ id, size = 16 }: { id: NodeId; size?: number }) {
   if (id in AGENTS) return <ModelGlyph model={AGENTS[id as AgentId].model} size={size} />;
-  if (id === "humanA" || id === "humanB") return <User size={size - 2} strokeWidth={1.8} />;
+  if (id.startsWith("human")) return <User size={size - 2} strokeWidth={1.8} />;
   const Icon = TOOL_ICON[id as ToolId];
   return <Icon size={size - 2} strokeWidth={1.8} />;
 }

@@ -136,6 +136,8 @@ export const TOOLS: Record<ToolId, ToolInfo> = {
 export const HUMANS: Record<HumanId, { name: string; detail: string }> = {
   humanA: { name: "Operator A", detail: "Dispatcher, English" },
   humanB: { name: "Operator B", detail: "Dispatcher, Russian" },
+  humanC: { name: "Operator C", detail: "Affected operator" },
+  humanD: { name: "Operator D", detail: "Affected operator" },
 };
 
 export function nodeLabel(id: NodeId) {

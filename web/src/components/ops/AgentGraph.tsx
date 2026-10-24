@@ -1,12 +1,13 @@
 "use client";
 
 import { motion } from "motion/react";
-import { Check, X } from "lucide-react";
+import { Check, User, X } from "lucide-react";
 import { useMemo } from "react";
 import { fmtMs, fmtUsd } from "@/lib/ops/format";
 import { AGENTS, HUMANS, MODELS, TOOLS } from "@/lib/ops/roster";
 import { useOps } from "@/lib/ops/store";
-import type { AgentId, HumanId, NodeId, Span } from "@/lib/ops/types";
+import type { AgentId, HumanId, NodeId, Party, Span } from "@/lib/ops/types";
+import { Flag } from "@/components/ui/OwnerBadge";
 import { sfx } from "@/lib/sound";
 import { useNow } from "@/lib/useNow";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -18,7 +19,7 @@ import { EDGE } from "./meta";
 // travels out while a call runs, a green one comes back with the answer.
 
 export const GW = 400;
-export const GH = 500;
+export const GH = 540;
 
 const POS: Record<NodeId, [number, number]> = {
   celestrak: [110, 34],
@@ -36,10 +37,13 @@ const POS: Record<NodeId, [number, number]> = {
   humanA: [52, 354],
   host: [200, 354],
   humanB: [348, 354],
-  schedule: [52, 440],
-  scheduler: [140, 440],
-  verifier: [260, 440],
-  room: [348, 440],
+  // affected third operators sit under the deciding pair
+  humanC: [118, 408],
+  humanD: [282, 408],
+  schedule: [52, 488],
+  scheduler: [140, 488],
+  verifier: [260, 488],
+  room: [348, 488],
 };
 
 /** Always-visible skeleton: the agent pipeline itself. */
@@ -82,6 +86,7 @@ export function AgentGraph({ big = false }: { big?: boolean }) {
   const spans = useOps((s) => s.spans);
   const humans = useOps((s) => s.humans);
   const focusAgent = useOps((s) => s.focusAgent);
+  const parties = useOps((s) => s.events.find((e) => e.id === s.focusEvent)?.parties);
   const now = useNow(250);
 
   const { edges, answers, nodeState } = useMemo(() => {
@@ -121,7 +126,13 @@ export function AgentGraph({ big = false }: { big?: boolean }) {
   }, [spans, humans, now, focusAgent]);
 
   const waitingHuman = new Set<NodeId>(humans.map((h) => (h.side === "a" ? "humanA" : "humanB")));
-  const nodes = Object.keys(POS) as NodeId[];
+  // people come from the focused event: two deciding operators plus anyone the fix affects
+  const shownParties: Party[] = parties ?? [
+    { id: "humanA", role: "a", operator: "Operator A", owner: "", country: null, language: null },
+    { id: "humanB", role: "b", operator: "Operator B", owner: "", country: null, language: null },
+  ];
+  const partyById = new Map(shownParties.map((p) => [p.id, p]));
+  const nodes = (Object.keys(POS) as NodeId[]).filter((id) => !id.startsWith("human") || partyById.has(id as HumanId));
 
   return (
     <div className="relative w-full select-none" style={{ aspectRatio: `${GW} / ${GH}` }}>
@@ -181,6 +192,7 @@ export function AgentGraph({ big = false }: { big?: boolean }) {
           waiting={waitingHuman.has(id)}
           dim={focusAgent !== null && id !== focusAgent}
           focused={focusAgent === id}
+          party={partyById.get(id as HumanId)}
         />
       ))}
     </div>
@@ -194,8 +206,10 @@ function GraphNode({
   waiting,
   dim,
   focused,
+  party,
 }: {
   id: NodeId;
+  party?: Party;
   big: boolean;
   st?: { running: number; ok: number; err: number; cost: number; calls: number; ms: number };
   waiting: boolean;
@@ -203,14 +217,30 @@ function GraphNode({
   focused: boolean;
 }) {
   const isAgent = id in AGENTS;
-  const isHuman = id === "humanA" || id === "humanB";
-  const size = isAgent ? (big ? 48 : 38) : big ? 34 : 28;
+  const isHuman = id.startsWith("human");
+  const size = isAgent ? (big ? 48 : 38) : isHuman ? (big ? 40 : 32) : big ? 34 : 28;
   const [x, y] = POS[id];
   const running = (st?.running ?? 0) > 0 || waiting;
   const ringColor = waiting ? EDGE.human : EDGE.call;
-  const label = isAgent ? AGENTS[id as AgentId].short : isHuman ? HUMANS[id as HumanId].name : TOOLS[id as keyof typeof TOOLS].name;
-  const sub = isAgent ? MODELS[AGENTS[id as AgentId].model].label : null;
-  const info = isAgent ? AGENTS[id as AgentId].role : isHuman ? HUMANS[id as HumanId].detail : TOOLS[id as keyof typeof TOOLS].detail;
+  const label = isAgent
+    ? AGENTS[id as AgentId].short
+    : isHuman
+      ? shortOperator(party?.operator ?? HUMANS[id as HumanId].name)
+      : TOOLS[id as keyof typeof TOOLS].name;
+  const sub = isAgent
+    ? MODELS[AGENTS[id as AgentId].model].label
+    : isHuman && party
+      ? party.role === "affected"
+        ? "Affected · notice"
+        : `Side ${party.role.toUpperCase()}${party.language ? ` · ${party.language}` : ""}`
+      : null;
+  const info = isAgent
+    ? AGENTS[id as AgentId].role
+    : isHuman
+      ? party
+        ? `${party.operator}. ${party.role === "affected" ? "Satellite near the new path; notified before the burn." : `Decides for side ${party.role.toUpperCase()}.`}`
+        : HUMANS[id as HumanId].detail
+      : TOOLS[id as keyof typeof TOOLS].detail;
 
   return (
     <div
@@ -255,7 +285,11 @@ function GraphNode({
             }}
           >
             {running && <span className="node-ring" style={{ borderRadius: isAgent ? (big ? 16 : 14) : 11, ["--ring" as string]: ringColor }} />}
-            <NodeGlyph id={id} size={isAgent ? (big ? 20 : 17) : big ? 15 : 13} />
+            {isHuman && party?.country ? (
+              <PartyFace country={party.country} size={size} />
+            ) : (
+              <NodeGlyph id={id} size={isAgent ? (big ? 20 : 17) : big ? 15 : 13} />
+            )}
             {isAgent && !running && (st?.err ?? 0) > 0 && (
               <Badge color={EDGE.failed}>
                 <X size={8} strokeWidth={3} />
@@ -312,5 +346,23 @@ export function GraphLegend() {
         </span>
       ))}
     </div>
+  );
+}
+
+const shortOperator = (name: string) => name.replace(/\s*\(synthetic\)/i, "").replace(/^(SpaceX|Eutelsat) /, "$1 ").slice(0, 18);
+
+/** A dispatcher shown by their country's flag, with a small person badge so it still reads as a person. */
+function PartyFace({ country, size }: { country: string; size: number }) {
+  return (
+    <span className="relative block h-full w-full overflow-hidden" style={{ borderRadius: 9 }}>
+      <span className="absolute inset-0 grid place-items-center [&>img]:!h-full [&>img]:!w-full [&>img]:!rounded-none [&>img]:!shadow-none">
+        <Flag code={country} h={size} />
+      </span>
+      <span className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.18),transparent_45%,rgba(0,0,0,0.35))]" />
+      <span className="absolute inset-0 rounded-[9px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.22)]" />
+      <span className="absolute bottom-[2px] right-[2px] grid h-[11px] w-[11px] place-items-center rounded-full bg-black/70 text-white">
+        <User size={7} strokeWidth={2.6} />
+      </span>
+    </span>
   );
 }

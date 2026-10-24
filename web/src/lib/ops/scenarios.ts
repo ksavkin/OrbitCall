@@ -1,6 +1,6 @@
 "use client";
 
-import { Cancelled, engine, makeEvent, pickObject, screeningPass, type Decision, type Engine } from "./engine";
+import { Cancelled, engine, makeEvent, partyOf, pickObject, screeningPass, type Decision, type Engine } from "./engine";
 import { fmtMiss, fmtPc, fmtWhen } from "./format";
 import { useOps } from "./store";
 import type { ConjunctionEvent, Proposal } from "./types";
@@ -425,7 +425,9 @@ async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Propo
   return pr;
 }
 
-async function scheduleAndVerify(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal, refuse = false) {
+type Affected = { operator: string; owner: string; satellite: string };
+
+async function scheduleAndVerify(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal, refuse = false, affected?: Affected) {
   const id = e.id;
   eng.update(id, { status: "approved", agentsWorking: true });
   await eng.span({ agent: "host", target: "scheduler", kind: "handoff", name: "Two approvals · schedule", eventId: id }, 320, gen);
@@ -457,6 +459,25 @@ async function scheduleAndVerify(eng: Engine, gen: number, e: ConjunctionEvent, 
     480,
     gen,
   );
+  if (affected) {
+    // the new path passes near a third operator's satellite: tell them before the burn (DSP-3, DSP-6)
+    eng.update(id, (ev) => ({ parties: [...(ev.parties ?? []), partyOf("humanC", "affected", affected.operator, affected.owner)] }));
+    eng.log("scheduler", `New path passes 9.4 km from ${affected.satellite} (${affected.operator}) · notice required before the burn`, "warn", { eventId: id });
+    await eng.span(
+      {
+        agent: "host",
+        target: "humanC",
+        kind: "human",
+        name: "Notify affected operator",
+        eventId: id,
+        model: "grok-voice",
+        input: { operator: affected.operator, satellite: affected.satellite, closest_after_burn_km: 9.4 },
+        output: { delivered: "inbox + in-app notice", acknowledged: true },
+      },
+      1600,
+      gen,
+    );
+  }
   eng.update(id, { status: "scheduled", agentsWorking: false });
   eng.log("scheduler", `${id} scheduled · checked against the catalog, no new conjunctions`, "info", { eventId: id });
   // jump ahead: the verifier runs after the burn time on fresh orbit data
@@ -533,7 +554,7 @@ export const SCENARIOS: Scenario[] = [
         await check(eng, gen, e, v2);
         await openRoom(eng, gen, e, v2);
         const fin = await agree(eng, gen, e, v2, { decision: "approved" }, { decision: "approved" });
-        await scheduleAndVerify(eng, gen, e, fin);
+        await scheduleAndVerify(eng, gen, e, fin, false, { operator: "Hoshi Imaging (synthetic)", owner: "JPN", satellite: "HOSHI-3 (SYN)" });
       } else {
         await scheduleAndVerify(eng, gen, e, v1);
       }
@@ -586,7 +607,7 @@ export const SCENARIOS: Scenario[] = [
         await check(eng, gen, e, v2);
         await openRoom(eng, gen, e, v2);
         const fin = await agree(eng, gen, e, v2, { decision: "approved" }, { decision: "approved" });
-        await scheduleAndVerify(eng, gen, e, fin);
+        await scheduleAndVerify(eng, gen, e, fin, false, { operator: "Hoshi Imaging (synthetic)", owner: "JPN", satellite: "HOSHI-3 (SYN)" });
       }
     },
   },

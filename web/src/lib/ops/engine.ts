@@ -5,7 +5,8 @@ import { useOrbit } from "@/lib/store";
 import { buildEncounter, measureMiss, type Encounter } from "./encounter";
 import { AGENTS, costOf } from "./roster";
 import { useOps } from "./store";
-import type { AgentId, Approval, ConjunctionEvent, LogLevel, LogLine, NodeId, Span, SpanKind, SpaceObjectRef } from "./types";
+import type { AgentId, Approval, ConjunctionEvent, HumanId, LogLevel, LogLine, NodeId, Party, Span, SpanKind, SpaceObjectRef } from "./types";
+import { OWNER_FLAGS } from "@/lib/owners";
 
 // Dev simulator. Scenarios are async scripts on a virtual clock, so pause, speed
 // and reset apply to everything at once. Every write goes through the ops store,
@@ -324,6 +325,27 @@ export function refOf(o: SatObject, operator: string): SpaceObjectRef {
   };
 }
 
+const LANGUAGE: Record<string, string> = {
+  us: "English",
+  gb: "English",
+  in: "English",
+  ru: "Russian",
+  cn: "Chinese",
+  jp: "Japanese",
+  fr: "French",
+  de: "German",
+  it: "Italian",
+  es: "Spanish",
+  kr: "Korean",
+  ca: "English",
+};
+
+/** A party from an operator and its SATCAT owner code. */
+export function partyOf(id: HumanId, role: Party["role"], operator: string, owner: string): Party {
+  const country = OWNER_FLAGS[owner]?.[0] ?? null;
+  return { id, role, operator, owner, country, language: country ? (LANGUAGE[country] ?? null) : null };
+}
+
 export interface EventSeed {
   a: SatObject;
   aOperator: string;
@@ -375,6 +397,7 @@ export function makeEvent(eng: Engine, s: EventSeed): ConjunctionEvent | null {
     proposal: null,
     approvals: { a: "pending", b: "pending" },
     summary: null,
+    parties: [partyOf("humanA", "a", s.aOperator, s.a.owner), ...(s.b.kind === "payload" ? [partyOf("humanB", "b", s.b.operator, s.b.owner)] : [])],
     createdAt: Date.now(),
     scenario: s.scenario,
   };

@@ -566,7 +566,7 @@ function LogRow({ l }: { l: LogLine }) {
   const t = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}.${p(d.getUTCMilliseconds(), 3)}`;
   const color = l.level === "error" ? "var(--red)" : l.level === "warn" ? "var(--orange)" : "var(--fg-2)";
   const src =
-    l.source in AGENTS ? AGENTS[l.source as keyof typeof AGENTS].short : l.source === "system" ? "system" : l.source === "humanA" ? "Operator A" : "Operator B";
+    l.source in AGENTS ? AGENTS[l.source as keyof typeof AGENTS].short : l.source === "system" ? "system" : `Operator ${l.source.slice(-1)}`;
   const hue = l.source in AGENTS ? AGENT_HUE[l.source as keyof typeof AGENT_HUE] : l.source === "system" ? "var(--muted)" : EDGE.human;
   return (
     <motion.div
