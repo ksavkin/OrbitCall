@@ -193,6 +193,9 @@ export class GlobeScene {
   hovered: number | null = null;
   selected: number | null = null;
   following = false;
+  /** Camera pivots around the selected satellite (after picking it from search). */
+  tracking = false;
+  private focusAnim: { from: number; to: number; t0: number; dur: number; delay: number } | null = null;
   private viewMode: ViewMode = "realistic";
   private targetDist = 3.6;
   private fly: Fly | null = null;
@@ -814,9 +817,11 @@ export class GlobeScene {
     }
     if (i === null) {
       if (this.following) this.setFollow(false);
+      else if (this.tracking) this.release();
       this.events.onSelect?.(null);
       return;
     }
+    if (this.tracking && !opts.fly && !this.following) this.release();
     this.hovOrbit.visible = false;
     this.requestPath(i, "sel");
     this.lastPathRefresh = performance.now();
@@ -824,21 +829,49 @@ export class GlobeScene {
     if (opts.fly && !this.following) this.flyToObject(i);
   }
 
+  /** Fly to a satellite and keep it centered; the camera then orbits around it. */
   private flyToObject(i: number) {
     const p = this.positionOf(i, new THREE.Vector3());
-    const r = p.length();
-    const dist = Math.max(Math.min(this.camera.position.length(), r + 2.6), r + 1.2);
+    const dist = 2.0;
+    this.tracking = true;
     this.fly = {
       t0: performance.now(),
-      dur: 1500,
+      dur: 1700,
       fromDir: this.camera.position.clone().sub(this.controls.target).normalize(),
       toDir: this.viewDirFor(i, p),
       fromDist: this.camera.position.distanceTo(this.controls.target),
       toDist: dist,
       fromTarget: this.controls.target.clone(),
-      toTarget: new THREE.Vector3(),
+      toTarget: null, // the satellite, tracked while it moves
+      world: true,
+      fromPos: this.camera.position.clone(),
     };
     this.targetDist = dist;
+  }
+
+  /** Hand the pivot back to Earth's center without moving the camera abruptly. */
+  private release() {
+    this.tracking = false;
+    const cam = this.camera.position.clone();
+    const d = Math.max(cam.length(), 2.4);
+    this.fly = {
+      t0: performance.now(),
+      dur: 1200,
+      fromDir: cam.clone().sub(this.controls.target).normalize(),
+      toDir: cam.clone().normalize(),
+      fromDist: cam.distanceTo(this.controls.target),
+      toDist: d,
+      fromTarget: this.controls.target.clone(),
+      toTarget: new THREE.Vector3(),
+      world: true,
+      fromPos: cam,
+    };
+    this.targetDist = d;
+  }
+
+  private animateFocus(to: number, dur: number, delay = 0) {
+    const from = this.satMat.uniforms.uPxFocus.value as number;
+    this.focusAnim = { from, to, t0: performance.now(), dur, delay };
   }
 
   /** Above the satellite but tilted toward its orbit normal, so the orbit reads as an ellipse, not edge-on. */
@@ -877,7 +910,8 @@ export class GlobeScene {
         fromPos: this.camera.position.clone(),
       };
       this.targetDist = 0.06;
-      this.satMat.uniforms.uPxFocus.value = 150;
+      // grow the model with the approach instead of popping it in
+      this.animateFocus(150, 1700, 500);
     } else {
       const d = Math.max(this.camera.position.length() + 1.5, 3.2);
       this.fly = {
@@ -893,7 +927,8 @@ export class GlobeScene {
         fromPos: this.camera.position.clone(),
       };
       this.targetDist = d;
-      this.satMat.uniforms.uPxFocus.value = 18;
+      this.tracking = false;
+      this.animateFocus(18, 1100);
     }
   }
 
@@ -917,7 +952,7 @@ export class GlobeScene {
   zoomBy(factor: number) {
     const [min, max] = this.distLimits();
     // Zoom on altitude, not distance to Earth's center, so it keeps working near the ground.
-    const floor = this.following ? 0 : 1;
+    const floor = this.following || this.tracking ? 0 : 1;
     this.targetDist = THREE.MathUtils.clamp(floor + (this.targetDist - floor) * factor, min, max);
     if (this.fly) this.fly.toDist = this.targetDist;
   }
@@ -930,6 +965,7 @@ export class GlobeScene {
   /** Esri-style zoom presets: LEO shell, MEO (GNSS) and the GEO belt. */
   zoomTo(preset: "leo" | "meo" | "geo") {
     if (this.following) this.setFollow(false);
+    this.tracking = false;
     const d = { leo: 4.6, meo: 10, geo: 19 }[preset];
     const fromDist = this.camera.position.distanceTo(this.controls.target);
     this.fly = {
@@ -948,6 +984,7 @@ export class GlobeScene {
 
   resetView() {
     if (this.following) this.setFollow(false);
+    this.tracking = false;
     this.fly = {
       t0: performance.now(),
       dur: 1400,
@@ -966,7 +1003,9 @@ export class GlobeScene {
   }
 
   private distLimits(): [number, number] {
-    return this.following ? [0.012, 4] : [1.0006, 60];
+    if (this.following) return [0.012, 4];
+    if (this.tracking) return [0.03, 60];
+    return [1.0006, 60];
   }
 
   /* --------------------------------------------------------------- input */
@@ -1188,6 +1227,12 @@ export class GlobeScene {
       this.events.onCamera?.((D - 1) * EARTH_RADIUS_KM);
     }
 
+    if (this.focusAnim) {
+      const fa = this.focusAnim;
+      const t = THREE.MathUtils.clamp((now - fa.t0 - fa.delay) / fa.dur, 0, 1);
+      this.satMat.uniforms.uPxFocus.value = fa.from + (fa.to - fa.from) * ease(t);
+      if (t >= 1) this.focusAnim = null;
+    }
     this.updateHero();
     this.renderer.render(this.scene, this.camera);
 
@@ -1232,8 +1277,8 @@ export class GlobeScene {
 
   private updateCamera(now: number) {
     const target = this.controls.target;
-    const satPos =
-      this.following && this.selected !== null ? this.positionOf(this.selected, new THREE.Vector3()) : null;
+    const centered = this.following || this.tracking;
+    const satPos = centered && this.selected !== null ? this.positionOf(this.selected, new THREE.Vector3()) : null;
 
     if (this.fly) {
       const f = this.fly;
@@ -1272,12 +1317,15 @@ export class GlobeScene {
       return;
     }
 
-    if (satPos) {
+    if (satPos && this.following) {
       // carry the camera along with the satellite
       const delta = this.tmp2.copy(satPos).sub(this.followPrev);
       if (this.followPrev.lengthSq() > 0) this.camera.position.add(delta);
       target.copy(satPos);
       this.followPrev.copy(satPos);
+    } else if (satPos) {
+      // tracking: the camera stays put and turns to keep the satellite centered
+      target.copy(satPos);
     }
 
     // smooth zoom toward targetDist
@@ -1285,7 +1333,7 @@ export class GlobeScene {
     const cur = offset.length();
     const [min, max] = this.distLimits();
     this.targetDist = THREE.MathUtils.clamp(this.targetDist, min, max);
-    const floor = this.following ? 0 : 1;
+    const floor = centered ? 0 : 1;
     const curAlt = Math.max(cur - floor, 1e-6);
     const nextAlt = Math.exp(THREE.MathUtils.lerp(Math.log(curAlt), Math.log(Math.max(this.targetDist - floor, 1e-6)), 0.14));
     const next = floor + nextAlt;
@@ -1293,7 +1341,7 @@ export class GlobeScene {
     this.camera.position.copy(target).add(offset);
     // drag speed proportional to altitude, so the ground moves with the cursor
     // Orbiting an inspected satellite is angular, so it keeps full speed at any distance.
-    this.controls.rotateSpeed = this.following ? 0.75 : THREE.MathUtils.clamp(nextAlt * 0.35, 0.00015, 0.6);
+    this.controls.rotateSpeed = centered ? 0.75 : THREE.MathUtils.clamp(nextAlt * 0.35, 0.00015, 0.6);
     this.controls.update();
   }
 

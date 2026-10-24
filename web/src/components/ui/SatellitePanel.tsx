@@ -11,6 +11,8 @@ import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
 import { CATEGORY_META } from "@/lib/theme";
 import { Tooltip } from "./Tooltip";
+import { ownerInfo } from "@/lib/owners";
+import { OwnerBadge } from "./OwnerBadge";
 
 const OBJECT_TYPES: Record<string, string> = { PAY: "Payload", "R/B": "Rocket body", DEB: "Debris", UNK: "Unknown" };
 
@@ -72,7 +74,7 @@ function Body({ obj, owners }: { obj: SatObject; owners: Record<string, string> 
   }, [obj.index]);
 
   const epochAge = now - obj.epoch.getTime();
-  const owner = owners[obj.owner] ?? obj.owner;
+  const owner = ownerInfo(obj.owner, owners);
 
   return (
     <>
@@ -100,6 +102,13 @@ function Body({ obj, owners }: { obj: SatObject; owners: Record<string, string> 
           </button>
         </Tooltip>
       </div>
+
+      {owner && (
+        <div className="mx-3 mb-2 flex items-center gap-2 rounded-[9px] bg-white/[0.03] px-2.5 py-1.5 text-[11.5px] text-fg shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]">
+          <OwnerBadge owner={owner} h={13} />
+          <span className="mono ml-auto shrink-0 text-[10px] text-muted">{owner.code}</span>
+        </div>
+      )}
 
       {/* status chips */}
       <div className="flex flex-wrap gap-1.5 px-3">
@@ -190,7 +199,7 @@ function Body({ obj, owners }: { obj: SatObject; owners: Record<string, string> 
       {/* identity from SATCAT */}
       <Section title="Identity · SATCAT">
         <Row k="COSPAR ID" v={formatCospar(obj.cospar)} />
-        <Row k="Owner" v={owner || "—"} wrap />
+        <Row k="Owner" v={owner?.fullName ?? "—"} wrap />
         <Row k="Launched" v={obj.launchDate || "—"} hint={obj.launchSite || undefined} />
         <Row k="Object type" v={OBJECT_TYPES[obj.objectType] ?? (obj.objectType || "—")} />
         <Row k="Radar cross-section" v={obj.rcs !== null ? `${fmtNum(obj.rcs, 2)} m²` : "not published"} />

@@ -6,12 +6,15 @@ import { fmtInt, fmtNum } from "@/lib/format";
 import { sceneRef } from "@/lib/sceneRef";
 import { useOrbit } from "@/lib/store";
 import { CATEGORY_META } from "@/lib/theme";
+import { ownerInfo } from "@/lib/owners";
+import { OwnerBadge } from "./OwnerBadge";
 
 /** Small card that rides next to the hovered satellite (positioned by Globe). */
 export function HoverCard() {
   const hovered = useOrbit((s) => s.hovered);
   const selected = useOrbit((s) => s.selected);
   const obj = useOrbit((s) => (s.hovered !== null ? s.catalog?.objects[s.hovered] : undefined));
+  const owners = useOrbit((s) => s.catalog?.owners);
   const [live, setLive] = useState<SatLive | null>(null);
 
   useEffect(() => {
@@ -24,6 +27,7 @@ export function HoverCard() {
 
   if (!obj || hovered === selected) return null;
   const meta = CATEGORY_META[obj.category];
+  const owner = ownerInfo(obj.owner, owners ?? {});
 
   return (
     <>
@@ -49,11 +53,11 @@ export function HoverCard() {
           <Stat label="vel" value={live ? fmtNum(live.speedKms, 2) : "—"} unit="km/s" />
           <Stat label="inc" value={fmtNum(obj.inclination, 1)} unit="°" />
         </div>
-        <div className="mt-2 flex items-center justify-between text-[10px] text-muted">
-          <span>
+        <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted">
+          {owner ? <OwnerBadge owner={owner} h={10} className="text-fg-2" /> : <span>Owner unknown</span>}
+          <span className="shrink-0">
             {meta.label} · {obj.regime}
           </span>
-          <span className="text-faint">click to inspect</span>
         </div>
       </div>
     </>
