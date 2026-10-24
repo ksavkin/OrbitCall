@@ -1,0 +1,101 @@
+"use client";
+
+// Small synthesized UI sounds (Web Audio, no assets). Quiet by design.
+
+let ctx: AudioContext | null = null;
+let master: GainNode | null = null;
+let enabled = true;
+let lastHover = 0;
+
+function audio() {
+  if (typeof window === "undefined") return null;
+  if (!ctx) {
+    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AC) return null;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = 0.22;
+    const comp = ctx.createDynamicsCompressor();
+    master.connect(comp).connect(ctx.destination);
+  }
+  if (ctx.state === "suspended") void ctx.resume();
+  return ctx;
+}
+
+function tone(freq: number, dur: number, opts: { type?: OscillatorType; gain?: number; to?: number; delay?: number } = {}) {
+  const a = audio();
+  if (!a || !master || !enabled) return;
+  const t0 = a.currentTime + (opts.delay ?? 0);
+  const osc = a.createOscillator();
+  const g = a.createGain();
+  osc.type = opts.type ?? "sine";
+  osc.frequency.setValueAtTime(freq, t0);
+  if (opts.to) osc.frequency.exponentialRampToValueAtTime(opts.to, t0 + dur);
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(opts.gain ?? 0.3, t0 + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(g).connect(master);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.02);
+}
+
+function noise(dur: number, from: number, to: number, gain = 0.25) {
+  const a = audio();
+  if (!a || !master || !enabled) return;
+  const len = Math.floor(a.sampleRate * dur);
+  const buf = a.createBuffer(1, len, a.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  const src = a.createBufferSource();
+  src.buffer = buf;
+  const f = a.createBiquadFilter();
+  f.type = "bandpass";
+  f.Q.value = 1.4;
+  const t0 = a.currentTime;
+  f.frequency.setValueAtTime(from, t0);
+  f.frequency.exponentialRampToValueAtTime(to, t0 + dur);
+  const g = a.createGain();
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(gain, t0 + dur * 0.35);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  src.connect(f).connect(g).connect(master);
+  src.start(t0);
+}
+
+export const sfx = {
+  setEnabled(v: boolean) {
+    enabled = v;
+  },
+  /** Very short tick for hovering controls and satellites. */
+  hover() {
+    const now = performance.now();
+    if (now - lastHover < 45) return;
+    lastHover = now;
+    tone(2400, 0.035, { gain: 0.06, type: "sine" });
+  },
+  click() {
+    tone(880, 0.06, { gain: 0.16, type: "triangle" });
+    tone(1320, 0.05, { gain: 0.08, delay: 0.025 });
+  },
+  toggle(on: boolean) {
+    tone(on ? 660 : 990, 0.07, { gain: 0.14, type: "triangle", to: on ? 990 : 660 });
+  },
+  /** Lock-on chirp when a satellite is selected. */
+  select() {
+    tone(520, 0.09, { gain: 0.14, type: "sine", to: 1040 });
+    tone(1560, 0.12, { gain: 0.07, delay: 0.07 });
+  },
+  whoosh() {
+    noise(0.55, 300, 2400, 0.14);
+  },
+  open() {
+    tone(420, 0.12, { gain: 0.1, to: 640 });
+  },
+  close() {
+    tone(640, 0.1, { gain: 0.08, to: 420 });
+  },
+  /** Unlocks the AudioContext on the first gesture. */
+  unlock() {
+    audio();
+  },
+};
