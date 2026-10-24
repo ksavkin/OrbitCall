@@ -4,6 +4,17 @@ Task source: [issue #1](https://github.com/ksavkin/OrbitCall/issues/1), "Phase 1
 
 Status: plan only, no code yet. Written Oct 24, 2026, ~04:40 PDT; cross-checked against an independent plan by an Opus outside voice (section 10).
 
+## Updates, Oct 24 ~05:20 PDT — these override the sections below
+
+- **Schema (section 5) is replaced** by the normalized schema in PR #3: `convex/schema/data.ts` (`snapshots`, `spaceObjects`, `events`) and `convex/schema/agents.ts` (`agentRuns`). Store each fact once and only what Phase 1 uses; derive the rest in queries. No new tables or fields without a reason a Phase 1 query needs. No `config` table, no `analystRequestedAt`, no `raw`, `origin`, `pairKey`, `demoRunId`.
+- **Layout (D1):** the Convex backend is a separate package at the repo root (`package.json` `orbitcall-backend`, `convex/`, `tests/`, vitest, CI on Node 22). The Next.js app is its own package in `web/`.
+- **Andrew's analyst is merged** (PR #2 inside PR #3). `events.ingest` stores one encounter and schedules the analyst; `agentSummaries.get` serves the checked summary without sign-in (D3); `agents.rerun` is internal. `convex/lib/events.ts` builds `EventFacts` from the tables.
+- **Step 2 is smaller:** Adil already committed GP (TLE), SATCAT and owner names in `web/data/snapshot/` (fetched 2026-10-24T08:02:43Z). Only SOCRATES is downloaded, once. Metadata comes from Adil's `satcat.csv`.
+- **D11:** the globe keeps Adil's TLE pipeline; `catalog.snapshot` returns `ommUrl: null` and the GP source URL as `gpUrl` (spec §3.2 dual ingest).
+- **D12:** the shared deployment is the project's prod deployment (`npx convex deploy`, loads with `--prod`). The analyst model is `claude-sonnet-5-5`; Kostya sets `ANTHROPIC_API_KEY` there himself.
+- **Step 6 safeguards without a table:** the recolor cron starts the analyst for at most the top 3 red catalog events (`ANALYST_TOP_K` in code), only when the latest run for the current evidence is missing; env `ANALYST_AUTOSTART=false` turns autostart off. Failed runs are not retried automatically.
+- **D14:** no `events.get`; the summary is read through `agentSummaries.get`.
+
 ---
 
 ## 1. Goal
