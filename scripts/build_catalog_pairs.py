@@ -3,12 +3,14 @@
 
 A pure function of committed files, no system clock and no network:
   data/snapshots/<snapshotId>/socrates.csv.gz + manifest.json   (scripts/fetch_socrates.py)
-  web/data/snapshot/satcat.csv, *.tle, fetched_at.txt           (Adil's CelesTrak snapshot)
+  data/snapshots/satcat-<time>/satcat.csv.gz + manifest.json    (SATCAT, see data/README.md)
+  web/data/snapshot/*.tle, fetched_at.txt                        (Adil's Dev TLE; the last input outside
+                                                                  data/, to be replaced by the gp-* OMM snapshot)
 The output rows are exactly the arguments of `events.ingest` (convex/events.ts) minus the
 snapshot id and the simulated flag; the Convex loader reads this file.
 
-Usage:  python3 scripts/build_catalog_pairs.py [snapshotId]
-        (the id may be omitted when data/snapshots holds exactly one socrates-* folder)
+Usage:  python3 scripts/build_catalog_pairs.py [snapshotId] [--satcat satcatId]
+        (an id may be omitted when data/snapshots holds exactly one folder of that kind)
 
 Selection, relative to the SOCRATES run time (never to "now"):
   1. eligible rows: TCA at or after the run time (an earlier TCA is already past when we load)
@@ -41,10 +43,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOTS = ROOT / "data" / "snapshots"
 CATALOG = ROOT / "web" / "data" / "snapshot"
 
-# The CelesTrak URLs Adil's loader used (web/src/lib/catalog/build.ts). GP is fetched per group
-# as TLE; `active` is the one URL we can name in a single SourceRef.
+# The GP URL Adil's loader used (web/src/lib/catalog/build.ts). GP is fetched per group as TLE;
+# `active` is the one URL we can name in a single SourceRef. SATCAT's URL comes from its manifest.
 GP_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle"
-SATCAT_URL = "https://celestrak.org/pub/satcat.csv"
 
 MIN_MAX_PROB = 1e-5
 CLOSEST_COUNT = 200
@@ -111,7 +112,7 @@ def read_socrates(path: Path) -> list[dict]:
 
 
 def read_satcat(path: Path) -> dict[int, dict]:
-    with path.open(encoding="utf-8-sig", newline="") as fh:
+    with gzip.open(path, "rt", encoding="utf-8-sig", newline="") as fh:
         reader = csv.DictReader(fh)
         need = {"OBJECT_NAME", "NORAD_CAT_ID", "OWNER", "LAUNCH_DATE", "DECAY_DATE"}
         if not need <= set(reader.fieldnames or []):
@@ -233,18 +234,19 @@ def dump(doc: dict) -> str:
     return head[:-2] + ',\n  "pairs": [\n' + body + ("\n  ]\n}\n" if pairs else "  ]\n}\n")
 
 
-def resolve_snapshot(arg: str | None) -> str:
+def resolve_snapshot(arg: str | None, kind: str = "socrates") -> str:
     if arg:
         return arg
-    found = sorted(p.name for p in SNAPSHOTS.glob("socrates-*") if (p / "socrates.csv.gz").exists())
+    found = sorted(p.name for p in SNAPSHOTS.glob(f"{kind}-*") if (p / f"{kind}.csv.gz").exists())
     if len(found) != 1:
-        die(f"pass the snapshot id; found {found}")
+        die(f"pass the {kind} snapshot id; found {found}")
     return found[0]
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("snapshot_id", nargs="?")
+    ap.add_argument("--satcat", help="satcat-* snapshot id (default: the only one in data/snapshots)")
     ap.add_argument("--min-rel-speed-km-s", type=float, default=MIN_REL_SPEED_KM_S,
                     help="drop docked or co-orbiting pairs slower than this (default %(default)s; 0 keeps them)")
     ap.add_argument("--all-pairs", action="store_true",
@@ -259,12 +261,19 @@ def main() -> int:
     run = datetime.strptime(manifest["socratesRunUtc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     catalog_fetched = (CATALOG / "fetched_at.txt").read_text().strip()
     datetime.strptime(catalog_fetched, "%Y-%m-%dT%H:%M:%SZ")  # must be ISO UTC with Z
+    satcat_id = resolve_snapshot(args.satcat, "satcat")
+    satcat_manifest = json.loads((SNAPSHOTS / satcat_id / "manifest.json").read_text())
+    if satcat_manifest["snapshotId"] != satcat_id:
+        die(f"{satcat_id}/manifest.json belongs to another snapshot")
+    satcat_entry = next(f for f in satcat_manifest["files"] if f["source"] == "celestrak_satcat")
 
     rows = read_socrates(folder / "socrates.csv.gz")
-    satcat = read_satcat(CATALOG / "satcat.csv")
+    satcat = read_satcat(SNAPSHOTS / satcat_id / satcat_entry["file"])
     tle_ids = read_tle_ids(CATALOG)
     if len(rows) != entry["rows"]:
         die(f"manifest says {entry['rows']} rows, the file has {len(rows)}")
+    if len(satcat) != satcat_entry["rows"]:
+        die(f"{satcat_id} manifest says {satcat_entry['rows']} rows, the file has {len(satcat)}")
 
     red = lambda r: (r["prob"] is not None and r["prob"] > RED_MIN_PROB
                      and timedelta(0) < r["tca"] - run < timedelta(hours=RED_WITHIN_HOURS))
@@ -286,7 +295,7 @@ def main() -> int:
         "sources": [
             {"name": "socrates", "url": entry["url"], "epochUtc": manifest["socratesRunUtc"], "fetchedAt": entry["fetchedAt"]},
             {"name": "celestrak_gp", "url": GP_URL, "epochUtc": None, "fetchedAt": catalog_fetched},
-            {"name": "celestrak_satcat", "url": SATCAT_URL, "epochUtc": None, "fetchedAt": catalog_fetched},
+            {"name": "celestrak_satcat", "url": satcat_entry["url"], "epochUtc": None, "fetchedAt": satcat_entry["fetchedAt"]},
         ],
         "filter": {
             "runTimeUtc": manifest["socratesRunUtc"],
