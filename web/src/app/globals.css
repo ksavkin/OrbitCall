@@ -427,6 +427,51 @@ body {
   }
 }
 
+/* ----------------------------------------------------------- urgency */
+
+/* red glow around the whole screen for a high-priority find */
+.urgency-edge {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 90, 79, 0.55),
+    inset 0 0 36px 2px rgba(255, 60, 50, 0.35),
+    inset 0 0 160px 24px rgba(255, 40, 30, 0.22);
+}
+
+.urgency-strong {
+  animation: urgency-pulse 1.5s ease-in-out infinite;
+}
+
+.urgency-calm {
+  opacity: 0.4;
+  animation: urgency-breathe 4s ease-in-out infinite;
+}
+
+@keyframes urgency-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes urgency-breathe {
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.urgent-sheen {
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 90, 79, 0.22) 50%, transparent 70%);
+  background-size: 250% 100%;
+  animation: sheen 2.2s linear infinite;
+}
+
 /* blinking caret at the end of streamed reasoning */
 .caret::after {
   content: "";

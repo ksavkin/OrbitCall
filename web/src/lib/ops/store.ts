@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { AgentId, ConjunctionEvent, HumanPrompt, LogLine, Span } from "./types";
+import type { AgentId, ConjunctionEvent, HumanPrompt, LogLine, Reply, Span } from "./types";
 
 export type Tab = "orbit" | "conjunctions" | "rooms" | "policy" | "audit";
 export type AgentView = "graph" | "trace" | "logs";
@@ -27,6 +27,13 @@ interface OpsState {
   autopilot: boolean;
   /** Camera follows the story while agents work. */
   cinematic: boolean;
+  /** The side the person at this screen decides for; that side never autopilots. */
+  actAs: "a" | "b" | null;
+  replies: Reply[];
+  /** Demo flow: Run scan, pick a case from the results, watch the run. */
+  scan: { phase: "idle" | "scanning" | "results"; ids: string[]; stats: { objects: number; pairs: number; ms: number } | null };
+  /** High-priority alert: red edge glow, banner and alarm. */
+  alert: { eventId: string; at: number } | null;
   humans: HumanPrompt[];
   /** Risk Monitor screening pass in progress (drives the globe sweep). */
   scanning: boolean;
@@ -53,6 +60,10 @@ export const useOps = create<OpsState>((set) => ({
   scenarioDone: false,
   autopilot: true,
   cinematic: true,
+  actAs: null,
+  replies: [],
+  scan: { phase: "idle", ids: [], stats: null },
+  alert: null,
   humans: [],
   scanning: false,
   lastScan: null,

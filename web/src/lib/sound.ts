@@ -104,6 +104,18 @@ export const sfx = {
     tone(784, 0.18, { gain: 0.08 });
     tone(1175, 0.24, { gain: 0.06, delay: 0.08 });
   },
+  /** Urgent but not shrill: three falling two-tone pairs, like an ops console. */
+  alarm() {
+    for (let i = 0; i < 3; i++) {
+      tone(988, 0.13, { gain: 0.16, type: "square", delay: i * 0.42 });
+      tone(740, 0.16, { gain: 0.14, type: "square", delay: i * 0.42 + 0.15 });
+    }
+  },
+  /** Sonar-like ping when a scan starts. */
+  ping() {
+    tone(1320, 0.5, { gain: 0.09, to: 990 });
+    tone(2640, 0.25, { gain: 0.03, delay: 0.02 });
+  },
   /** Barely audible tick for streamed agent steps. */
   tick() {
     tone(3200, 0.02, { gain: 0.025 });

@@ -19,7 +19,8 @@ The Orbit screen is done and the Conjunctions screen is built against the backen
 | `9ef2617`, `b1766c2` | Dev switch, Conjunctions screen, agents window, scenario simulator, these docs |
 | `cf2d9c8` | Cinematic camera that follows the agents' work, call feed (newest open, older collapse), real Claude and Grok marks, conjunction icon, summary card first |
 | `05706dd` | Event parties on the agent graph with dispatcher flags (2+ parties), affected third operator notice |
-| next commit | Night lights: Black Marble snow and ice no longer glow as tile-shaped rectangles |
+| `efaa6c6` | Night lights: Black Marble snow and ice no longer glow as tile-shaped rectangles |
+| next commit | Demo flow: Run scan, ranked results with priority and confidence, red urgency glow, banner and alarm, decision dock (summary, 4 options with one recommended, text or voice answer, reject), waiting on the other side, their reply with translation |
 
 ## Conjunctions screen (this round)
 
@@ -37,6 +38,10 @@ The Orbit screen is done and the Conjunctions screen is built against the backen
 - Preview TCA: objects converge at the TCA point on both orbits, range shrinks to under 100 km in view.
 - Expanded agents view, trace grouping of screening passes, log stream.
 - Dev off: queue and agents empty states.
+
+## Demo flow (dev)
+
+Run scan (queue, top) screens the catalog with the sweep and the camera pulled wide, then opens the ranked results. Red finds turn the screen edges red, show the urgency banner and sound the alarm (muted with the sound toggle). Pick a case and the agents run on it with the cinematic camera. When the proposal is ready, the decision dock opens in the middle: summary, four options with the agents' pick marked Recommended, a free answer by text or voice (Web Speech API), Reject and Approve. Then it shows "waiting for" the other side with their flag, their reply in the original language with the translation, and "Both approved". The person at the screen is Operator A; Operator B answers on autopilot.
 
 ## Not checked yet
 

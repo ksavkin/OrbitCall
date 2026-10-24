@@ -36,6 +36,11 @@ export interface SpanSpec {
 export interface Decision {
   decision: Exclude<Approval, "pending">;
   note?: string;
+  /** Counter as a structured choice (spec §2 #4). */
+  preferred?: { mover: "a" | "b" | "none"; action: "raise" | "lower" | "wait" };
+  /** Original wording before translation. */
+  original?: string;
+  lang?: string;
 }
 
 const uid = (p: string) => `${p}_${Math.random().toString(36).slice(2, 9)}`;
@@ -119,7 +124,36 @@ export class Engine {
       scanning: false,
       lastScan: null,
       validation: null,
+      replies: [],
+      alert: null,
+      scan: { phase: "idle", ids: [], stats: null },
     });
+  }
+
+  /** Start a script on the current board without clearing it (a case picked from scan results). */
+  runOn(id: string, script: (eng: Engine, gen: number) => Promise<void>) {
+    this.gen++;
+    this.sleepers.forEach((s) => s.reject(new Cancelled()));
+    this.sleepers = [];
+    this.running.clear();
+    this.humanWaits.clear();
+    useOps.setState({ humans: [], scenario: id, scenarioDone: false, playing: true, scanning: false });
+    const gen = this.gen;
+    this.patrol();
+    void (async () => {
+      try {
+        await script(this, gen);
+        if (gen === this.gen) {
+          useOps.setState({ scenarioDone: true });
+          this.log("system", "Incident run finished", "info");
+        }
+      } catch (e) {
+        if (!(e instanceof Cancelled)) {
+          console.error(e);
+          this.log("system", `Run crashed: ${(e as Error).message}`, "error");
+        }
+      }
+    })();
   }
 
   get generation() {
@@ -216,7 +250,8 @@ export class Engine {
     useOps.setState((s) => ({ humans: [...s.humans.filter((h) => !(h.eventId === eventId && h.side === side)), { eventId, side, proposalVersion: version }] }));
     const d = await new Promise<Decision>((resolve, reject) => {
       this.humanWaits.set(key, resolve);
-      if (useOps.getState().autopilot) {
+      const st = useOps.getState();
+      if (st.autopilot && st.actAs !== side) {
         this.sleep(side === "a" ? 4200 : 6800, gen)
           .then(() => {
             if (this.humanWaits.get(key) === resolve) this.decide(eventId, side, auto);
@@ -238,6 +273,9 @@ export class Engine {
     this.humanWaits.delete(key);
     useOps.setState((s) => ({ humans: s.humans.filter((h) => !(h.eventId === eventId && h.side === side)) }));
     this.update(eventId, (e) => ({ approvals: { ...e.approvals, [side]: d.decision } }));
+    useOps.setState((s) => ({
+      replies: [...s.replies.slice(-30), { eventId, side, decision: d.decision, note: d.note, original: d.original, lang: d.lang, t: Date.now() }],
+    }));
     this.log(side === "a" ? "humanA" : "humanB", `${d.decision === "approved" ? "Approved" : d.decision === "vetoed" ? "Vetoed" : "Countered"} proposal${d.note ? ` · “${d.note}”` : ""}`, d.decision === "approved" ? "info" : "warn", { eventId });
     fn(d);
   }
@@ -363,7 +401,7 @@ export interface EventSeed {
 }
 
 /** Create an event with a real synthetic geometry around a live object. */
-export function makeEvent(eng: Engine, s: EventSeed): ConjunctionEvent | null {
+export function makeEvent(eng: Engine, s: EventSeed & { confidence?: ConjunctionEvent["confidence"] }): ConjunctionEvent | null {
   const tca = Date.now() + s.tcaInH * 3600_000;
   const enc = buildEncounter(s.a.line1, s.a.line2, tca, { missM: s.missM, crossDeg: s.crossDeg });
   if (!enc) return null;
@@ -400,6 +438,7 @@ export function makeEvent(eng: Engine, s: EventSeed): ConjunctionEvent | null {
     parties: [partyOf("humanA", "a", s.aOperator, s.a.owner), ...(s.b.kind === "payload" ? [partyOf("humanB", "b", s.b.operator, s.b.owner)] : [])],
     createdAt: Date.now(),
     scenario: s.scenario,
+    confidence: s.confidence,
   };
   eng.addEvent(e, enc);
   return e;

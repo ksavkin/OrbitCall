@@ -20,6 +20,8 @@ import { ConjunctionMarkers } from "@/components/ops/ConjunctionMarkers";
 import { ConjunctionQueue } from "@/components/ops/ConjunctionQueue";
 import { OpsSync } from "@/components/ops/OpsSync";
 import { Director } from "@/components/ops/Director";
+import { ScanResults, UrgencyOverlay } from "@/components/ops/DemoFlow";
+import { DecisionDock } from "@/components/ops/DecisionDock";
 import { ScenarioBar } from "@/components/ops/ScenarioBar";
 import { useOps } from "@/lib/ops/store";
 import { sceneRef } from "@/lib/sceneRef";
@@ -64,6 +66,9 @@ export function OrbitApp() {
       {!conj && <SatellitePanel />}
       <AnimatePresence>{conj && <AgentsPanel key="agents" />}</AnimatePresence>
       <AnimatePresence>{conj && dev && <ScenarioBar key="scenario" />}</AnimatePresence>
+      <DecisionDock />
+      <UrgencyOverlay />
+      <ScanResults />
       <AgentsExpanded />
       <ViewSwitcher />
       <MapControls />

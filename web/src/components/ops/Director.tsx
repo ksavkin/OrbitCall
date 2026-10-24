@@ -77,6 +77,16 @@ export function Director() {
     };
 
     const unsub = useOps.subscribe((s, prev) => {
+      // scan phases: pull back so the sweep and every candidate are in view
+      if (s.scan.phase !== prev.scan.phase && s.cinematic && s.tab === "conjunctions") {
+        const scene = sceneRef.get();
+        if (scene && (s.scan.phase === "scanning" || s.scan.phase === "results")) {
+          lastShot.key = "";
+          lastCut = performance.now();
+          scene.focusConjunction(null);
+          scene.shotWide(null, s.scan.phase === "scanning" ? 4.8 : 4.2, 2600);
+        }
+      }
       if (s.spans === prev.spans || !s.cinematic || !s.dev || s.tab !== "conjunctions" || !s.focusEvent) return;
       const scene = sceneRef.get();
       if (!scene || performance.now() - scene.userCameraAt < HANDS_OFF) return;

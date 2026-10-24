@@ -3,7 +3,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowDownRight, ArrowRight, ArrowUpRight, Check, CircleSlash, Clapperboard, DoorOpen, Loader2, Radar, ServerOff, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { engine } from "@/lib/ops/engine";
 import { fmtCountdown, fmtMiss, fmtPc, fmtWhen } from "@/lib/ops/format";
 import { AGENTS, MODELS } from "@/lib/ops/roster";
 import { useOps } from "@/lib/ops/store";
@@ -19,6 +18,10 @@ import { ClaudeGlyph } from "./Glyphs";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { toggleDev } from "@/components/ui/Navbar";
 import { RESOLVED, RISK_COLOR, STATUS_META } from "./meta";
+import { ScanButton } from "./DemoFlow";
+
+/** Stable fallback: a new {} per render would loop the store subscription. */
+const NO_OWNERS: Record<string, string> = {};
 
 type Filter = "active" | "resolved";
 
@@ -81,6 +84,9 @@ export function ConjunctionQueue() {
             )}
           </span>
         </div>
+        <div className="mt-2.5">
+          <ScanButton />
+        </div>
         {dev && <ScanLine scanning={scanning} lastScan={lastScan} now={now} />}
       </div>
 
@@ -133,7 +139,7 @@ export function ConjunctionQueue() {
 function ScanLine({ scanning, lastScan, now }: { scanning: boolean; lastScan: { at: number; objects: number } | null; now: number }) {
   const validation = useOps((s) => s.validation);
   return (
-    <div className="mt-2.5 flex items-center gap-2 rounded-[9px] bg-white/[0.03] px-2 py-1.5 text-[10.5px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]">
+    <div className="mt-2 flex items-center gap-2 rounded-[9px] bg-white/[0.03] px-2 py-1.5 text-[10.5px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]">
       <Radar size={12} className={scanning ? "text-[#7fd8ff]" : "text-muted"} />
       {scanning ? (
         <span className="shimmer font-medium">Risk Monitor screening the catalog…</span>
@@ -177,7 +183,7 @@ function BackendEmpty() {
 
 function EventRow({ e, now }: { e: ConjunctionEvent; now: number }) {
   const focused = useOps((s) => s.focusEvent === e.id);
-  const owners = useOrbit((s) => s.catalog?.owners ?? {});
+  const owners = useOrbit((s) => s.catalog?.owners ?? NO_OWNERS);
   const st = STATUS_META[e.status];
   const resolved = RESOLVED.includes(e.status);
   const trend = e.trend === "rising" ? ArrowUpRight : e.trend === "falling" ? ArrowDownRight : ArrowRight;
@@ -257,8 +263,6 @@ function EventRow({ e, now }: { e: ConjunctionEvent; now: number }) {
 /* ---------------------------------------------------------------- detail */
 
 function EventDetail({ e }: { e: ConjunctionEvent }) {
-  const allHumans = useOps((s) => s.humans);
-  const humans = useMemo(() => allHumans.filter((h) => h.eventId === e.id), [allHumans, e.id]);
   return (
     <div className="px-2.5 pb-2.5">
       {e.summary ? <SummaryCard lines={e.summary} /> : e.agentsWorking && <SummaryPending />}
@@ -282,19 +286,6 @@ function EventDetail({ e }: { e: ConjunctionEvent }) {
 
       {e.proposal && <ProposalCard e={e} p={e.proposal} />}
 
-      <AnimatePresence>
-        {humans.map((h) => (
-          <motion.div
-            key={h.side}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.25 }}
-          >
-            <DecisionBar e={e} side={h.side} />
-          </motion.div>
-        ))}
-      </AnimatePresence>
 
       <div className="mt-2 flex gap-1.5">
         <Tooltip label="Jump the clock to 70 s before TCA and watch both objects pass">
@@ -340,7 +331,7 @@ function emphasize(line: string) {
 }
 
 /** The five-line Incident Analyst summary: the first thing a dispatcher reads (AGT-2, AGT-8). */
-function SummaryCard({ lines }: { lines: string[] }) {
+export function SummaryCard({ lines, compact = false }: { lines: string[]; compact?: boolean }) {
   const analyst = AGENTS.analyst;
   return (
     <motion.div
@@ -366,7 +357,7 @@ function SummaryCard({ lines }: { lines: string[] }) {
             className="grid grid-cols-[46px_1fr] gap-1.5"
           >
             <dt className="pt-px text-[9.5px] font-medium uppercase tracking-[0.08em] text-muted">{SUMMARY_LABELS[i] ?? i + 1}</dt>
-            <dd className="text-[11.5px] leading-[1.45] text-fg-2">{emphasize(l)}</dd>
+            <dd className={`leading-[1.45] text-fg-2 ${compact ? "text-[11px]" : "text-[11.5px]"}`}>{emphasize(l)}</dd>
           </motion.div>
         ))}
       </dl>
@@ -493,49 +484,6 @@ function SideState({ label, state }: { label: string; state: ConjunctionEvent["a
         {map.i}
         {map.t}
       </span>
-    </div>
-  );
-}
-
-/** Dev stand-in for the operator's own controls (ROOM-7). */
-function DecisionBar({ e, side }: { e: ConjunctionEvent; side: "a" | "b" }) {
-  const autopilot = useOps((s) => s.autopilot);
-  return (
-    <div className="mt-2 rounded-[10px] bg-[rgba(255,159,64,0.06)] p-2 shadow-[inset_0_0_0_1px_rgba(255,159,64,0.2)]">
-      <div className="flex items-center gap-1.5 text-[10.5px]">
-        <span className="pulse-dot text-orange" style={{ width: 5, height: 5 }} />
-        <span className="font-medium text-orange">Needs Operator {side.toUpperCase()}</span>
-        {autopilot && <span className="ml-auto text-[9.5px] text-muted">autopilot will answer</span>}
-      </div>
-      <div className="mt-1.5 flex gap-1">
-        <button
-          className="btn btn-primary h-6 flex-1 text-[11px]"
-          onClick={() => {
-            sfx.chime();
-            engine.decide(e.id, side, { decision: "approved" });
-          }}
-        >
-          <Check size={11} /> Approve
-        </button>
-        <button
-          className="btn btn-ghost-line h-6 text-[11px]"
-          onClick={() => {
-            sfx.click();
-            engine.decide(e.id, side, { decision: "vetoed", note: "not acceptable for our mission" });
-          }}
-        >
-          Veto
-        </button>
-        <button
-          className="btn btn-ghost-line h-6 text-[11px]"
-          onClick={() => {
-            sfx.click();
-            engine.decide(e.id, side, { decision: "countered", note: "move 2 h later" });
-          }}
-        >
-          Counter
-        </button>
-      </div>
     </div>
   );
 }

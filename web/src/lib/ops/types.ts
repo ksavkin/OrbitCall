@@ -71,6 +71,31 @@ export interface Proposal {
 
 export type Approval = "pending" | "approved" | "vetoed" | "countered";
 
+export interface DecisionOption {
+  id: string;
+  mover: "a" | "b" | "none";
+  action: Action;
+  dvMs: number;
+  burnAt: number | null;
+  fuelKg: number;
+  missAfterM: number;
+  recommended: boolean;
+  /** One line on why the agents recommend it, or what it costs. */
+  why: string;
+}
+
+/** A dispatcher's answer as the room shows it to the other side. */
+export interface Reply {
+  eventId: string;
+  side: "a" | "b";
+  decision: Exclude<Approval, "pending">;
+  note?: string;
+  /** Original wording before translation, with its language. */
+  original?: string;
+  lang?: string;
+  t: number;
+}
+
 export interface ConjunctionEvent {
   id: string;
   a: SpaceObjectRef;
@@ -98,6 +123,10 @@ export interface ConjunctionEvent {
   summary: string[] | null;
   /** Everyone involved; length 2+ (A, B, then affected operators). Optional until the backend sends it. */
   parties?: Party[];
+  /** How much to trust this event, with the reason in plain words (scan results list). */
+  confidence?: { level: "high" | "medium" | "low"; why: string };
+  /** Options shown to the dispatcher; exactly one has `recommended` (AGT-2). */
+  options?: DecisionOption[];
   createdAt: number;
   scenario?: string;
 }

@@ -39,7 +39,7 @@ export function ScenarioBar() {
     sfx.whoosh();
     setPick(id);
     setOpen(false);
-    useOps.getState().set({ agentView: "graph", focusAgent: null, focusSpan: null });
+    useOps.getState().set({ agentView: "graph", focusAgent: null, focusSpan: null, actAs: null });
     runScenario(id);
   };
 

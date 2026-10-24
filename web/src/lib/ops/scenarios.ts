@@ -3,7 +3,7 @@
 import { Cancelled, engine, makeEvent, partyOf, pickObject, screeningPass, type Decision, type Engine } from "./engine";
 import { fmtMiss, fmtPc, fmtWhen } from "./format";
 import { useOps } from "./store";
-import type { ConjunctionEvent, Proposal } from "./types";
+import type { ConjunctionEvent, DecisionOption, Proposal } from "./types";
 
 // User stories from docs/plan-v1.md §6–7 and docs/functionality.md, played as scripts.
 // Physics numbers are computed (miss after a burn from the along-track drift 3·Δv·Δt,
@@ -14,7 +14,7 @@ export interface Scenario {
   title: string;
   story: string;
   refs: string;
-  run: (eng: Engine, gen: number) => Promise<void>;
+  run: (eng: Engine, gen: number, existing?: ConjunctionEvent) => Promise<void>;
 }
 
 const G0 = 9.80665;
@@ -59,7 +59,21 @@ function proposal(e: ConjunctionEvent, p: Omit<Proposal, "missBeforeM" | "missAf
 
 /* ------------------------------------------------------------ building blocks */
 
-async function redEvent(eng: Engine, gen: number, opts: { salt: number; crossDeg: number; missM: number; pc: number; tcaInH: number; bName: string; bOperator: string; bOwner: string; debris?: boolean }) {
+async function redEvent(
+  eng: Engine,
+  gen: number,
+  opts: { salt: number; crossDeg: number; missM: number; pc: number; tcaInH: number; bName: string; bOperator: string; bOwner: string; debris?: boolean },
+  existing?: ConjunctionEvent,
+) {
+  if (existing) {
+    // picked from scan results: the pass already ran, go straight to the agents
+    useOps.setState({ focusEvent: existing.id });
+    await eng.sleep(900, gen);
+    eng.update(existing.id, { risk: "red", status: "agents", agentsWorking: true });
+    eng.log("monitor", `${existing.id} selected by the dispatcher · Pc ${fmtPc(existing.pc)} · waking agents`, "warn", { eventId: existing.id });
+    await eng.span({ agent: "monitor", target: "analyst", kind: "handoff", name: `Wake Incident Analyst · ${existing.id}`, eventId: existing.id }, 380, gen);
+    return eng.event(existing.id)!;
+  }
   const a = pickObject((o) => o.category === "starlink", opts.salt) ?? pickObject((o) => o.category === "other", opts.salt);
   if (!a) throw new Error("Catalog not loaded");
   const e = makeEvent(eng, {
@@ -344,9 +358,54 @@ async function check(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal
   }
 }
 
+/** Four options for the dispatcher from the fixed set (raise, lower, wait), the agents' pick marked. */
+function optionsFor(e: ConjunctionEvent, pr: Proposal): DecisionOption[] {
+  const debris = e.b.kind === "debris";
+  const dv = pr.dvMs || 0.05;
+  const shapes: { mover: "a" | "b" | "none"; action: "raise" | "lower" | "wait"; leadH: number }[] = debris
+    ? [
+        { mover: "a", action: "raise", leadH: 6 },
+        { mover: "a", action: "lower", leadH: 6 },
+        { mover: "a", action: "raise", leadH: 3 },
+        { mover: "none", action: "wait", leadH: 0 },
+      ]
+    : [
+        { mover: "a", action: "raise", leadH: 6 },
+        { mover: "b", action: "lower", leadH: 8 },
+        { mover: "a", action: "lower", leadH: 6 },
+        { mover: "none", action: "wait", leadH: 0 },
+      ];
+  const out = shapes.map((sh, i) => {
+    const p = proposal(e, { version: 0, mover: sh.mover, action: sh.action, dvMs: sh.action === "wait" ? 0 : dv, leadH: sh.leadH, crossDeg: crossOf(e), rationale: "" });
+    const g = (p.fuelKg * 1000).toFixed(1);
+    const why =
+      sh.action === "wait"
+        ? `No burn. Pc stays ${fmtPc(e.pc)} until the next CDM.`
+        : sh.mover === "b"
+          ? `Uses B's chemical thruster: ${g} g, B has ${CRAFT_B.fuelReservePct}% fuel left.`
+          : sh.leadH < 6
+            ? `Burn later, at TCA−${sh.leadH} h: less margin, same fuel.`
+            : sh.action === "lower"
+              ? `Same cost as raising (${g} g); ends below the original shell.`
+              : `Uses A's electric thruster: ${g} g of krypton.`;
+    return { id: `opt${i}`, mover: p.mover, action: p.action, dvMs: p.dvMs, burnAt: p.burnAt, fuelKg: p.fuelKg, missAfterM: p.missAfterM, recommended: false, why };
+  });
+  const rec = out.findIndex((o) => o.mover === pr.mover && o.action === pr.action);
+  const pick: DecisionOption = { id: "rec", mover: pr.mover, action: pr.action, dvMs: pr.dvMs, burnAt: pr.burnAt, fuelKg: pr.fuelKg, missAfterM: pr.missAfterM, recommended: true, why: pr.rationale };
+  if (rec >= 0) out[rec] = { ...pick, id: out[rec].id };
+  else out[0] = pick;
+  // recommended first
+  return out.sort((x, y) => Number(y.recommended) - Number(x.recommended));
+}
+
 async function openRoom(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal) {
   const id = e.id;
-  eng.update(id, { proposal: pr, status: "proposal", approvals: { a: "pending", b: e.b.kind === "debris" ? "approved" : "pending" } });
+  eng.update(id, {
+    proposal: pr,
+    options: optionsFor(e, pr),
+    status: "proposal",
+    approvals: { a: "pending", b: e.b.kind === "debris" ? "approved" : "pending" },
+  });
   await eng.span({ agent: "analyst", target: "host", kind: "handoff", name: `Proposal v${pr.version} ready`, eventId: id }, 300, gen);
   await eng.span({ agent: "host", target: "room", kind: "tool", name: "open_room", eventId: id, output: { room: `room_${id.toLowerCase()}`, languages: ["en", "ru"] } }, 420, gen);
   await eng.span(
@@ -376,10 +435,13 @@ async function askHumans(eng: Engine, gen: number, e: ConjunctionEvent, pr: Prop
 }
 
 /** Ask both sides until they approve; a veto or counter sends the agents back (AGT-4, ROOM-11). */
-async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Proposal, autoA: Decision, autoB: Decision) {
+async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Proposal, autoA: Decision, autoB: Decision, initial?: { a: Decision; b: Decision }) {
   let pr = first;
   for (let round = 0; round < 4; round++) {
-    const r = await askHumans(eng, gen, eng.event(e.id)!, pr, round === 0 ? autoA : { decision: "approved" }, round === 0 ? autoB : { decision: "approved" });
+    const r =
+      round === 0 && initial
+        ? initial
+        : await askHumans(eng, gen, eng.event(e.id)!, pr, round === 0 ? autoA : { decision: "approved" }, round === 0 ? autoB : { decision: "approved" });
     const no = r.a.decision !== "approved" ? { side: "A", d: r.a } : r.b.decision !== "approved" ? { side: "B", d: r.b } : null;
     if (!no) return pr;
     eng.update(e.id, { status: "agents", agentsWorking: true, approvals: { a: "pending", b: "pending" } });
@@ -389,9 +451,21 @@ async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Propo
       320,
       gen,
     );
-    const later = no.d.decision === "countered";
+    const later = no.d.decision === "countered" && !no.d.preferred;
     const swap = !later && pr.mover !== "none";
-    const next = proposal(eng.event(e.id)!, {
+    const pref = no.d.preferred;
+    const next = pref
+      ? proposal(eng.event(e.id)!, {
+          version: pr.version + 1,
+          mover: pref.mover,
+          action: pref.action,
+          dvMs: pref.action === "wait" ? 0 : pr.dvMs || 0.05,
+          leadH: pref.action === "wait" ? 0 : pref.mover === "b" ? 8 : 6,
+          crossDeg: crossOf(e),
+          rationale: `Operator ${no.side} chose this option${no.d.note ? `: “${no.d.note}”` : ""}. Recomputed with SGP4.`,
+          reason: `Operator ${no.side} chose another option`,
+        })
+      : proposal(eng.event(e.id)!, {
       version: pr.version + 1,
       mover: swap ? (pr.mover === "a" ? "b" : "a") : pr.mover,
       action: pr.action === "wait" ? "raise" : pr.action,
@@ -402,7 +476,7 @@ async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Propo
         ? `Burn moved 2 h later as Operator ${no.side} asked; Δv raised to keep the miss.`
         : `Operator ${no.side} rejected moving; the other side moves instead.`,
       reason: `Operator ${no.side} ${no.d.decision}${no.d.note ? `: “${no.d.note}”` : ""}`,
-    });
+        });
     await eng.span(
       {
         agent: target,
@@ -429,6 +503,12 @@ type Affected = { operator: string; owner: string; satellite: string };
 
 async function scheduleAndVerify(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal, refuse = false, affected?: Affected) {
   const id = e.id;
+  if (pr.action === "wait") {
+    // both sides agreed to wait: nothing to schedule, keep watching (ROOM-2)
+    eng.update(id, { status: "monitoring", agentsWorking: false });
+    eng.log("host", `${id} both sides agreed to wait · monitoring until the next CDM`, "info", { eventId: id });
+    return true;
+  }
   eng.update(id, { status: "approved", agentsWorking: true });
   await eng.span({ agent: "host", target: "scheduler", kind: "handoff", name: "Two approvals · schedule", eventId: id }, 320, gen);
   await eng.span(
@@ -519,6 +599,16 @@ async function scheduleAndVerify(eng: Engine, gen: number, e: ConjunctionEvent, 
 
 /* ---------------------------------------------------------------- scenarios */
 
+const RU_DAY: Record<string, string> = {
+  Sun: "в воскресенье",
+  Mon: "в понедельник",
+  Tue: "во вторник",
+  Wed: "в среду",
+  Thu: "в четверг",
+  Fri: "в пятницу",
+  Sat: "в субботу",
+};
+
 const RED_B = { bName: "SEVER-7 (SYN)", bOperator: "Sever Imaging (synthetic)", bOwner: "CIS" };
 
 export const SCENARIOS: Scenario[] = [
@@ -527,18 +617,23 @@ export const SCENARIOS: Scenario[] = [
     title: "Veto, then re-plan",
     story: "B can't move during an imaging pass. One “no” sends the agents back; A moves instead.",
     refs: "plan-v1 §7 · AGT-4, ROOM-11",
-    run: async (eng, gen) => {
-      const cross = 64;
-      const e = await redEvent(eng, gen, { salt: 2, crossDeg: cross, missM: 180, pc: 3.1e-4, tcaInH: 31, ...RED_B });
+    run: async (eng, gen, existing) => {
+      const cross = existing ? crossOf(existing) : 64;
+      const e = await redEvent(eng, gen, { salt: 2, crossDeg: cross, missM: 180, pc: 3.1e-4, tcaInH: 31, ...RED_B }, existing);
       await analyze(eng, gen, e, cross);
       const v1 = proposal(e, { version: 1, mover: "b", action: "lower", dvMs: 0.08, leadH: 8, crossDeg: cross, rationale: "B lowers: cheapest for B's chemical thruster, no policy rule blocks it." });
       await negotiate(eng, gen, e, { first: v1 });
       await check(eng, gen, e, v1);
       await openRoom(eng, gen, e, v1);
       const day = fmtWhen(v1.burnAt!).split(" ")[0];
-      const r1 = await askHumans(eng, gen, e, v1, { decision: "approved" }, { decision: "vetoed", note: `imaging pass on ${day}, I can't move` });
-      if (r1.b.decision !== "approved") {
-        eng.log("host", `Translated from Russian: “У меня съёмка в ${day === "Wed" ? "среду" : day}, двигаться не могу” → “imaging pass on ${day}, I can't move”`, "info", { eventId: e.id });
+      const ru = `У меня съёмка ${RU_DAY[day] ?? day}, двигаться не могу`;
+      const r1 = await askHumans(eng, gen, e, v1, { decision: "approved" }, { decision: "vetoed", note: `imaging pass on ${day}, I can't move`, original: ru, lang: "Russian" });
+      if (r1.a.decision !== "approved") {
+        // the dispatcher chose differently: the generic revision path takes over
+        const fin = await agree(eng, gen, e, v1, { decision: "approved" }, { decision: "approved" }, r1);
+        await scheduleAndVerify(eng, gen, e, fin);
+      } else if (r1.b.decision !== "approved") {
+        eng.log("host", `Translated from Russian: “${ru}” → “imaging pass on ${day}, I can't move”`, "info", { eventId: e.id });
         eng.update(e.id, { status: "agents", agentsWorking: true, approvals: { a: "pending", b: "pending" } });
         await eng.span({ agent: "host", target: "advocateB", kind: "handoff", name: "New hard constraint from B", eventId: e.id, input: { constraint: `no burn on ${day} (imaging)`, source: "room message, voice" } }, 300, gen);
         const v2 = proposal(e, { version: 2, mover: "a", action: "raise", dvMs: 0.05, leadH: 6, crossDeg: cross, rationale: `A raises: B has a hard no-move window on ${day}; A has ${CRAFT_A.fuelReservePct}% fuel and an electric thruster.`, reason: "Operator B veto: imaging pass" });
@@ -565,9 +660,9 @@ export const SCENARIOS: Scenario[] = [
     title: "Both approve",
     story: "A red event turns into a ready proposal in under a minute; both owners approve.",
     refs: "plan-v1 §6 user flow · Q-3, ROOM-2",
-    run: async (eng, gen) => {
-      const cross = 72;
-      const e = await redEvent(eng, gen, { salt: 7, crossDeg: cross, missM: 240, pc: 2.2e-4, tcaInH: 44, ...RED_B, bName: "ORLAN-2 (SYN)" });
+    run: async (eng, gen, existing) => {
+      const cross = existing ? crossOf(existing) : 72;
+      const e = await redEvent(eng, gen, { salt: 7, crossDeg: cross, missM: 240, pc: 2.2e-4, tcaInH: 44, ...RED_B, bName: "ORLAN-2 (SYN)" }, existing);
       await analyze(eng, gen, e, cross);
       const v1 = proposal(e, { version: 1, mover: "a", action: "raise", dvMs: 0.06, leadH: 7, crossDeg: cross, rationale: "A raises: electric propulsion, large reserve, no mission window affected." });
       await negotiate(eng, gen, e, {
@@ -588,9 +683,9 @@ export const SCENARIOS: Scenario[] = [
     title: "Scheduler refuses",
     story: "The approved burn would create a new conjunction. The scheduler refuses and the agents pick “lower”.",
     refs: "EXE-2, EXE-3",
-    run: async (eng, gen) => {
-      const cross = 58;
-      const e = await redEvent(eng, gen, { salt: 13, crossDeg: cross, missM: 150, pc: 4.4e-4, tcaInH: 27, ...RED_B, bName: "LUCH-12 (SYN)" });
+    run: async (eng, gen, existing) => {
+      const cross = existing ? crossOf(existing) : 58;
+      const e = await redEvent(eng, gen, { salt: 13, crossDeg: cross, missM: 150, pc: 4.4e-4, tcaInH: 27, ...RED_B, bName: "LUCH-12 (SYN)" }, existing);
       await analyze(eng, gen, e, cross);
       const v1 = proposal(e, { version: 1, mover: "a", action: "raise", dvMs: 0.05, leadH: 6, crossDeg: cross, rationale: "A raises: cheapest option overall." });
       await negotiate(eng, gen, e, { first: v1, rounds: [{ from: "advocateA", text: `Offer: A raises ${v1.dvMs} m/s.` }, { from: "advocateB", text: "Accept." }] });
@@ -616,9 +711,9 @@ export const SCENARIOS: Scenario[] = [
     title: "Second opinion disagrees",
     story: "Grok catches a number in the rationale that doesn't match SGP4. The text is rewritten before anyone sees it.",
     refs: "AGT-5, AGT-6",
-    run: async (eng, gen) => {
-      const cross = 80;
-      const e = await redEvent(eng, gen, { salt: 19, crossDeg: cross, missM: 210, pc: 1.9e-4, tcaInH: 36, ...RED_B, bName: "KANOPUS-V9 (SYN)" });
+    run: async (eng, gen, existing) => {
+      const cross = existing ? crossOf(existing) : 80;
+      const e = await redEvent(eng, gen, { salt: 19, crossDeg: cross, missM: 210, pc: 1.9e-4, tcaInH: 36, ...RED_B, bName: "KANOPUS-V9 (SYN)" }, existing);
       await analyze(eng, gen, e, cross);
       const v1 = proposal(e, { version: 1, mover: "a", action: "raise", dvMs: 0.07, leadH: 6, crossDeg: cross, rationale: "A raises: B is near its fuel floor." });
       await negotiate(eng, gen, e, { first: v1, rounds: [{ from: "advocateA", text: `Offer: A raises ${v1.dvMs} m/s.` }, { from: "advocateB", text: "Accept: B is at 18% fuel." }] });
@@ -633,9 +728,9 @@ export const SCENARIOS: Scenario[] = [
     title: "Debris: one side moves",
     story: "A payload against a debris fragment. Debris can't move or answer, so only Operator A decides.",
     refs: "AGT-2 · fixed options",
-    run: async (eng, gen) => {
-      const cross = 104;
-      const e = await redEvent(eng, gen, { salt: 23, crossDeg: cross, missM: 120, pc: 6.2e-4, tcaInH: 22, bName: "FENGYUN 1C DEB (SYN)", bOperator: "Debris · no operator", bOwner: "PRC", debris: true });
+    run: async (eng, gen, existing) => {
+      const cross = existing ? crossOf(existing) : 104;
+      const e = await redEvent(eng, gen, { salt: 23, crossDeg: cross, missM: 120, pc: 6.2e-4, tcaInH: 22, bName: "FENGYUN 1C DEB (SYN)", bOperator: "Debris · no operator", bOwner: "PRC", debris: true }, existing);
       await analyze(eng, gen, e, cross);
       const v1 = proposal(e, { version: 1, mover: "a", action: "raise", dvMs: 0.06, leadH: 5, crossDeg: cross, rationale: "Only A can move. Raise clears the fragment's uncertainty envelope." });
       await eng.span({ agent: "analyst", target: "advocateA", kind: "handoff", name: "Brief Advocate A", eventId: e.id }, 300, gen);
@@ -660,9 +755,9 @@ export const SCENARIOS: Scenario[] = [
     title: "No agreement",
     story: "Both sides have hard no-move windows. Agents stop, explain why, and leave it to the dispatchers.",
     refs: "AGT-10 · inbox: needs operator decision",
-    run: async (eng, gen) => {
-      const cross = 66;
-      const e = await redEvent(eng, gen, { salt: 29, crossDeg: cross, missM: 260, pc: 1.4e-4, tcaInH: 18, ...RED_B, bName: "AIST-4 (SYN)" });
+    run: async (eng, gen, existing) => {
+      const cross = existing ? crossOf(existing) : 66;
+      const e = await redEvent(eng, gen, { salt: 29, crossDeg: cross, missM: 260, pc: 1.4e-4, tcaInH: 18, ...RED_B, bName: "AIST-4 (SYN)" }, existing);
       await analyze(eng, gen, e, cross);
       const day = fmtWhen(e.tca - 6 * 3600_000).split(" ")[0];
       await negotiate(eng, gen, e, {
@@ -692,6 +787,98 @@ export function runScenario(id: string) {
   engine.run(id, async (eng, gen) => {
     try {
       await s.run(eng, gen);
+    } catch (e) {
+      if (!(e instanceof Cancelled)) throw e;
+    }
+  });
+}
+
+/* --------------------------------------------------------------- demo scan */
+
+// What Run scan finds: one case per story, built around real satellites. Priority follows
+// Q-1 (Pc over hours to TCA); confidence says how much to trust the numbers and why.
+const CANDIDATES: {
+  variant: string;
+  salt: number;
+  pc: number;
+  missM: number;
+  tcaInH: number;
+  crossDeg: number;
+  b: { name: string; operator: string; owner: string; debris?: boolean };
+  source: ConjunctionEvent["pcSource"];
+  confidence: NonNullable<ConjunctionEvent["confidence"]>;
+}[] = [
+  { variant: "demo", salt: 2, pc: 3.1e-4, missM: 180, tcaInH: 31, crossDeg: 64, b: { name: "SEVER-7 (SYN)", operator: "Sever Imaging (synthetic)", owner: "CIS" }, source: "SOCRATES + CDM", confidence: { level: "high", why: "SOCRATES and a public CDM agree; GP and operator orbits within 103 m" } },
+  { variant: "debris", salt: 23, pc: 6.2e-4, missM: 120, tcaInH: 22, crossDeg: 104, b: { name: "FENGYUN 1C DEB (SYN)", operator: "Debris · no operator", owner: "PRC", debris: true }, source: "SOCRATES + CDM", confidence: { level: "high", why: "Listed in both sources; CDM flagged emergency-reportable" } },
+  { variant: "refusal", salt: 13, pc: 4.4e-4, missM: 150, tcaInH: 27, crossDeg: 58, b: { name: "LUCH-12 (SYN)", operator: "Sever Imaging (synthetic)", owner: "CIS" }, source: "SOCRATES", confidence: { level: "medium", why: "Only SOCRATES lists it so far; CDM not published yet" } },
+  { variant: "checker", salt: 19, pc: 1.9e-4, missM: 210, tcaInH: 36, crossDeg: 80, b: { name: "KANOPUS-V9 (SYN)", operator: "Sever Imaging (synthetic)", owner: "CIS" }, source: "SOCRATES + CDM", confidence: { level: "high", why: "Both sources agree within 40 m" } },
+  { variant: "happy", salt: 7, pc: 2.2e-4, missM: 240, tcaInH: 44, crossDeg: 72, b: { name: "ORLAN-2 (SYN)", operator: "Sever Imaging (synthetic)", owner: "CIS" }, source: "CDM", confidence: { level: "medium", why: "CDM only; our screening agrees within 300 m" } },
+  { variant: "noagree", salt: 29, pc: 1.4e-4, missM: 260, tcaInH: 18, crossDeg: 66, b: { name: "AIST-4 (SYN)", operator: "Sever Imaging (synthetic)", owner: "CIS" }, source: "SOCRATES", confidence: { level: "low", why: "No operator ephemeris; GP element set is 3 days old" } },
+  { variant: "happy", salt: 41, pc: 6.0e-5, missM: 640, tcaInH: 58, crossDeg: 88, b: { name: "TALON-5 (SYN)", operator: "Talon Orbital (synthetic)", owner: "UK" }, source: "SOCRATES", confidence: { level: "medium", why: "Yellow: below the action line, trend flat" } },
+];
+
+const variantOf = new Map<string, string>();
+
+/** Run scan: one full screening pass, then the ranked list of what it found. */
+export function runScan() {
+  engine.run("scan", async (eng, gen) => {
+    try {
+      useOps.setState({ scan: { phase: "scanning", ids: [], stats: null }, focusEvent: null, actAs: "a" });
+      const t0 = Date.now();
+      await screeningPass(eng, gen, null);
+      const ids: string[] = [];
+      for (const c of CANDIDATES) {
+        const a = pickObject((o) => o.category === "starlink", c.salt) ?? pickObject((o) => o.category === "other", c.salt);
+        if (!a) continue;
+        const red = c.pc > 1e-4 && c.tcaInH < 72;
+        const e = makeEvent(eng, {
+          a,
+          aOperator: a.category === "starlink" ? "SpaceX Starlink" : a.owner,
+          b: { norad: 90_000 + 800 + c.salt, name: c.b.name, owner: c.b.owner, operator: c.b.operator, kind: c.b.debris ? "debris" : "payload" },
+          tcaInH: c.tcaInH,
+          missM: c.missM,
+          crossDeg: c.crossDeg,
+          pc: c.pc,
+          risk: red ? "red" : "yellow",
+          trend: red ? "rising" : "flat",
+          pcSource: c.source,
+          confidence: c.confidence,
+        });
+        if (!e) continue;
+        variantOf.set(e.id, c.variant);
+        ids.push(e.id);
+      }
+      const n = useOps.getState().lastScan;
+      useOps.setState({
+        scan: { phase: "results", ids, stats: { objects: n?.objects ?? 0, pairs: n?.pairs ?? 0, ms: Date.now() - t0 } },
+        scenarioDone: true,
+      });
+      const ranked = useOps.getState().events.filter((e) => ids.includes(e.id) && e.risk === "red");
+      ranked.sort((x, y) => y.pc / Math.max((y.tca - Date.now()) / 3600_000, 1) - x.pc / Math.max((x.tca - Date.now()) / 3600_000, 1));
+      if (ranked[0]) useOps.setState({ alert: { eventId: ranked[0].id, at: Date.now() } });
+      eng.log("monitor", `Scan finished · ${ids.length} candidates · ${ranked.length} red`, ranked.length ? "warn" : "info");
+    } catch (e) {
+      if (!(e instanceof Cancelled)) throw e;
+    }
+  });
+}
+
+/** The dispatcher picked a case: run its full incident with the camera following. */
+export function runIncident(eventId: string) {
+  const ev = useOps.getState().events.find((e) => e.id === eventId);
+  if (!ev) return;
+  const s = SCENARIOS.find((x) => x.id === (variantOf.get(eventId) ?? "happy")) ?? SCENARIOS[1];
+  useOps.setState({
+    scan: { ...useOps.getState().scan, phase: "idle" },
+    actAs: "a",
+    focusEvent: eventId,
+    agentView: "graph",
+    // the banner follows the case being worked; a yellow pick needs no alarm
+    alert: ev.risk === "red" ? { eventId, at: useOps.getState().alert?.at ?? Date.now() } : null,
+  });
+  engine.runOn(s.id, async (eng, gen) => {
+    try {
+      await s.run(eng, gen, ev);
     } catch (e) {
       if (!(e instanceof Cancelled)) throw e;
     }
