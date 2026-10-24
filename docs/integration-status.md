@@ -9,7 +9,7 @@ Updated October 24, 2026. Start here before implementing the next backend or fro
 - Root Convex package, normalized Phase 1 schema, snapshot loader and catalog queries, Risk Monitor, checked Incident Analyst, mocked-model tests and backend CI.
 - Frontend Convex provider, snapshot/queue integration and error boundaries, preserved alongside the development simulator.
 
-`main` and `adil` should point to the same reviewed integration commit when this sync is pushed. Historical feature-branch tips remain intact. New work can use feature branches; synchronize through reviewed merges. Shared Git content does not mean the team's cloud deployment, credentials or local environments have been configured.
+`main` and `adil` are synchronized through this integration. The shared [UI design system](adil/design-system.md) is included in Git alongside the product decisions. Historical feature-branch tips remain intact. New work can use feature branches; synchronize through reviewed merges. Shared Git content does not mean the team's cloud deployment, credentials or local environments have been configured.
 
 ## Accepted product decisions
 
