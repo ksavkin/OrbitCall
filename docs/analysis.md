@@ -13,6 +13,18 @@ Written Oct 24, 2026, ~00:40 PT (H≈4 of the hackathon).
 - **Reviewers:** my own analysis plus three independent outside reviewers (models `hy3`, `glm-5.3-flash`, `deepseek-v4-flash`), each given the same raw task and inputs, not my draft. The **Votes** column shows who backed each item ("me" = my own analysis).
 - **Function IDs** refer to [functionality.md](functionality.md). Costs are rough hours; **BE** = backend, **FE** = frontend.
 
+## 0. Already in functionality.md
+
+Commits 938d7a8 ("Updated functionality") and 78fef39 ("updated names of agents") landed while this analysis was being written. Against them:
+
+| Item | Status |
+|---|---|
+| M1 approvals per revision | **Covered** by ROOM-11 and LOG-6: approvals are tracked per proposal version and do not carry over. Left for the UI: make the reset visible ("R2 created — approvals reset"). |
+| M3 counter-proposal | **Partly covered** by AGT-11..AGT-13, ROOM-12 and POL-6: agents follow the voice and text discussion and separate hard constraints from preferences. Still open: whether Counter also has structured fields (open question 4). |
+| M6 role names | **Done**, with different names: Risk Monitor, Incident Analyst, Operator Advocate, Coordination Host, Maneuver Scheduler, Maneuver Verifier. They no longer match the Detour / Scutaris pipeline or SpaceATC's "Maneuver Executor". |
+| M7 verifier | **Partly covered** by VER-4 (awaiting sufficient data). The "promised vs done, not detection" framing and the detection method are still open. |
+| M2 private policies | **Still open.** INBOX-5 and ROOM-12 refer to "policy visibility rules", which are not defined yet (open question 5). |
+
 ---
 
 ## 1. MUST — do in this hackathon
@@ -24,8 +36,8 @@ Written Oct 24, 2026, ~00:40 PT (H≈4 of the hackathon).
 | M3 | ADD | new (ROOM-7, AGT-4) | **Structured counter-proposal.** Free text plus optional fields: who should move, not-before / not-after time, max Δv, max fuel. It becomes a constraint and forces a recompute. Answers open question 4. | No commercial product or open repo has a human counter-proposal inside a two-party negotiation. | 3 h BE+FE | deepseek, glm, hy3, me |
 | M4 | CHANGE | LANG-2 | **Numbers in translation come from the proposal card, never from the model.** The translator gets placeholders and the numbers are inserted afterwards. | Orbit Watch's voice agent calls a tool for every number; otherwise a translation can turn 180 m into 18 m. | 0.5–1 h BE | hy3, deepseek, me |
 | M5 | CHANGE | DATA-1, demo | **Demo on a real pair from this week** (SOCRATES or `cdm_public`), not a synthetic pair. | SpaceATC and PARLEY inject synthetic pairs; Orbit Watch won SpaceXAI with a real event of the week. | 2 h BE | all |
-| M6 | CHANGE | §1 roles, all docs and UI labels | **Rename the agent roles:** Scout → **Watch**, Analyst → **Brief**, Operator agent → **Negotiator A / B**, Executor → **Re-screen**, Verifier → **Confirm**. The human-facing Dispatcher keeps its name. | Detour (TreeHacks 2026) and Scutaris (HackMIT 2026, SpaceXAI winner) use the same Scout → Analyst → Planner → Safety → Ops Brief pipeline; SpaceATC has a "Maneuver Executor" node. A judge who saw them will recognise the diagram. | 1 h docs+UI | all |
-| M7 | CHANGE | VER-1..VER-3 | **Verifier = "promised vs done" in the shared log, not maneuver detection.** Detect the burn as a jump in semi-major axis / mean motion between consecutive element sets (above the object's own noise), and check sign and size against the promised Δv. Demo on a real historical maneuver (an ISS reboost or a Starlink burn). | LeoLabs (>2,000 maneuvers/day, ~1 orbit latency), Stargaze and Kratos detect maneuvers far faster than next-day TLEs. The gap is the shared promise-vs-fact record. | 2–3 h BE | all |
+| M6 | CHANGE | §1 roles, all docs and UI labels | **Rename the agent roles** away from Scout / Analyst / Executor / Verifier. *Done in 78fef39 — see section 0.* | Detour (TreeHacks 2026) and Scutaris (HackMIT 2026, SpaceXAI winner) use the same Scout → Analyst → Planner → Safety → Ops Brief pipeline; SpaceATC has a "Maneuver Executor" node. A judge who saw them will recognise the diagram. | 1 h docs+UI | all |
+| M7 | CHANGE | VER-1..VER-4 | **Maneuver Verifier = "promised vs done" in the shared log, not maneuver detection.** Detect the burn as a jump in semi-major axis / mean motion between consecutive element sets (above the object's own noise), and check sign and size against the promised Δv. Demo on a real historical maneuver (an ISS reboost or a Starlink burn). | LeoLabs (>2,000 maneuvers/day, ~1 orbit latency), Stargaze and Kratos detect maneuvers far faster than next-day TLEs. The gap is the shared promise-vs-fact record. | 2–3 h BE | all |
 | M8 | CHANGE | SCR-2, SCR-4, SCR-9 | **Pc: use the official value from `cdm_public` where the pair matches; label our own Pc "indicative"; show the GP vs SupGP spread as a range.** No fixed σ. | SpaceATC hard-codes σ = 1 km, which reads as a toy. Satcat, LeoLabs and Space-Track compute real Pc from covariances; we don't have covariances. | 1–2 h BE | hy3, glm, me (deepseek: skip own Pc) |
 | M9 | CUT / CHANGE | SCR-6 | **Drop the ML risk-trend model.** Use the naive rule "final risk = latest risk" plus the challenge winner's threshold rules; show an honest comparison table. | In the ESA Kelvins challenge only 12 of 97 teams beat the naive rule; a 2026 open LLM-agent attempt scored 2.4× worse. ESA's CREAM AutoCA already forecasts CDM evolution. | saves ~4 h; 1–2 h BE | all |
 | M10 | CHANGE | SCR-3, SCR-8, pitch | **Remove "47 of 50 within 500 m" from the pitch.** If a validation number is shown, make it recall over the whole SOCRATES list for our objects on one snapshot, split into "different element set (SupGP)" vs "our miss". | orbitscreen (MIT, pushed Oct 23) claims 99.84% of 206,222 SOCRATES pairs; OrbitSense claims 85.8% recall. "47/50" looks weak next to them. | 1 h BE | all |
@@ -74,7 +86,7 @@ They already exist elsewhere:
 
 From [functionality.md §20](functionality.md#20-open-questions-for-the-specification):
 
-- **Q3, Analyst options:** replaced by computed candidates (S1), or 2–3 candidates as the fallback.
+- **Q3, Incident Analyst options:** replaced by computed candidates (S1), or 2–3 candidates as the fallback.
 - **Q4, Counter:** structured counter (M3).
 - **Q5, Policy visibility:** private; the other side sees only the outcome or a constraint category (M2).
 - **Q6, Calling people:** in-app only for the hackathon.
@@ -84,4 +96,4 @@ Still open: Q1 screening horizon, Q2 cadence, Q8 event identity across sources, 
 
 ## 6. Interface
 
-The interface brief that follows from this analysis is in [ui-brief.md](ui-brief.md). All three reviewers agreed: the **Conjunction Room is the first demo screen**, the globe is a small inset, and the screen must show both sides, the private policy lock, the counter → new revision → approvals reset, and translation with the original one click away.
+An interface brief for mockups is being prepared separately. All three reviewers agreed: the **Conjunction Room is the first demo screen**, the globe is a small inset, and the screen must show both sides, the private policy lock, the counter → new revision → approvals reset, and translation with the original one click away.
