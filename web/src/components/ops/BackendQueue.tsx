@@ -27,9 +27,37 @@ const COLOR_LABEL: Record<Color, string> = { red: "Red", yellow: "Yellow", none:
 
 const hasPc = (pc: Pc): pc is Pc & { value: number } => pc.value !== null && Number.isFinite(pc.value);
 
+// Numbers can be missing in real data: say "unknown", never print NaN or throw.
+const missText = (row: EventRow) => (Number.isFinite(row.missKm) ? fmtMiss(row.missKm * 1000) : "unknown");
+const speedText = (row: EventRow) => (Number.isFinite(row.relSpeedKmS) ? `${row.relSpeedKmS.toFixed(2)} km/s` : "unknown");
+
 /* ------------------------------------------------------------------ list */
 
-export function BackendList({ now }: { now: number }) {
+/**
+ * The list behind a render boundary: a row the backend shapes unexpectedly (a missing field) must
+ * not blank the whole app, globe included. Retry remounts it.
+ */
+export function BackendListSafe({ now }: { now: number }) {
+  const epoch = useOps((s) => s.backendEpoch);
+  return (
+    <QueryBoundary
+      key={epoch}
+      fallback={(e) => (
+        <div className="px-4 py-8 text-center">
+          <div className="text-[12px] font-medium">Couldn’t show backend rows</div>
+          <p className="mono mt-1 break-words text-[10px] leading-[1.5] text-muted">{briefError(e)}</p>
+          <button className="btn btn-ghost-line mt-3 h-7 text-[11px]" onClick={() => useOps.setState((s) => ({ backendEpoch: s.backendEpoch + 1 }))}>
+            <RotateCw size={11} /> Retry
+          </button>
+        </div>
+      )}
+    >
+      <BackendList now={now} />
+    </QueryBoundary>
+  );
+}
+
+function BackendList({ now }: { now: number }) {
   const rows = useOps((s) => s.backendRows);
   const error = useOps((s) => s.backendError);
 
@@ -207,7 +235,7 @@ function BackendRow({ row, now }: { row: EventRow; now: number }) {
               {COLOR_LABEL[row.color]}
             </Chip>
           )}
-          <span className="mono tnum text-fg-2">{fmtMiss(row.missKm * 1000)}</span>
+          <span className="mono tnum text-fg-2">{missText(row)}</span>
           <PcInline pc={row.pc} tone={tone} />
         </div>
       </button>
@@ -239,7 +267,7 @@ function BackendDetail({ row }: { row: EventRow }) {
   return (
     <div className="px-2.5 pb-2.5">
       <div className="grid grid-cols-2 overflow-hidden rounded-[9px] bg-white/[0.025] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.055)]">
-        <Stat label="Miss distance" value={fmtMiss(row.missKm * 1000)} />
+        <Stat label="Miss distance" value={missText(row)} />
         <Stat
           label="Probability"
           value={hasPc(pc) ? fmtPc(pc.value) : "Pc unavailable"}
@@ -248,7 +276,7 @@ function BackendDetail({ row }: { row: EventRow }) {
           title={hasPc(pc) ? `${m.long} · ${pcSource(pc)} · epoch ${fmtStamp(pc.epochUtc)}` : undefined}
           border
         />
-        <Stat label="Rel. velocity" value={`${row.relSpeedKmS.toFixed(2)} km/s`} top />
+        <Stat label="Rel. velocity" value={speedText(row)} top />
         <Stat label="TCA" value={Number.isFinite(tca) ? fmtWhen(tca) : "—"} hint={fmtStamp(row.tcaUtc)} top border />
       </div>
 
@@ -272,7 +300,7 @@ function BackendDetail({ row }: { row: EventRow }) {
         <ObjectLine o={row.objectB} dot="#a594ff" />
       </div>
 
-      {row.sources.length > 0 && (
+      {(row.sources?.length ?? 0) > 0 && (
         <div className="mt-2.5">
           <span className="eyebrow">Sources</span>
           <ul className="mt-1 space-y-0.5">

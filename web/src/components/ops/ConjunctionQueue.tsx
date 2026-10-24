@@ -18,7 +18,7 @@ import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { toggleDev } from "@/components/ui/Navbar";
 import { CONVEX_ENABLED } from "@/lib/backend/provider";
-import { BackendList, BackendSnapshotLine } from "./BackendQueue";
+import { BackendListSafe, BackendSnapshotLine } from "./BackendQueue";
 import { RESOLVED, RISK_COLOR, STATUS_META } from "./meta";
 
 type Filter = "active" | "resolved";
@@ -120,7 +120,7 @@ export function ConjunctionQueue() {
       {/* list */}
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
         {!dev && !CONVEX_ENABLED && <BackendEmpty />}
-        {!dev && CONVEX_ENABLED && <BackendList now={now} />}
+        {!dev && CONVEX_ENABLED && <BackendListSafe now={now} />}
         {dev && sorted.length === 0 && (
           <div className="px-3 py-8 text-center text-[11px] text-muted">
             {filter === "active" ? "Nothing needs a decision. The Risk Monitor keeps screening." : "No resolved events yet."}
