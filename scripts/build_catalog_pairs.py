@@ -172,9 +172,12 @@ def row_key(r: dict) -> tuple:
     return (r["tca"], min(r["id1"], r["id2"]), max(r["id1"], r["id2"]))
 
 
-def select(rows: list[dict], run: datetime, satcat: dict[int, dict], min_speed: float) -> tuple[list[dict], dict]:
+def select(rows: list[dict], run: datetime, satcat: dict[int, dict], min_speed: float,
+           drawable: set[int] | None) -> tuple[list[dict], dict]:
     upcoming = [r for r in rows if r["tca"] >= run]
-    eligible = [r for r in upcoming if r["speed"] >= min_speed]
+    fast = [r for r in upcoming if r["speed"] >= min_speed]
+    # Only pairs the globe can draw: both objects in Adil's TLE files.
+    eligible = [r for r in fast if drawable is None or (r["id1"] in drawable and r["id2"] in drawable)]
     closest = sorted(eligible, key=lambda r: (r["range"],) + row_key(r))[:CLOSEST_COUNT]
     closest_ids = {id(r) for r in closest}
     candidates = [r for r in eligible if (r["prob"] is not None and r["prob"] >= MIN_MAX_PROB) or id(r) in closest_ids]
@@ -197,7 +200,7 @@ def select(rows: list[dict], run: datetime, satcat: dict[int, dict], min_speed: 
         chosen = unique
     stats = {
         "eligible": len(eligible), "droppedBeforeRun": len(rows) - len(upcoming),
-        "droppedCoorbiting": len(upcoming) - len(eligible),
+        "droppedCoorbiting": len(upcoming) - len(fast), "droppedNotDrawable": len(fast) - len(eligible),
         "candidates": len(candidates), "droppedDecayed": dropped_decayed,
         "droppedDuplicates": dropped_duplicates, "droppedOverCap": over_cap,
     }
@@ -244,6 +247,8 @@ def main() -> int:
     ap.add_argument("snapshot_id", nargs="?")
     ap.add_argument("--min-rel-speed-km-s", type=float, default=MIN_REL_SPEED_KM_S,
                     help="drop docked or co-orbiting pairs slower than this (default %(default)s; 0 keeps them)")
+    ap.add_argument("--all-pairs", action="store_true",
+                    help="keep pairs whose objects are missing from the TLE files (not drawable on the globe)")
     args = ap.parse_args()
     sid = resolve_snapshot(args.snapshot_id)
     folder = SNAPSHOTS / sid
@@ -265,7 +270,7 @@ def main() -> int:
                      and timedelta(0) < r["tca"] - run < timedelta(hours=RED_WITHIN_HOURS))
     red_at_run = sum(1 for r in rows if red(r))
 
-    chosen, stats = select(rows, run, satcat, args.min_rel_speed_km_s)
+    chosen, stats = select(rows, run, satcat, args.min_rel_speed_km_s, None if args.all_pairs else tle_ids)
     pairs = [(r, to_pair(r, satcat)) for r in chosen]
     pairs.sort(key=lambda t: (t[0]["tca"], int(t[1]["objectA"]["objectId"]), int(t[1]["objectB"]["objectId"])))
     selected_ids = {int(p[k]["objectId"]) for _, p in pairs for k in ("objectA", "objectB")}
@@ -291,7 +296,7 @@ def main() -> int:
             "closestRangeCount": CLOSEST_COUNT,
             "dropDecayed": True,
             "dedupeToleranceS": DEDUPE_TOLERANCE_S,
-            "maxPairs": MAX_PAIRS,
+            "maxPairs": MAX_PAIRS, "bothObjectsInTle": not args.all_pairs,
             "capRule": "closest kept first, then MAX_PROB descending, TCA_RANGE, TCA, catalog numbers ascending",
             "redRule": {"maxProbAbove": RED_MIN_PROB, "tcaWithinHoursOfRunTime": RED_WITHIN_HOURS},
         },
