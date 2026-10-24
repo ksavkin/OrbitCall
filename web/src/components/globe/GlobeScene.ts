@@ -4,6 +4,7 @@ import { eciToGeodetic, gstime, jday, sunPos } from "satellite.js";
 import type { Catalog } from "@/lib/catalog/client";
 import { CATEGORIES, type Category } from "@/lib/catalog/types";
 import { EARTH_RADIUS_KM, MU_EARTH } from "@/lib/orbit/constants";
+import type { Elements } from "@/lib/orbit/elements";
 import { CATEGORY_META, ownerColor } from "@/lib/theme";
 import { debrisGeometry, satelliteGeometry } from "./models";
 import { TileLayer } from "./tiles";
@@ -179,7 +180,7 @@ export class GlobeScene {
   private sampleTime = 0;
   private sampleValid: Uint8Array = new Uint8Array(0);
   private pending = false;
-  private pendingTles: [string, string][] | null = null;
+  private pendingElements: Elements[] | null = null;
   private lastRequest = 0;
   private sampleId = 0;
   private enabledMask: boolean[] = CATEGORIES.map(() => true);
@@ -570,14 +571,14 @@ export class GlobeScene {
     this.worker = new Worker(new URL("../../lib/orbit/propagate.worker.ts", import.meta.url), { type: "module" });
     this.worker.onmessage = this.onWorkerMessage;
     this.worker.onerror = (e) => console.error("[orbit worker]", e.message);
-    this.pendingTles = objs.map((o) => [o.line1, o.line2]);
+    this.pendingElements = objs.map((o) => o.elements);
   }
 
   private onWorkerMessage = (e: MessageEvent) => {
     const m = e.data;
     if (m.type === "boot") {
-      this.worker?.postMessage({ type: "init", tles: this.pendingTles });
-      this.pendingTles = null;
+      this.worker?.postMessage({ type: "init", elements: this.pendingElements });
+      this.pendingElements = null;
       return;
     }
     if (m.type === "ready") {

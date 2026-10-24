@@ -405,7 +405,7 @@ export interface EventSeed {
 /** Create an event with a real synthetic geometry around a live object. */
 export function makeEvent(eng: Engine, s: EventSeed & { confidence?: ConjunctionEvent["confidence"] }): ConjunctionEvent | null {
   const tca = Date.now() + s.tcaInH * 3600_000;
-  const enc = buildEncounter(s.a.line1, s.a.line2, tca, { missM: s.missM, crossDeg: s.crossDeg });
+  const enc = buildEncounter(s.a.elements, tca, { missM: s.missM, crossDeg: s.crossDeg });
   if (!enc) return null;
   const check = measureMiss(enc);
   // keep the numbers honest: what the globe shows is what the card says

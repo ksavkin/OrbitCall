@@ -41,7 +41,8 @@ export type CatalogRow = [
   perigee: number | null, // km, from SATCAT
 ];
 
-export type CatalogSource = "celestrak-live" | "celestrak-cache" | "snapshot";
+/** `omm-snapshot`: real mode, the pinned OMM catalog named by the backend's catalog.snapshot. */
+export type CatalogSource = "celestrak-live" | "celestrak-cache" | "snapshot" | "omm-snapshot";
 
 export interface CatalogPayload {
   meta: {

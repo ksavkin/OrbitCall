@@ -12,16 +12,18 @@ const pair = v.object({
   pcValue: v.union(v.number(), v.null()),
 });
 
+// `ommUrl` is not evidence: changing it never reruns the Analyst.
 export const register = internalMutation({
-  args: { snapshotId: v.string(), sources: v.array(sourceRef) },
+  args: { snapshotId: v.string(), sources: v.array(sourceRef), ommUrl: v.optional(v.string()) },
   returns: v.id("snapshots"),
-  handler: async (ctx, { snapshotId, sources }) => {
+  handler: async (ctx, { snapshotId, sources, ommUrl }) => {
     if (snapshotId.startsWith("fixture:")) {
       throw new ConvexError({ code: "INVALID_INPUT", message: "The fixture: prefix is reserved for development fixtures." });
     }
     const stored = await ctx.db.query("snapshots").withIndex("by_snapshot_id", q => q.eq("snapshotId", snapshotId)).unique();
-    if (!stored) return ctx.db.insert("snapshots", { snapshotId, sources });
+    if (!stored) return ctx.db.insert("snapshots", { snapshotId, sources, ommUrl });
     if (JSON.stringify(stored.sources) !== JSON.stringify(sources)) await ctx.db.patch(stored._id, { sources });
+    if (stored.ommUrl !== ommUrl) await ctx.db.patch(stored._id, { ommUrl });
     return stored._id;
   },
 });

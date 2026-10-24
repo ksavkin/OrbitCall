@@ -40,7 +40,9 @@ const pair = p => ({
   missKm: p.missKm, relSpeedKmS: p.relSpeedKmS, pcValue: p.pcValue ?? null,
 });
 
-const snapshot = run("ingest:register", { snapshotId: data.snapshotId, sources: data.sources.map(source) });
+// The OMM catalog the globe draws (build_catalog_pairs.py --gp); without it real mode waits for OMM.
+const omm = typeof data.omm?.url === "string" ? { ommUrl: data.omm.url } : {};
+const snapshot = run("ingest:register", { snapshotId: data.snapshotId, sources: data.sources.map(source), ...omm });
 console.log(`snapshot ${data.snapshotId} -> ${snapshot}; ${data.pairs.length} pairs`);
 
 const total = { inserted: 0, updated: 0, unchanged: 0, skipped: 0 };

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import type { SatLive } from "@/components/globe/GlobeScene";
 import { formatCospar, type SatObject } from "@/lib/catalog/client";
 import { fmtAgo, fmtInt, fmtLat, fmtLon, fmtNum } from "@/lib/format";
+import { elementsText } from "@/lib/orbit/elements";
 import { sceneRef } from "@/lib/sceneRef";
 import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
@@ -75,6 +76,7 @@ function Body({ obj, owners }: { obj: SatObject; owners: Record<string, string> 
 
   const epochAge = now - obj.epoch.getTime();
   const owner = ownerInfo(obj.owner, owners);
+  const format = obj.elements.format === "tle" ? "TLE" : "OMM";
 
   return (
     <>
@@ -166,16 +168,16 @@ function Body({ obj, owners }: { obj: SatObject; owners: Record<string, string> 
             <Route size={13} />
           </button>
         </Tooltip>
-        <Tooltip label={copied ? "Copied" : "Copy TLE"}>
+        <Tooltip label={copied ? "Copied" : `Copy ${format}`}>
           <button
             className="icon-btn btn-ghost-line h-7 w-8"
             onClick={() => {
-              void navigator.clipboard.writeText(`${obj.name}\n${obj.line1}\n${obj.line2}`);
+              void navigator.clipboard.writeText(elementsText(obj.name, obj.elements));
               sfx.click();
               setCopied(true);
               setTimeout(() => setCopied(false), 1400);
             }}
-            aria-label="Copy TLE"
+            aria-label={`Copy ${format}`}
           >
             {copied ? <Check size={13} className="text-green" /> : <Copy size={13} />}
           </button>
