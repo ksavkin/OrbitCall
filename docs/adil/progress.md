@@ -1,6 +1,6 @@
 # Frontend progress (Adil)
 
-Latest accepted scope and technical stack: [master roadmap](../master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Existing implementation notes below are not completion claims.
+Source of truth: [master roadmap v1.1](../master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Claude runs analysis/advocates, Gemini runs the Coordination Host, and Grok runs independent checking and selected audio tasks. Existing implementation notes below are not completion claims.
 
 
 Branch: `adil`. App: `web/`. Run with `cd web && npm run dev`, then open http://localhost:3000.
@@ -12,6 +12,8 @@ The user selected [My Fleet + My Incidents + globe](../user-flow.md). Each enabl
 Priority: severity first, then earliest closest approach; missing/stale data is a separate visible review section. Explain TCA as "Time until closest approach". Show up to four computed candidates. Selecting an existing card changes the shared selection without countering or approving. Each required side then presses Approve. Confirmed debris has one real active-object approver, never an auto-approved debris side.
 
 The historical implementation notes below describe the simulator. Its Pc/time sorting, fixed four options, auto-approved debris, private traces, affected-party notification and fast verification are not the accepted backend behavior. Country-based demo assignments and replay must remain visibly simulated.
+
+Agent traces must identify the actual provider/model for each call, including the Gemini Host. Show provider results only after backend integration. A local simulator animation does not establish live sponsor use.
 
 ## Merged backend and mode boundary
 

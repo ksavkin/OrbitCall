@@ -14,6 +14,8 @@ The main demo has three dispatcher users and one read-only observer display, wit
 
 The locked demo languages are English, Russian, and Mandarin (`en`, `ru`, `zh`). Language is configured per dispatcher, separately from country. Grok STT and Claude translation serve all three, Cartesia speaks English/Mandarin, and Grok TTS speaks Russian. Test the actual voices before rehearsal.
 
+The shared room's Coordination Host uses Gemini to clarify discussion and summarize each current pair-specific plan. Claude runs analysis and private advocates, while Grok independently checks rationale. Host text follows the existing checked translation/speech path. The host cannot approve on anyone's behalf.
+
 Assignments are seeded by the backend team for the demo. Self-service assignment administration is out of scope. Revoking an assignment removes incident access and invalidates that person's affected current approvals. Event ownership and A/B sides remain stable across viewers. A may be the user's counterpart in another event.
 
 ## 2. Main screen: My Fleet + incidents + globe

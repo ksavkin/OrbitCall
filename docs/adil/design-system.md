@@ -1,6 +1,8 @@
 # OrbitCall UI design system
 
-Latest accepted scope and technical stack: [master roadmap](../master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Existing implementation notes below are not completion claims.
+Source of truth: [master roadmap v1.1](../master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Claude runs analysis/advocates, Gemini runs the Coordination Host, and Grok runs independent checking and selected audio tasks. Existing implementation notes below are not completion claims.
+
+The target agent UI identifies Gemini on the Host, Claude on the Analyst/Advocates, and Grok on the checker. Provider/model labels and successful-call states come from recorded backend runs. Simulated traces keep their development label. Existing prototype graphics do not establish a completed integration.
 
 
 Rules for anyone (person or agent) who builds or changes the OrbitCall frontend. They come from the code in `web/` and from Adil's review comments during the build. Adil reads every screen at the pixel level. A screen that "works" but has a stray line, a popping model or a clipped tooltip is not done.

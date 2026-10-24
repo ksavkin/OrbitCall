@@ -4,7 +4,7 @@ The contract between the Next.js frontend and the Convex backend: data shapes, e
 
 Updated Oct 24, 2026 after direct user decisions: [assigned-fleet workflow](user-flow.md), My Fleet + My Incidents + globe, fleet-versus-catalog Run Scan, severity then earliest closest approach, separate missing/stale-data review, up to four computed candidates, shared selection followed by independent Approve, and a separate unilateral debris path. The Dev Switch separates TLE development simulation from the OMM-only real mode. No TLE fallback is allowed with Dev off. Appendix C specifies safe agent observability. These are requirements; the current simulator types are not yet identical to this contract.
 
-The latest scope and stack are locked in [master-roadmap.md](master-roadmap.md). This specification supplies the detailed contract. The four-screen demo uses three dispatchers, 2-4 operator group rooms with pair-specific approvals, three languages, DigitalOcean services, and separate Factory/Backboard/Tiger Data roles. These targets are not all implemented at the code baseline.
+The latest scope and stack are locked in [master-roadmap.md](master-roadmap.md), the team's source of truth. This specification supplies the detailed contract. The four-screen demo uses three dispatchers, 2-4 operator group rooms with pair-specific approvals, three languages, DigitalOcean services, and separate Factory/Backboard/Tiger Data roles. In v1.1, Claude runs the Analyst/Advocates and translation, Gemini runs the Coordination Host, and Grok runs the independent check and selected audio tasks. These targets are not all implemented at the code baseline.
 
 The accepted decisions in the master roadmap, user-flow.md, and functionality.md govern behavior. There is no simulator-specific exception overriding approval integrity. Counter is a conversation message, not an approval status. Country and language do not grant fleet access.
 
@@ -611,6 +611,7 @@ Unrelated messages never reset approvals. Old approvals stay in the log and neve
 
 - `messages.send` stores the original at once. Translation fills `text` for each language: `translationStatus` goes from `pending` to `ok`, or to `original_only` when the placeholder check fails [LANG-2].
 - Agent work (interpretation, revisions, the second-model check) runs in background actions after messages and data changes. The frontend sees results only through queries. `agentsWorking` is true while any agent step for the event is running.
+- The Coordination Host uses Gemini in a Convex Node action with shared room context and a schema-checked result. It can ask a clarification, request a checked revision, or publish a per-event summary. Mutations validate source IDs, numbers and input versions before publication. It receives no raw policy or private memory and cannot approve or write a schedule. Claude handles translation of its checked text through the existing speech path.
 - A revision whose numbers failed the deterministic check is never published [AGT-5].
 
 ### 4.3 Events and statuses
@@ -744,6 +745,7 @@ interface Span {
   t1?: number;                      // wall-clock end (animations at any speed)
   progress: number | null;          // measured 0..1, or null for indeterminate work
   model?: string;
+  provider?: "anthropic" | "xai" | "google"; // actual provider for the recorded call
   tokensIn?: number;
   tokensOut?: number;
   cacheRead?: number;
@@ -777,6 +779,6 @@ Map `AgentRole` (section 2.1) to `AgentId` in the adapter: `risk_monitor→monit
 
 ## Appendix D. Locked external integrations
 
-The [master roadmap](master-roadmap.md) defines the current deployment, model IDs, service endpoints, environment names, and phase goals. Target runtime: Vercel frontend, Convex application state, DigitalOcean orbital/voice/Factory containers, Auth0 identities, LiveKit transport, Grok STT/RU TTS, Claude reasoning/translation, Cartesia EN/ZH TTS, Backboard isolated company memory, and Tiger Data historical analytics.
+The [master roadmap](master-roadmap.md) defines the current deployment, model IDs, service endpoints, environment names, and phase goals. Target runtime: Vercel frontend, Convex application state, DigitalOcean orbital/voice/Factory containers, Auth0 identities, LiveKit transport, Grok STT/RU TTS and rationale check, Claude analysis/advocacy/translation, Gemini Coordination Host, Cartesia EN/ZH TTS, Backboard isolated company memory, and Tiger Data historical analytics. The host uses `@google/genai`, `GEMINI_API_KEY` and `GEMINI_HOST_MODEL=gemini-3.8-flash` server-side. No Google key goes to the browser or media worker.
 
 Backboard is context only. Tiger Data is an analytics copy. Factory writes a checked, authorized artifact. None owns approval state. Convex actions call these services and mutations publish version-checked results. Current Phase 1 public catalog queries do not authorize these private operations.

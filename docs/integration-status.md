@@ -1,6 +1,6 @@
 # Team handoff: merged frontend, Phase 1 backend and product decisions
 
-Updated October 24, 2026. Start with [the locked master roadmap](master-roadmap.md) for the latest scope, stack, phases, and deployment. This file records the implementation handoff.
+Updated October 24, 2026. Start with [the locked master roadmap](master-roadmap.md), the team's source of truth for scope, stack, phases, and deployment. This file records the implementation handoff. Version 1.1 adds Gemini as Coordination Host, with runtime work still pending.
 
 ## Code included in this reconciliation
 
@@ -29,6 +29,7 @@ The [assigned-fleet user flow](user-flow.md) is the starting point. The [specifi
 | Confirmed debris | One real active-object operator approves; never fabricate debris approval. An absent active operator is not debris |
 | Completion | Scheduled is distinct from observed execution. Historical verification is explicitly replay |
 | Languages | English, Russian, Mandarin; LiveKit, Grok STT, Claude translation, Cartesia EN/ZH, Grok RU |
+| Agent providers | Claude Analyst/Advocates and translation, Gemini Coordination Host, Grok independent rationale check and selected audio tasks. Gemini uses the official Google SDK in a Convex Node action |
 | Hosting | Vercel frontend, Convex app backend, DigitalOcean containers for numerical/voice/Factory services |
 | Extra sponsors | Factory schedule artifacts, Backboard memory context, Tiger Data historical analytics, with Convex authoritative |
 
@@ -50,6 +51,7 @@ Both modes live in both Git branches. `main` is a branch, not a runtime switch. 
 | Public catalog inspection, current coloring and Analyst runtime | Fleet-scoped personal queues, selected severity/time ordering and review sections |
 | Frontend Dev switch, simulator, Convex bridge and error boundaries | Authenticated rooms, candidate revisions, selection generation, approvals and unilateral debris |
 | Mocked-model tests and backend CI | Shared-deployment/live-provider smoke test, scheduling, verification and reports |
+| Analyst provider integration only | Gemini Host SDK/configuration, validated host outputs, and actual provider/model traces across Claude, Grok and Gemini |
 
 The Phase 1 public catalog queries are not the private assigned-fleet application. Do not add private policy or approval writes to these unauthenticated endpoints. New real-mode work must follow the assignment/identity rules in the specification.
 
@@ -59,6 +61,7 @@ The Phase 1 public catalog queries are not the private assigned-fleet applicatio
 2. Frontend: implement and validate the agreed OMM payload parser and worker propagation without converting OMM back into legacy TLE. Use stable object IDs and the same snapshot as screening. Until this works, keep the explicit real-mode pending state.
 3. Implement assignments and `users.me` / `fleet.listMine`, then `scans.startMine` / `scans.getMine`, `events.myQueue` and `events.orbits`. The new signatures are target APIs, not currently deployed functions.
 4. Implement shared candidate selection and workflow-specific current approvals, with privacy, re-screening and idempotent scheduling. Keep simulator states distinct from live evidence.
+5. Implement the Gemini Coordination Host against checked shared context. Configure its server-only key and pinned model, validate referenced facts, and demonstrate a live clarification/summary. Keep Claude's analysis/advocate/translation work and Grok's independent check distinct in the trace.
 
 See [Kostya's implementation history](kostya/phase1/plan.md) and [Andrew's runtime guide](phase1-andrew.md) for existing code. The latest workflow/mode decisions above supersede their old global-queue or real-mode TLE fallback descriptions.
 
