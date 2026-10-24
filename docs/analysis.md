@@ -17,7 +17,7 @@ Originally written Oct 24, 2026, ~00:40 PT (H≈4 of the hackathon). Updated Oct
 | M2 | **Accept** | Company policy values are private throughout data access, agent context, UI, logs and exports |
 | M3 | **Skip** | No structured counter-proposal form; keep ordinary voice/text counters and automatic agent revisions |
 | M4 | **Accept** | Protect technical values during translation, restoring them from their authoritative source |
-| M5 | **Accept** | Use a real conjunction from the demo week's reference snapshot, with provenance |
+| M5 | **Accept, amended Oct 24** | The demo week's real catalog snapshot with provenance; the demo conjunction uses one flagged, labeled simulated satellite against a real catalog satellite |
 | M6 | **Already done** | Keep the chosen clear role names |
 | M7 | **Accept** | Shared promised-versus-observed verification with evidence, method and pending-data state |
 | M8 | **Accept with the reviewed evidence limits** | Supplied Pc with event/version provenance; source spread is not statistical uncertainty; no invented internal Pc |
@@ -54,15 +54,17 @@ Enforce the boundary in API/database access, live subscriptions, model context, 
 
 Protect numbers, units, signs, dates/times, time zones and satellite identifiers with typed placeholders before translating the surrounding language. Restore and check values before display or speech. For proposal content, use the exact proposal revision; for human messages, use the original message, including newly introduced numbers. Never replace a new spoken counter with an older card value.
 
-Retain original wording and speaker identity. A failed placeholder check retries or falls back to the original; ambiguous speech recognition is clarified before changing a plan. Spoken approval must unambiguously identify the current candidate/revision and the authenticated speaker.
+Retain original wording and speaker identity. A failed placeholder check retries or falls back to the original; ambiguous speech recognition is clarified before changing a plan. Approval is only a checkmark on the current candidate revision; speech never approves (amended at the final review).
 
 **Functions:** LANG-1..LANG-8, ROOM-7, AGT-11..AGT-13.
 
-### M5 — Real event, traceable demo
+### M5 — Real catalog, traceable demo
 
-Pin a real pair from the demo week's SOCRATES or public CDM snapshot, retaining source URLs, object IDs, epochs and fetch times. Use actual source/computed values in the presentation. Label demonstration policies, participants and proposed actions as simulated. A sourced historical verification replay is separate from this current event; do not present it as proof that the live demo's proposed maneuver occurred.
+Pin the demo week's real catalog snapshot, retaining source URLs, object IDs, epochs and fetch times. Use actual source/computed values in the presentation. Label demonstration policies, participants and proposed actions as simulated. A sourced historical verification replay is separate from this current event; do not present it as proof that the live demo's proposed maneuver occurred.
 
-**Functions:** DATA-1, DATA-5, VER-3; plan sections 4, 7, 9 and 13.
+**Amended at the final review (Oct 24):** public data rarely holds a red pair of two active satellites from different companies with a TCA after judging, so the demo conjunction comes from one simulated satellite that the judge launches from a prefilled form; its orbit is built to cross a real catalog satellite at a chosen time. The simulated satellite and everything derived from it carry a `simulated` flag: a distinct color and label, and exclusion from validation and report counts. No simulated object or result is presented as real.
+
+**Functions:** DATA-1, DATA-5, DATA-7, SCR-10, VER-3; plan sections 4, 7, 9 and 13.
 
 ### M7 — Promised versus observed
 
@@ -137,11 +139,11 @@ The latest selection did not authorize the following separate cuts. Existing fun
 
 | Original suggestion | Current status |
 |---|---|
-| Cut a second model checking explanations (AGT-6) | Not selected; existing capability remains, optional in the build plan; deterministic checks remain required |
+| Cut a second model checking explanations (AGT-6) | Not selected; Grok (text API) checks each rationale and the room shows a disagreement flag; deterministic checks remain required |
 | Cut agent memory between incidents (AGT-7) | Not selected; memory remains context only, restricted to its company and never standing authorization |
-| Cut third-operator notices (DSP-3, DSP-6) | Not selected; requirement remains and delivery channel is unresolved. Never describe an unbuilt invitation as working |
-| Limit outreach to in-app only (DSP-2 partial) | Not selected; outreach channel remains unresolved. The inbox always retains available phone/email/contact instructions |
-| Cut local-backend/LAN fallback (SYNC-3 partial) | Not selected; existing resilience requirements remain to be implemented and tested. Cached data alone does not replace unavailable cloud services |
+| Cut third-operator notices (DSP-3, DSP-6) | Deferred at the final review: not in the base build; later an inbox notice. Joining the room or objecting is out of scope. Never describe an unbuilt invitation as working |
+| Limit outreach to in-app only (DSP-2 partial) | Deferred at the final review: the base build calls or invites no one; operators open the room from their queue and inbox. Idea for later: click a satellite to message its operator. The inbox always retains available phone/email/contact instructions |
+| Cut local-backend/LAN fallback (SYNC-3 partial) | Not selected; the local Convex backend over LAN is tested in plan section 13 (H24–H30). Cached data alone does not replace unavailable cloud services |
 | Defer production orbit exchange, covariance Pc, full optimization and other large integrations | Existing out-of-scope boundaries remain. A bounded candidate comparison under S1 does not promise a production optimizer |
 
 Fetch.ai (Agentverse, ASI:One) was dropped on Oct 24, 2026; agents run in our own backend. Other optional sponsor work retains the existing plan status. A role-switch URL can illustrate a simulated UI but cannot satisfy M2's privacy or ACC-2's authorization requirements.
@@ -161,10 +163,7 @@ Preserve the original numbers in [functionality.md section 20](functionality.md#
 - **Q3 resolved:** multiple computed proposals for human choice; 2–3 initially when feasible, without fabricated alternatives.
 - **Q4 resolved:** counters are voice/text; no structured form.
 - **Q5 resolved:** company policy values are private; share outcomes/categories and proposed maneuver parameters.
-- **Q1 and Q2 remain:** screening horizon and refresh/internal screening cadence, respecting source limits.
-- **Q6 and Q7 remain:** outreach channels and third-operator notice/room behavior.
-- **Q8 remains:** canonical event identity and matching across screening, SOCRATES and CDMs; required for deduplicated reporting.
-- **Q9 remains:** persistence and presentation of prepared options for yellow events.
-- **Q10 added:** final report mapping, applicability, periods, format and missing-field completion.
-- **Q11 added:** candidate grid/approximation limits, re-screen criteria, and verification baseline/window/thresholds.
-- **Q12 added:** review priority when usable supplied Pc is unavailable.
+- **Q1 and Q2 resolved:** 3-day screening horizon; Risk Monitor every 5 minutes over cached data, respecting source limits.
+- **Q6 and Q7 deferred:** the base build calls no one and sends no third-operator notices; both come after the base works.
+- **Q8 resolved:** event identity is the unordered NORAD pair plus |ΔTCA| ≤ 60 s; required for deduplicated reporting.
+- **Q9–Q16 resolved at the final review** with demo-first defaults: no prepared options for yellow events; report = on-screen summary plus CSV; candidate grid, re-screen and verification thresholds; missing-Pc ordering; git-style schedule history; leaving monitoring; after a veto. See functionality.md section 20.

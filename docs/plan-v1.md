@@ -3,6 +3,8 @@
 Oct 23, 2026 · @K · Product decisions updated Oct 24, 2026
 
 > This planning document incorporates the accepted decisions in [analysis.md](analysis.md): private policies, multiple computed proposals, approval of the same revision, protected translation, real demo data, evidence-based verification, supplied Pc, measured validation, report export and source links. Risk forecasting is removed completely. Structured counter forms, standing pair agreements, extra action labels and heuristic dismissals are skipped. **Fetch.ai was dropped on Oct 24, 2026:** its prize requires the whole workflow inside an ASI:One chat without our interface, so agents run in our own backend instead (see [functionality.md §17](functionality.md#17-agent-runtime)). The repository remains documentation only; demo outcomes and validation numbers must come from actual data and computation.
+>
+> **Final review, Oct 24, 2026 (~03:30 PT):** the demo conjunction comes from one flagged simulated satellite against the real catalog; orbital computation runs in a separate Python service next to Convex; the live call stays on LiveKit with Grok STT, Claude translation and Cartesia TTS, and the Coordination Host speaks through Grok Voice; sign-in uses pre-created test users; the sponsor table follows the Hive prize page. Nothing is cut in advance; section 13's cut order stays the fallback at H24.
 
 ## Contents
 
@@ -42,7 +44,7 @@ The decision "which of two satellites dodges a collision" is made today by email
 - Between companies there is no protocol for "who yields."
 - There is no shared check that the maneuver was actually done.
 - There is no record to settle a dispute later.
-- Volume grows faster than flight dynamics teams: in half a year Starlink logged 164,000 potential events and 144,404 maneuvers.
+- Volume grows faster than flight dynamics teams: Starlink reported 144,404 maneuvers in one half-year (Oct 2025 review) and 164,000 potential events in another (disclosed Oct 2026).
 - Half of the operators Starlink had conjunctions with in 2026 did not publish trajectories.
 - Operators speak different languages and sit in different time zones; warning comes 13 minutes to 3 days ahead.
 - No single regulator can order anyone to maneuver, in the US or at the UN.
@@ -90,7 +92,7 @@ Steps 1, 2 and 6 are automated everywhere. Steps 3, 4, 5, 7 and 8 are by hand an
 | Step | Today | With OrbitCall |
 |---|---|---|
 | Find what matters among 50 alerts | By eye | Queue ranked by current supplied probability and time, with sources and missing data visible |
-| Find and call the other operator | Directory and email | The system opens a room and calls both itself |
+| Find and call the other operator | Directory and email | The system opens a shared room both see in their queue and inbox (calling them comes later) |
 | Agree on who moves | In words, no shared plan | Agents evaluate multiple proposals within private policies; humans discuss, select and approve the same revision |
 | Language and time zone | English or nothing | Voice and text with translation in the room |
 | Check the maneuver was done | Separate observations and correspondence | Compare the agreed plan with later evidence, including an insufficient-data outcome |
@@ -106,11 +108,13 @@ Steps 1, 2 and 6 are automated everywhere. Steps 3, 4, 5, 7 and 8 are by hand an
 
 ### 2-minute pitch (demo first, as the guide asks)
 
-Use a real pair from the demo week's SOCRATES or public CDM snapshot. Display its actual names, times, sources and computed results. Policies and participants used by the team are simulated. Do not script a fabricated conjunction, success count or observed burn.
+> **Status: to be discussed**, together with the demo scene in section 7.
+
+The catalog is the demo week's real snapshot, with its sources and times. The demo conjunction comes from one simulated satellite that the judge launches from a prefilled form; it is flagged and labeled "simulated" on every screen. Policies and participants used by the team are simulated. Do not present a simulated object, success count or observed burn as real.
 
 **0:00 — hook, 15 seconds.** "A collision warning still leaves two operators with a decision: who should move, when, and on what agreement? OrbitCall brings the data, the discussion and the decision into one shared record."
 
-**0:15 — demo, 60 seconds.** "This incident comes from this week's public data. You're Operator A; my teammate is Operator B. Each agent evaluates these candidates against its own company's private limits. Compare the proposals and select one." Operator A approves that revision. The teammate introduces a meaningful constraint in Russian; the judge hears English with the original accessible. "The discussion changed the options. Here is the new revision, why it changed, and the visible reset of both approvals. Choose the revised candidate; both of you must approve it before scheduling."
+**0:15 — demo, 60 seconds.** "The catalog is this week's real public data. You've just launched a satellite, and OrbitCall found it on a collision course with a real one. You're Operator A; my teammate is Operator B. Each agent evaluates these candidates against its own company's private limits. Compare the proposals and select one." Operator A approves that revision. The teammate introduces a meaningful constraint in Russian; the judge hears English with the original accessible. "The discussion changed the options. Here is the new revision, why it changed, and the visible reset of both approvals. Choose the revised candidate; both of you must approve it before scheduling."
 
 **1:15 — evidence, 25 seconds.** "The maneuver is re-screened before its schedule entry is committed. These are our measured reference coverage and separate timing/distance errors for this snapshot. For verification, this separately labeled historical replay shows the agreed maneuver beside later observations; insufficient evidence stays pending."
 
@@ -149,7 +153,7 @@ flowchart TD
 | Risk Monitor | Screens and ranks using current supplied Pc, TCA and source flags; triggers on red | Forecast future risk estimates or decide who moves |
 | Incident Analyst | Gathers shared evidence and returns a five-line summary with computed candidate proposals | Read raw private policy values or represent one company |
 | Operator Advocate (one per company) | Evaluates proposals against its company's private hard constraints and preferences; shares outcomes and recommendations | Disclose private policy values, relax hard rules silently or authorize a maneuver |
-| Coordination Host | Opens the room, contacts the relevant people, translates, follows discussion and records shared actions | Read raw private policies or decide for the humans |
+| Coordination Host | Opens the room, translates, follows discussion, posts and reads the end-of-call summary, and records shared actions | Read raw private policies or decide for the humans |
 | Maneuver Scheduler | Validates both approvals of the current selection, re-screens, then commits that exact maneuver | Accept stale approvals, infer consent or write outside the schedule location |
 | Maneuver Verifier | Compares the promised maneuver with later evidence and records consistency, mismatch or missing evidence | Prove an exact burn from an isolated element-set jump |
 
@@ -171,11 +175,11 @@ flowchart TD
 
 ### System flow: one conjunction from data to a recorded outcome
 
-1. Refresh the public catalog and conjunction list subject to source limits; cache source IDs and epochs. The proposed 15-minute internal cycle here versus 5 minutes in section 13 remains an open specification decision and does not override source fetch limits.
-2. Propagate active objects and compute TCA, miss distance and relative velocity. The screening horizon remains to be settled (7 days here versus the 3-day build target). Attach supplied Pc from a matching CDM or labeled SOCRATES record; do not compute or invent it. Compare the full eligible SOCRATES reference snapshot and report coverage separately from numerical error.
+1. Refresh the public catalog and conjunction list subject to source limits; cache source IDs and epochs. The internal cycle is 5 minutes over cached data; it does not override source fetch limits.
+2. Propagate active objects and compute TCA, miss distance and relative velocity over a 3-day horizon. Attach supplied Pc from a matching CDM or labeled SOCRATES record; do not compute or invent it. Compare the full eligible SOCRATES reference snapshot and report coverage separately from numerical error.
 3. Rank by current evidence and time to conjunction. Unknown Pc is explicit and requires a defined review order, not a zero-risk assumption. Yellow stays in the feed; red (Pc > 1e-4 and TCA < 72 h) wakes the agents. Do not add action labels or heuristic dismissal rules.
 4. Create each relevant person's inbox entry with the incident evidence, satellite details, contacts and source links. Incident Analyst computes multiple candidates; each Operator Advocate privately evaluates its company's constraints and returns shareable outcomes.
-5. Check the explanations against numerical results. Coordination Host opens the room and contacts the owners and affected operators. The room is accessible even if no feasible agreement is found.
+5. Check the explanations against numerical results. Coordination Host opens the room; both owners see it in their queue and inbox (calling them and notifying affected operators come later). The room is accessible even if no feasible agreement is found.
 6. Humans compare and select a candidate. They speak or type in their own languages. Agents read the text and voice transcripts, distinguish hard constraints, preferences and corrections, and automatically revise affected candidates. Ambiguous inputs are clarified. There is no structured counter form.
 7. Both owners approve the same selected proposal ID and revision. A new selection or revision clears both approvals visibly. A veto or conversational counter returns to negotiation. If the selected plan is to wait, record a review condition and monitoring state with no burn.
 8. For a maneuver, re-screen the moved satellite against the whole catalog. A new conjunction returns to negotiation. Commit the exact schedule entry only while both approvals and its inputs remain current; a scheduled plan is never silently rewritten.
@@ -206,28 +210,30 @@ No agreement: show the candidates and shareable conflict categories. No response
 - As a dispatcher, I want each new incident and changed selected plan to ask for both approvals again.
 - As a dispatcher, I want the agreed maneuver compared with later evidence, with missing evidence made explicit.
 - As a head of operations, I want a reviewable report draft supported by incident records, with source coverage and missing fields identified.
-- As an affected third operator, I want notice of the proposed new path before the maneuver; the delivery channel remains a specification decision.
+- (Later) As an affected third operator, I want notice of the proposed new path in my inbox before the maneuver.
 
 ---
 
 ## 7. Demo scene and screens
 
-Two laptops show the same incident from different operator identities. The judge is A; a teammate is B and speaks Russian. Pin a real conjunction from the demo week's SOCRATES or public CDM data. Display snapshot time and sources; label demonstration policies and proposed actions as simulated. The following timing is a rehearsal target, not measured performance.
+> **Status: to be discussed.** The scene below is a draft from the final docs review (Oct 24). The team still has to agree on the exact flow, script and timing.
+
+Two laptops show the same incident from different operator identities, each signed in as a pre-created test user. The judge is A; a teammate is B and speaks Russian. The catalog is the pinned real snapshot of the demo week; the judge launches one simulated satellite whose prefilled orbit crosses a real catalog satellite. Display snapshot time and sources; label the simulated satellite, demonstration policies and proposed actions as simulated. The following timing is a rehearsal target, not measured performance.
 
 ### Scene step by step
 
 | Sec | What the judge does | What they see and hear |
 |---|---|---|
-| 0 | Opens the real incident from the queue or inbox | Real object IDs, TCA, supplied Pc where available, source epochs and a CelesTrak link |
-| 15 | Compares and selects a candidate | Multiple computed cards, assumptions and feasibility outcomes; A's private policy indicator, with B's private limits inaccessible |
+| 0 | Presses "Launch your satellite" on the prefilled form | The new object, in the simulated color, appears in the queue on a collision course with a real catalog satellite: the real object's IDs, source epochs and CelesTrak link, the TCA and the "simulated" label. The row turns red and blinks, with "agents working" |
+| 15 | Joins the room from the invitation; compares and selects a candidate | The Coordination Host speaks the five-line summary (Grok Voice); multiple computed cards, assumptions and feasibility outcomes; A's private policy indicator, with B's private limits inaccessible |
 | 30 | Approves that candidate revision | Exact proposal ID/revision and "A approved; waiting for B" |
-| 40 | Listens to B's new constraint in Russian | English translation preserving the original values; original wording accessible |
+| 40 | Listens to B's new constraint in Russian; it touches the proposed burn window (for example, an imaging pass at that time) | English translation preserving the original values; original wording accessible |
 | 50 | Reviews the automatically revised options | What changed and why; a new selected-plan revision and visible reset of both approvals |
-| 65 | Selects the revised candidate and approves again | B approves the same ID/revision; re-screen result, then schedule entry, or monitoring if both choose to wait |
+| 65 | Selects the revised candidate and approves again | B approves the same ID/revision; re-screen result, then Droid commits `schedule.json` and the room shows the commit's diff, or monitoring if both choose to wait |
 | 80 | Opens the evidence and log | Actual reference coverage and separate numerical errors; a separately labeled historical verification replay with promised-versus-observed evidence |
 | 90 | Previews report export | Operator, six-month period, event counts, coverage, missing fields and supporting records; no automatic filing |
 
-If the judge changes a policy after scheduling, show "review required" and a proposed revision; do not silently change the existing schedule. If the real case has fewer than two feasible candidates, choose a different sourced demo event or state the limitation; never fabricate feasible options.
+If the judge changes a policy after scheduling, show "review required" and a proposed revision; do not silently change the existing schedule. The prefilled orbit is chosen so that at least two feasible candidates exist; never fabricate feasible options.
 
 ### Screens
 
@@ -239,7 +245,7 @@ If the judge changes a policy after scheduling, show "review required" and a pro
 | 4. Audit log and reports | Shared messages, proposal history and approvals, scheduling results, promised-versus-observed evidence; operator/period selection, report preview and download | Keep a traceable record and prepare a reporting draft |
 | 5. Personal inbox | Relevant incidents, unread updates, current situation, satellite data, contacts/how to reach them, room and history | Remain useful when communication fails or an outcome is unresolved |
 
-Both laptops have simultaneous shared updates but company-scoped controls and private data. Backend authorization applies to every read, write and subscription; selecting a role in a URL is not authentication.
+Both laptops have simultaneous shared updates but company-scoped controls and private data. Backend authorization applies to every read, write and subscription; selecting a role in a URL is not authentication. There is no registration: operators log in as pre-created test users through Auth0 with sign-ups disabled.
 
 **Fallbacks on the table.** If voice is unavailable, translated text follows the same numerical-protection and revision workflow. Cached orbital snapshots preserve the real demo data. Offline two-laptop operation requires a tested local backend/LAN setup; cloud model and voice services remain unavailable without network, so use a labeled recording for those parts. An agent re-run retries processing and cannot duplicate a schedule entry or revive approvals.
 
@@ -256,17 +262,17 @@ The room lets each operator speak and read in their own language, alongside the 
 3. Translate the remaining language with room context, then restore and validate the protected values before display or speech. Missing or changed placeholders cause a retry or original-text fallback. Ambiguous speech recognition is clarified before changing a proposal.
 4. Deliver voice and text in the listener's language, with the original one click away. Do not replace newly spoken values with an older proposal's numbers.
 5. Feed text and voice transcripts to the agents with conversation history. Distinguish hard requirements, preferences, hypothetical ideas and corrections. Revise candidates automatically when relevant; unrelated speech does not reset approvals. Private policy values stay outside shared agent explanations.
-6. Record both shared language versions and the source of proposal revisions. Spoken approval must identify the current candidate/revision and authenticated speaker unambiguously; otherwise ask which plan they approve.
+6. Record both shared language versions and the source of proposal revisions. Approval is only a checkmark on the selected revision; speech never approves. When a call ends, the Coordination Host posts and reads a summary as an editable form, and both operators tick it (ROOM-13).
 
 ### Implementation options
 
 | Option | Chain | Role and constraint |
 |---|---|---|
-| A. Composite | STT (Deepgram / Whisper) → placeholder protection → Claude translation → restore/check → Cartesia TTS | Main controllable human translation path; translated speech is generated only after value checks |
-| B. Grok Voice | LiveKit / Grok Voice for the Coordination Host | Voice output containing decision-critical values must pass the same protected-text checks; unchecked speech-to-speech is not the authoritative proposal or approval channel |
+| A. Composite | Grok STT (`grok-voice-transcribe-2.0`, both languages) → placeholder protection → Claude translation → restore/check → Cartesia TTS | Main controllable human translation path; translated speech is generated only after value checks |
+| B. Grok Voice | LiveKit / Grok Voice (`grok-voice-latest`) for the Coordination Host | Voice output containing decision-critical values must pass the same protected-text checks; unchecked speech-to-speech is not the authoritative proposal or approval channel |
 | C. Text only | Room chat → protect → translate → restore/check | First implementation and voice fallback, with the same agent interpretation and approval rules |
 
-Build C first, then A; integrate B only with the same integrity requirements. Translation supports communication; it does not make a silent operator consent or turn a conversational acknowledgement into an approval.
+The live call is a LiveKit room. A Python translation worker, on the same host as the orbital service, runs chain A once per speaker and publishes the translated audio and captions for each listener's language (based on LiveKit's multi-user translator example). Build C first, then A; integrate B only with the same integrity requirements. xAI's docs list Russian for Grok STT; confirm with a short test clip before building on it. Translation supports communication; it does not make a silent operator consent or turn a conversational acknowledgement into an approval.
 
 ---
 
@@ -278,8 +284,9 @@ Use public orbit sources, reference conjunction records and operator metadata. S
 |---|---|---|
 | CelesTrak GP | Public orbital elements | Base catalog for deterministic screening; obey source fetch limits |
 | CelesTrak SupGP | Operator-supplied orbital elements where available | A second calculation for the same event; display the two values and their min–max spread as source disagreement |
-| CelesTrak SOCRATES | Reference conjunction list with encounter metrics | Validate the whole eligible reference set on a pinned snapshot; source a real demo-week pair; retain source metric definitions such as maximum probability |
+| CelesTrak SOCRATES | Reference conjunction list with encounter metrics | Validate the whole eligible reference set on a pinned snapshot; source the real pairs shown in the queue; retain source metric definitions such as maximum probability |
 | Space-Track `cdm_public` | Public conjunction records, supplied Pc and source flags, subject to account access | Prefer a matching CDM probability with object IDs, encounter time and data version; retain provenance and compare reference coverage |
+| Space-Track `gp_history` | Historical element sets, subject to account access and the same request limits | The exact epochs SOCRATES used, for epoch-matched validation; before/after orbits for the verification replay |
 | KeepTrack API v4 | Object metadata where available, subject to key/access terms | Support satellite and owner context; unavailable contact information remains explicit |
 | Sourced historical orbital observations and maneuver record | Before/after evidence for a documented maneuver | Separate promised-versus-observed replay, such as an ISS reboost or documented Starlink burn, with any demonstration agreement labeled simulated |
 
@@ -294,7 +301,7 @@ Use public orbit sources, reference conjunction records and operator metadata. S
 
 **Scope.** Historical supplied Pc and distances may be plotted. There is no prediction of future risk estimates, including a persistence baseline, threshold forecast or benchmark comparison.
 
-**Cache and demo.** Cache permitted snapshots and provenance, keeping credentials out of the repository and respecting redistribution terms. Pin a real event from the demo week early enough to rehearse. Live refresh updates evidence and invalidates affected approvals when inputs materially change. Cached data supports reproducible replay; it does not substitute for cloud services or a running backend.
+**Cache and demo.** Cache permitted snapshots and provenance, keeping credentials out of the repository and respecting redistribution terms: CelesTrak snapshots may be committed, Space-Track data stays in a local, git-ignored cache. Pin the demo week's catalog snapshot and the simulated satellite's prefilled orbit early enough to rehearse. Live refresh updates evidence and invalidates affected approvals when inputs materially change. Cached data supports reproducible replay; it does not substitute for cloud services or a running backend.
 
 ---
 
@@ -305,15 +312,16 @@ Use public orbit sources, reference conjunction records and operator metadata. S
 | Task | Model | Why |
 |---|---|---|
 | Risk Monitor, Incident Analyst, Operator Advocates A/B, Maneuver Scheduler, Maneuver Verifier: reasoning, tool calling, explaining decisions | Claude (Sonnet by default, Haiku for Risk Monitor where speed and cost matter) | The most reliable tool use and structured output available; Anthropic judges score "thoughtful use of Claude" |
+| Speech-to-text in the live call, both languages | Grok STT (`grok-voice-transcribe-2.0`) | xAI's docs list Russian; confirm with a test clip |
 | Translation in the room with conjunction context (STT → translate → TTS mode) | Claude | Translate protected text; restore and validate source values before display or speech |
-| Coordination Host's voice | Grok Voice | Use the checked text/value path in section 8 for technical statements and approvals; sponsor integration cannot bypass it |
-| Independent check of the rationale ("second doctor") | Grok (text API), optional | A second vendor looks at the same Maneuver Scheduler explanation and says whether it agrees; if not, we highlight it to the human. A nice answer to "who checks the agents" |
+| Coordination Host's voice | Grok Voice (`grok-voice-latest`) | Use the checked text/value path in section 8 for technical statements and approvals; sponsor integration cannot bypass it |
+| Independent check of the rationale ("second doctor", AGT-6) | Grok (text API) | A second vendor looks at the same proposal rationale and says whether it agrees; if not, the room shows a disagreement flag. A nice answer to "who checks the agents" |
 
 **Why not "everything on Grok."** Text Grok gives no track advantage (SpaceXAI looks at Grok Voice/Imagine + Cursor), and losing the Anthropic track over it would be a shame. Plus we know tool use on Claude; 36 hours is no time to learn a new vendor on the critical path.
 
 **Why not "everything on Claude."** Claude has no speech-to-speech mode; through STT → Claude → TTS the latency is 1.5–2.5 s, noticeable in live dialogue. Grok Voice closes exactly that gap, and there is a separate prize for it.
 
-**Keys and limits.** Anthropic key: our own; Haiku for Risk Monitor costs pennies even polling every 5 minutes. `XAI_API_KEY`: via the SpaceXAI track (check with the sponsor on Friday whether they give credits). Bitdeer Model Studio only if we want a third model to compare in the rationale; not on the critical path.
+**Keys and limits.** Anthropic key: our own; Haiku for Risk Monitor costs pennies even polling every 5 minutes. `XAI_API_KEY`: ask at the SpaceXAI table whether they give credits; Grok STT, Grok Voice and the second-opinion check all need it. Bitdeer Model Studio only if we want a third model to compare in the rationale; not on the critical path.
 
 **What we tell the judge.** "Three different providers, not because it's fashionable, but because each role has its own job: one thinks, another speaks, a third double-checks. None of them presses the maneuver button."
 
@@ -327,27 +335,27 @@ Use public orbit sources, reference conjunction records and operator metadata. S
 
 | Sponsor | Role in OrbitCall | What they require | Hours | Prize |
 |---|---|---|---|---|
-| Anthropic (Claude) | Brain of all reasoning agents + translation with context | A named community (small satellite operators), a lived problem (interviews/quotes from dispatchers), works on Monday, thoughtful use of Claude | 0 beyond the main work | Anthropic track |
+| Anthropic (Claude) | Brain of all reasoning agents + translation with context | A named community (small satellite operators), a lived problem (interviews/quotes from dispatchers), works on Monday, thoughtful use of Claude | 0 beyond the main work | Anthropic track (prize "Coming soon" on the Hive page) |
 | ~~Fetch.ai (uAgents / Agentverse / ASI:One)~~ **Dropped Oct 24** | Each role is a separate uAgent with an address; Operator Advocates A and B really negotiate via messages; the main scenario is reachable from ASI:One chat | Register on Agentverse, Agent Chat Protocol, innovationlab + hackathon badges in README, agent addresses, 3–5 min video, submission via the Submission Agent in ASI:One | 5–6 | $1,250 / $750 / $500 + two × $250 |
 
 ### Tier 2: strengthen the project if we're on plan
 
 | Sponsor | Role in OrbitCall | What they require | Hours | Prize |
 |---|---|---|---|---|
-| Convex | Database and event bus: conjunction queue, room state, decision log; `useQuery` gives live updates on both laptops with no custom websockets; actions call CelesTrak/Space-Track; the scheduler wakes Risk Monitor | Convex must be the primary backend | 3–4 (saves more than it costs) | $5,000 |
-| xAI Grok Voice | Coordination Host's voice, with technical values checked through section 8's text path | SpaceXAI track: Cursor + Grok Voice; model `grok-voice-think-fast-1.0`, LiveKit plugin `livekit-agents[xai]` | 4–5 | Keyboards (raffle) + voice demonstration |
-| Factory Droid SDK | Maneuver Scheduler: Droid writes the maneuver file to the operator's repo and returns a diff; the human sees "what will change" before approve | `pip install droid-sdk`, `FACTORY_API_KEY`, `restrict_tools` to edit/create only, autonomy OFF, `on_permission` → our approve | 3 | $2,000 |
-| Cartesia | TTS after source values are restored and checked in the human translation path; also voices notifications | Voice must be core, not decoration; for us it is | 1–2 | Cartesia track |
+| Convex | Database and event bus: conjunction queue, room state, decision log; `useQuery` gives live updates on both laptops with no custom websockets; actions call the Python orbital service and CelesTrak/Space-Track; the scheduler wakes Risk Monitor | Convex must be the primary backend (it is the source of truth; heavy orbital computation runs in the Python service) | 3–4 (saves more than it costs) | $5,000 on the Hive page; Devpost lists $1,308 — confirm at the Convex table |
+| xAI Grok (STT + Voice) | Grok STT for both languages in the live call; Coordination Host's voice, with technical values checked through section 8's text path | SpaceXAI track: the project must be built with Cursor and use the Grok Imagine or Voice API; host model `grok-voice-latest` (`grok-voice-think-fast-1.0` is not in xAI's docs), LiveKit plugin `livekit-agents[xai]` | 4–5 | Custom Cursor mechanical keyboard per winning team member; MLH A-Team raffle (Cursor + Grok Bot) |
+| Factory Droid SDK | Maneuver Scheduler: Droid writes the maneuver file to `operators/<operator>/schedule.json` in the demo repo and returns a diff; the human sees "what will change" before approve | `pip install droid-sdk`, `FACTORY_API_KEY`, `restrict_tools` to edit/create only in that folder, autonomy OFF, `on_permission` → our approve; Droid does real work in the running product, and the README explains where and how | 3 | $2,000 |
+| Cartesia | TTS after source values are restored and checked in the human translation path; also voices notifications | Voice must be core, not decoration; for us it is. A 2-minute, demo-first presentation; README with setup, Cartesia features used and known limitations; no keys in the repo | 1–2 | Cartesia track |
 | Backboard | Private agent context between incidents, such as a past concession; never standing authorization or reused approval | `pip install backboard-sdk`, `memory="Auto"`, $5 credits | 1 | Backboard track |
 | Tiger Data | Time series of Pc/distance per event: a "how risk grew" chart on screen and for Maneuver Verifier | Postgres + TimescaleDB, free tier | 1–2 | Tiger track |
-| Auth0 | Login for two operators on two laptops, roles "owner of SAT-A / SAT-B"; approve is signed by identity | Any use of Auth0 | 1 | Auth0 track |
+| Auth0 | Login for pre-created test users, one per operator (sign-ups disabled, no registration), roles "owner of SAT-A / SAT-B"; Convex verifies the identity; approve is signed by identity | Any use of Auth0 | 1 | MLH Auth0 track |
 
 ### Tier 3: almost free
 
 - **.Tech domain:** orbitcall.tech, 10 minutes, a separate prize for using it.
 - **Mana / Notability:** check the terms on Friday; if it's "any project using X," we take it.
 - **Microsoft Built for the Real World:** not a technology but criteria: understanding the customer, measurable benefit, path to production, responsible design. Our section 12 covers this; we just submit.
-- **Human First / Planet First / general tracks:** submit by description, no code changes.
+- **Cal Hacks tracks** (First/Second/Third Overall, Most Creative, Most Technically Complex, Best People-First, Best Planet-First, Hacker's Choice), **MLH Best Use of Gen AI** (Claude), **Meta: Bringing People Closer Together with AI**, **Figma** (if the mockups are made in Figma), **GoDaddy Registry domain:** submit by description, no code changes.
 
 ### Tier 4: ask on Friday, decide on site
 
@@ -363,7 +371,7 @@ Bright Data / Apify (data comes as direct CSV, no scraping needed) · Visa / x40
 
 The original sponsor estimates were rough and preceded the accepted product decisions. Re-estimate against section 13's required work; privacy, candidate selection, approval integrity, protected translation and reporting take priority over optional integrations.
 
-**Cut rule at H24:** if there is no working voice call by Saturday 18:00, Factory, Backboard and Tiger go first, and Auth0 integration may be replaced with pre-provisioned, server-authorized operator sessions. A URL role switch alone is only a simulated UI demo and cannot satisfy privacy or identity requirements.
+**Cut rule at H24:** if there is no working voice call by H24 (Saturday 21:00), Factory, Backboard and Tiger go first, and Auth0 may be replaced by the same pre-created test users in Convex Auth; server-side identity stays. A URL role switch alone is only a simulated UI demo and cannot satisfy privacy or identity requirements.
 
 ---
 
@@ -372,14 +380,14 @@ The original sponsor estimates were rough and preceded the accepted product deci
 Each item is a decision we made and a short answer for the table. Freya learns the first eight.
 
 1. **Why pairs, not groups?** A conjunction is always two objects at one point at one time; triples are statistically rare. But one satellite can be in several pairs in a week, so after a maneuver Maneuver Scheduler recomputes the moved satellite against the whole catalog, not only against its partner.
-2. **Who decides who moves?** Agents evaluate multiple computed candidates against private company policies. Humans compare them, select one and both approve the same proposal ID/revision. A different selection or revised plan resets both approvals; each new incident asks again. Third parties are notified if the maneuver affects them; the channel remains to be specified.
+2. **Who decides who moves?** Agents evaluate multiple computed candidates against private company policies. Humans compare them, select one and both approve the same proposal ID/revision. A different selection or revised plan resets both approvals; each new incident asks again. Notifying affected third parties comes after the base build; only the two owners decide.
 3. **What if they do not agree?** The room and personal inbox keep the evidence, candidate proposals, shareable disagreement categories and contact methods accessible. Operators continue by voice or text; agents follow the discussion. No agreement means no jointly authorized schedule entry.
 4. **What if an operator does not respond?** Keep the incident, public data and available contacts in the inbox. Show response status without inferring consent. Operators can contact each other or act through their own operational procedures; OrbitCall does not bypass its requirement for both approvals. Internal policy values remain private even when companies participate.
 5. **How is the promise checked?** The Maneuver Verifier compares the agreed revision with later observations, using an object-specific noise baseline and documented method. It records evidence consistent with the plan, mismatch or insufficient data. Public orbital elements alone do not prove exact burn time or delta-v.
 6. **When to act: now or wait for refinement?** Industry thresholds: Pc > 1e-4 and TCA < 72 h is red, we wake the humans. Between 1e-5 and 1e-4 is yellow, agents prepare options, humans aren't bothered. We show GP/SupGP source disagreement with epochs, not a statistical confidence band; missing Pc is explicit. Waiting remains a joint decision with a review condition.
 7. **How are constraints represented?** Each company controls its own private hard constraints and preferences. Its advocate returns candidate feasibility and shareable categories, not raw fuel or mission limits. Humans see the actual proposed maneuver parameters and decide among the feasible alternatives.
-8. **What can the agent do on its own?** Agents gather evidence, compute, propose, contact and translate. Only two authenticated approvals for the exact current candidate revision, plus its re-screen, authorize the schedule write. A spoken approval must identify that choice unambiguously. Nothing commands a satellite.
-9. **How do you check the agent's explanations?** Numbers come from deterministic tools and every explanation is checked against them. A second model remains an optional review layer; it does not replace numerical checks or human approval.
+8. **What can the agent do on its own?** Agents gather evidence, compute, propose, contact and translate. Only two authenticated approvals for the exact current candidate revision, plus its re-screen, authorize the schedule write. An approval is a checkmark, never speech. Nothing commands a satellite.
+9. **How do you check the agent's explanations?** Numbers come from deterministic tools and every explanation is checked against them. A second model (Grok) reads each rationale and flags disagreement in the room; it does not replace numerical checks or human approval.
 10. **The log.** Shared agent messages, both languages of human conversation, candidate choices and revisions, approvals with identity/time, scheduling and promised-versus-observed evidence form one immutable incident record. Private policy values and internal context are excluded. The operator can export a six-month report draft and supporting event records.
 11. **Scale.** Screening and numerical candidate calculations are deterministic code. Agent negotiation runs on the top of the queue. Measure runtime and model cost on the selected catalog and demo workflow before quoting performance figures.
 12. **Public data is coarse.** Show source epochs, GP/SupGP spread and missing evidence explicitly. Use supplied Pc matched to the event/version; do not calculate a substitute probability or claim the original Pc describes a proposed burn. Candidate geometry is indicative. Precise ephemeris/covariance integration requires additional implementation and validation.
@@ -398,18 +406,18 @@ Each item is a decision we made and a short answer for the table. Freya learns t
 
 Counted from the start of hacking Friday evening (H0 ≈ 21:00). Devpost deadline is Sunday 9:00 (H36), judging 10:30–12:30.
 
-**Roles.** Adil: queue/source links, inbox, candidate comparison, approval resets, privacy indicators and report preview. Andrew: source matching, screening/validation, computed candidates, verification evidence and report aggregation. Kostya: private policy access, agent negotiation, approval/schedule authorization, protected translation and optional sponsor integrations. Freya: real-event demo, report-template requirements, pitch, video and scenario checks. Accepted scope takes precedence over optional integrations; estimates must be rechecked against working progress.
+**Roles.** Adil: queue/source links, inbox, candidate comparison, approval resets, privacy indicators and report preview. Andrew: the Python orbital service and its host, source matching, screening/validation, the simulated satellite's orbit, computed candidates, verification evidence and report aggregation. Kostya: private policy access, agent negotiation, approval/schedule authorization, protected translation, the live-call translation worker and optional sponsor integrations. Freya: real-event demo, report-template requirements, pitch, video and scenario checks. Accepted scope takes precedence over optional integrations; estimates must be rechecked against working progress.
 
 | Window | Adil (UI) | Andrew (data) | Kostya (agents) | Freya (product) |
 |---|---|---|---|---|
-| H0–H2, Fri 21–23 | Repo, Next.js + Convex, two stub pages `/queue` and `/room/[id]` | Download and commit the cache: GP, SupGP (starlink, oneweb, planet), SOCRATES CSV, cdm_public, KeepTrack brief | Keys: Anthropic, xAI (ask at the SpaceXAI table), Factory. Convex schema: events, private policies, rooms, candidates/revisions, approvals, inbox, shared log; server-side access boundaries | Agree with Atlassian/Hyphenate on criteria; pin a sourced demo-week pair and the script from section 7; label simulated policies and participants |
-| H2–H6, Fri 23 – Sat 3 | Queue and inbox: current evidence, source epochs, CelesTrak links, existing colors/status | SGP4 (sgp4 npm or python-sgp4), screen active vs. catalog with a 3-day initial target pending Q1, retain source metadata; compute a small candidate grid | Risk Monitor cron (5-minute initial target pending Q2): ranks current supplied Pc/TCA. Incident Analyst explains computed candidates; advocates privately evaluate policies | One-page policies for operators A and B (fuel, mission, language, contact); first pitch draft |
-| ✅ **H6** | **Queue is live, events from the real catalog, Incident Analyst writes a summary. Sleep 3–4 hours in shifts.** | | | |
+| H0–H2, Fri 21–23 | Repo, Next.js + Convex, Auth0 login for the pre-created test users, two stub pages `/queue` and `/room/[id]` | Python 3.12 service on Railway or Fly (never sleeps). Download the cache: GP, SupGP (starlink, oneweb, planet), SOCRATES CSV, cdm_public, gp_history, KeepTrack brief; commit CelesTrak snapshots, keep Space-Track data in a git-ignored local cache | Keys and accounts: Anthropic, xAI (ask at the SpaceXAI table), Cartesia, LiveKit Cloud, Auth0 (test users, sign-ups off), Factory, Space-Track, KeepTrack; Cursor for everyone. Convex schema: events, private policies, rooms, candidates/revisions, approvals, inbox, shared log, `simulated` flag; server-side access boundaries | Agree with Atlassian/Hyphenate on criteria; ask the Convex table (prize amount, external Python service) and the SpaceXAI table (does Grok STT count as the Voice API); with Andrew pick the real target satellite and the simulated satellite's prefilled orbit; the script from section 7; label simulated objects, policies and participants |
+| H2–H6, Fri 23 – Sat 3 | Queue and inbox: current evidence, source epochs, CelesTrak links, existing colors/status | SGP4 (python-sgp4) in the Python service, screen active vs. catalog over a 3-day horizon, retain source metadata; build the simulated satellite's orbit (SCR-10); compute a small candidate grid | Risk Monitor cron every 5 minutes: ranks current supplied Pc/TCA. Incident Analyst explains computed candidates; advocates privately evaluate policies | One-page policies for operators A and B (fuel, mission, language, contact); first pitch draft |
+| ✅ **H6** | **Queue is live, events from the real catalog, Incident Analyst writes a summary. Sleep 3–4 hours in shifts.** Status at the final docs review (Sat ~03:30): no code yet, so this checkpoint was missed; it becomes the first one to reach. H14, H24 and H30 stay fixed. | | | |
 | H6–H14, Sat 3–11 | Room: compare/select candidates, free-text discussion, proposal ID/revision, visible approval reset, own-policy privacy indicator | Validation: full eligible SOCRATES snapshot recall plus timing/distance errors and input differences; supplied Pc matching; GP/SupGP spread | Operator Advocates A/B with private policies and shareable outcomes; server-authorized approvals bound to selection/revision; checked text translation | Run the script manually on what exists; list what a judge won't understand without explanation → to Adil as captions |
-| ✅ **H14** | **Text decision path: real event → multiple candidates → select/approve → conversational counter → revision/reset → both approve the same version. Verify that B cannot read A's policy.** | | | |
-| H14–H24, Sat 11–21 | Shared log with promised-versus-observed view; proposal diff; report preview; supporting orbit view | Re-screen selected candidates; historical verification replay with baseline noise and pending-data state; six-month report counts, deduplication, coverage and supporting CSV | Voice: checked STT → protect/translate/restore → TTS, originals accessible; Grok Host only with the same integrity checks; conversation updates candidates automatically | Hyphenate workshop; second pitch draft with timing; Devpost draft; README |
+| ✅ **H14** | **Text decision path: launched simulated satellite against the real catalog → multiple candidates → select/approve → conversational counter → revision/reset → both approve the same version. Verify that B cannot read A's policy.** | | | |
+| H14–H24, Sat 11–21 | Shared log with promised-versus-observed view; proposal diff; report preview; supporting orbit view | Re-screen selected candidates; historical verification replay with baseline noise and pending-data state; six-month report counts, deduplication, coverage and supporting CSV | Live call: LiveKit room plus the Python translation worker (Grok STT → protect/translate/restore → Cartesia TTS), originals accessible; Grok Voice Host only with the same integrity checks; second-model check (AGT-6); conversation updates candidates automatically | Hyphenate workshop; second pitch draft with timing; Devpost draft; README |
 | ✅ **H24, Sat 21:00** | **Check accepted scope first: approval/version integrity, privacy, real data, candidate choice, translation checks, verification evidence, validation and report draft. Optional sponsor work follows only if these paths work.** | | | |
-| H24–H30, Sat 21 – Sun 3 | Polish: absent operator, no feasible option, wait, missing Pc/evidence, report missing fields; policy edit flags scheduled plan for review | Review report field mapping and export coverage; historical observation chart only; test cached snapshot and labeled fallback | Validate stale approval rejection, atomic schedule authorization, privacy across reads/subscriptions/logs/exports, placeholder failures and fresh approvals for a repeat incident; optional integrations only afterward | Record a 3–5 min demo video (the backup demo if the network drops); pitch run with a timer ×3 |
+| H24–H30, Sat 21 – Sun 3 | Polish: absent operator, no feasible option, wait, missing Pc/evidence, report missing fields; policy edit flags scheduled plan for review | Review report field mapping and export coverage; historical observation chart only; test cached snapshot and labeled fallback | Validate stale approval rejection, atomic schedule authorization, privacy across reads/subscriptions/logs/exports, placeholder failures and fresh approvals for a repeat incident; test the local Convex backend over LAN (SYNC-3); optional integrations only afterward | Record a 3–5 min demo video (the backup demo if the network drops) plus a 2-minute demo-first cut for Cartesia; pitch run with a timer ×3 |
 | ✅ **H30, Sun 3:00** | **Features frozen. Only bugs on the demo path from here.** | | | |
 | H30–H36, Sun 3–9 | Demo run on two laptops on venue network ×5; screenshots for Devpost | Refresh if available; retain the rehearsed real demo-week snapshot and show its timestamp; rerun measured validation if inputs change | Keys in `.env` and not in the repo | Devpost by 8:30 with the table number, all tracks ticked; printout of section 12 answers; team at the table at 10:15 |
 
@@ -427,7 +435,7 @@ Counted from the start of hacking Friday evening (H0 ≈ 21:00). Devpost deadlin
 
 The analysis's other proposed cuts were not adopted by the latest decision; optional features remain subject to this cut order. Forecasting and M3/S2/S4/S5 are already excluded, not reserve work to add later.
 
-**Rules for the 36 hours.** One branch, main; deploy to Vercel + Convex from H2 so the demo is always at a URL. No new ideas after H6; everything new goes into LATER.md. Sleep in pairs: Adil + Freya Sat 3–7, Andrew + Kostya Sat 7–11, same the second night. Every 6 hours Freya runs the demo as the judge, without asking the developers where to click.
+**Rules for the 36 hours.** One branch, main; deploy to Vercel + Convex from H2 so the demo is always at a URL. Write the code in Cursor (the SpaceXAI track requires "built with Cursor"); list Cursor and Claude Code in the Devpost submission. No new ideas after H6; everything new goes into LATER.md. Sleep in pairs: Adil + Freya Sat 3–7, Andrew + Kostya Sat 7–11, same the second night. Every 6 hours Freya runs the demo as the judge, without asking the developers where to click.
 
 ---
 
@@ -435,7 +443,7 @@ The analysis's other proposed cuts were not adopted by the latest decision; opti
 
 | Who | What it is | What's missing | Our answer at the table |
 |---|---|---|---|
-| SpaceATC (GitHub Rishet11/spaceatc, FAR AWAY 2026) | LangGraph agent, SGP4, 3D globe, synthetic conjunction scenarios; 1 star, no prize | Live catalog, a second party, humans in the loop, post-check | "Our demo uses a sourced real event, two operators approving the same revision, and a separately labeled historical evidence replay" |
+| SpaceATC (GitHub Rishet11/spaceatc, FAR AWAY 2026) | LangGraph agent, SGP4, 3D globe, synthetic conjunction scenarios; 1 star, no prize | Live catalog, a second party, humans in the loop, post-check | "Our demo runs on the real catalog, with two operators approving the same revision and a separately labeled historical evidence replay" |
 | PARLEY (lablab.ai Band of Agents, June 2026) | Six role-playing agents (incl. "Oracle," "Arbiter") negotiate a maneuver; data source not named; 0 likes, no prize | Real data, operator policies, a human, execution | "An arbiter decides for the operators; no operator will sign up for that. Our agents propose, humans approve" |
 | Slingshot Beacon (since 2022, free) | Coordination platform: operators see conjunctions, share ephemerides, message each other | Prioritization, policy-based negotiation, voice, languages, execution check | "Beacon is a phone book and a bulletin board. OrbitCall is the dispatcher who calls and checks what was done. We'd happily take their ephemerides as a source" |
 | Space Data Association (since 2009) | A closed club of large operators (Intelsat, SES, Eutelsat, Inmarsat), mostly GEO | Small operators, LEO dynamics, openness | "For those not in the club" |
@@ -471,4 +479,4 @@ The analysis's other proposed cuts were not adopted by the latest decision; opti
 
 **Sponsors**
 
-- Cal Hacks 13.0 track pages, documentation for Fetch.ai Innovation Lab, Convex, SpacetimeDB, Factory Droid SDK, xAI Grok Voice, LiveKit, Cartesia, Backboard, Tiger Data (links in section 11 by package and model names).
+- Cal Hacks 13.0 track pages (Devpost and the Hive prize page), documentation for Convex, SpacetimeDB, Factory Droid SDK, xAI Grok Voice, LiveKit, Cartesia, Backboard, Tiger Data (links in section 11 by package and model names).

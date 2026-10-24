@@ -45,8 +45,8 @@ flowchart TD
 1. **Risk Monitor** propagates the catalog with SGP4, finds close pairs, and ranks them using current supplied probability and time to closest approach. Red (Pc > 1e-4 and TCA < 72 h) wakes the agents. Missing probability is explicit; there is no risk forecast.
 2. **Incident Analyst** prepares a five-line summary and multiple computed proposals, initially 2–3 when feasible, showing who moves, timing, delta-v, estimated consequences and assumptions. Waiting can be an option with a review condition.
 3. **Operator Advocates A and B** evaluate candidates using their own private company policies. They exchange feasibility outcomes and constraint categories; raw policy values are inaccessible to the other side.
-4. **Coordination Host** opens the room, contacts the relevant operators, translates and logs. Each person also has a persistent inbox with incident details, operator contacts and history, including when the other operator is absent.
-5. **Two humans** compare and select a candidate, discuss it, and approve or veto that exact revision. Counters are ordinary voice or text, with automatic agent revisions. Switching the selected candidate or revising it visibly resets both approvals. Every new incident asks both people again.
+4. **Coordination Host** opens the room, translates, logs and, when a call ends, posts and reads a summary of what was agreed. Each person also has a persistent inbox with incident details, operator contacts and history, including when the other operator is absent.
+5. **Two humans** compare and select a candidate, discuss it in the room's always-on chat or optional live call, and approve that exact revision by ticking a checkmark, or veto it. Speech never approves. Counters are ordinary voice or text, with automatic agent revisions. Switching the selected candidate or revising it visibly resets both approvals. Every new incident asks both people again.
 6. **Maneuver Scheduler** re-screens the moved satellite against the whole catalog and records only the currently approved maneuver. A new conflict returns to discussion; a wait agreement schedules no burn.
 7. **Maneuver Verifier** compares later observations with the agreed plan, showing evidence consistent with the plan, a mismatch, or insufficient data. The shared record supports an operator-scoped six-month report draft and supporting event export.
 
@@ -65,19 +65,21 @@ Principles:
 | Layer | Choice |
 |---|---|
 | Frontend | Next.js, globe.gl / CesiumJS |
-| Backend, live state, scheduler | Convex |
-| Orbital mechanics | SGP4 (`sgp4` npm or `python-sgp4`) |
+| Backend, live state, scheduler | Convex: the single source of truth for events, rooms, messages, proposals, approvals, policies, inbox and log; cron and scheduled functions; agent calls |
+| Orbital mechanics | A separate Python service (`python-sgp4`, Python 3.12): catalog screening, re-screen, verification, validation and the simulated satellite's orbit. It keeps the catalog snapshot; Convex calls it and stores the results. `satellite.js` only draws orbits in the browser |
 | Reasoning agents, translation | Claude (Sonnet; Haiku for Risk Monitor) |
 | Agent runtime | Our own backend: each agent is a separate Claude call with its own instructions and data access; agent messages are stored with the incident state. No agent framework. Fetch.ai was dropped on Oct 24, 2026 |
 | Orbit data format | OMM (JSON / CSV) only, no TLE |
-| Voice | STT → protect values → Claude translation → restore/check → TTS; text fallback. **Russian:** xAI Grok speech-to-text and voice (Cartesia's STT has no Russian). **Other languages:** Cartesia. Grok Voice via LiveKit for the Coordination Host under the same value checks |
-| Open | Russian on Grok STT / TTS: confirm with a short test clip; Cartesia TTS supports Russian as a fallback for voice output. Grok voice model name: `grok-voice-think-fast-1.0` is not in xAI's docs, `grok-voice-latest` is the fallback — decide later |
-| Optional | Factory Droid SDK (Maneuver Scheduler diff), Backboard (agent memory), Tiger Data (Pc time series), Auth0 (two operator roles) |
-| Deploy | Vercel + Convex |
+| Voice | Live call in a LiveKit room. A Python translation worker runs one chain per speaker: Grok STT (`grok-voice-transcribe-2.0`, both languages) → protect values → Claude translation → restore/check → Cartesia TTS. The Coordination Host speaks through Grok Voice (`grok-voice-latest`) via LiveKit under the same value checks. Text fallback |
+| Open | Russian on Grok STT is listed in xAI's docs; confirm with a short test clip. `grok-voice-think-fast-1.0` is not in xAI's docs, so the host uses `grok-voice-latest` |
+| Sign-in | Pre-created test users only, one per operator; no registration. Login through Auth0 with sign-ups disabled; Convex verifies the identity on every read, write and subscription |
+| Optional | Factory Droid SDK (writes the approved maneuver file and its diff), Backboard (agent memory), Tiger Data (Pc time series) |
+| Development | Cursor (required by the SpaceXAI track) |
+| Deploy | Vercel + Convex; the Python service and the LiveKit translation worker on Railway or Fly (a process that does not sleep) |
 
 ## Data sources
 
-Public sources, with accounts or keys where required. The demo uses a real pair from the demo week's SOCRATES or public CDM snapshot, pinned with source timestamps for reproducibility. Demo operator policies and proposed actions are labeled simulated. Verification uses a separately labeled historical maneuver replay.
+Public sources, with accounts or keys where required. The demo runs on the demo week's real catalog snapshot, pinned with source timestamps for reproducibility. The demo conjunction comes from one simulated satellite entered on stage ("Launch your satellite"), whose orbit is built to cross a real catalog satellite at a chosen time; it carries a `simulated` flag and is labeled everywhere. Demo operator policies and proposed actions are labeled simulated. Verification uses a separately labeled historical maneuver replay.
 
 | Source | Role |
 |---|---|
@@ -85,6 +87,7 @@ Public sources, with accounts or keys where required. The demo uses a real pair 
 | CelesTrak SupGP | Operator-supplied orbits; GP vs. SupGP shows source disagreement, not a statistical uncertainty interval |
 | CelesTrak SOCRATES | Reference #1: validate our screening, source of live pairs |
 | Space-Track `cdm_public` | Reference #2: public CDMs and supplied probability matched to the event, epoch and data version |
+| Space-Track `gp_history` | Historical element sets: the epochs SOCRATES used (validation) and before/after orbits for the verification replay |
 | KeepTrack API v4 | Owner, purpose and country metadata for the Coordination Host |
 
 Validation reports recall over the full eligible SOCRATES list for a defined snapshot and catalog scope, plus separate timing/distance errors. Counts, exclusions and input differences are visible; the pitch uses measured results only. Every queue row links to the relevant CelesTrak source or object data.
@@ -102,7 +105,6 @@ Validation reports recall over the full eligible SOCRATES list for a defined sna
 - [Plan v1](docs/plan-v1.md) — the full pre-hackathon kit: problem, evidence, architecture, demo script, data sources, sponsors, judge Q&A, 36-hour plan.
 - [Functionality](docs/functionality.md) — what OrbitCall does: actors, domain objects, lifecycle, functions by area, open questions for the specification.
 - [Feature decisions](docs/analysis.md) — accepted and skipped recommendations, their rationale, and the remaining proposals that have not been adopted.
-
 ## Team
 
 - **Kostya, Andrew** — backend
