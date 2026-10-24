@@ -361,6 +361,69 @@ body {
   border-radius: 99px;
 }
 
+/* ------------------------------------------------------------ agents */
+
+/* spinning arc around a node while it works */
+.node-ring {
+  position: absolute;
+  inset: -3px;
+  padding: 1.5px;
+  background: conic-gradient(from 0deg, transparent 0 55%, var(--ring) 85%, #fff 100%);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: spin 1.1s linear infinite;
+  pointer-events: none;
+}
+
+/* light sweeping across a queue row while its agents run */
+.agent-sheen {
+  background: linear-gradient(100deg, transparent 30%, rgba(79, 140, 255, 0.1) 50%, transparent 70%);
+  background-size: 250% 100%;
+  animation: sheen 2.4s linear infinite;
+  box-shadow: inset 0 0 0 1px rgba(79, 140, 255, 0.2);
+}
+
+@keyframes sheen {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* dashed edge marching toward a person who needs to answer */
+.edge-march {
+  animation: march 0.8s linear infinite;
+}
+
+@keyframes march {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+/* blinking caret at the end of streamed reasoning */
+.caret::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 11px;
+  margin-left: 2px;
+  vertical-align: -1px;
+  background: currentColor;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
 /* boot screen scanline shimmer */
 .shimmer {
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.35), #fff, rgba(255, 255, 255, 0.35));

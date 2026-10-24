@@ -94,6 +94,20 @@ export const sfx = {
   close() {
     tone(640, 0.1, { gain: 0.08, to: 420 });
   },
+  /** Two-tone alert when an event turns red. */
+  alert() {
+    tone(880, 0.12, { gain: 0.12, type: "triangle" });
+    tone(660, 0.16, { gain: 0.1, type: "triangle", delay: 0.13 });
+  },
+  /** Soft rising chime when a proposal is ready or a step completes. */
+  chime() {
+    tone(784, 0.18, { gain: 0.08 });
+    tone(1175, 0.24, { gain: 0.06, delay: 0.08 });
+  },
+  /** Barely audible tick for streamed agent steps. */
+  tick() {
+    tone(3200, 0.02, { gain: 0.025 });
+  },
   /** Unlocks the AudioContext on the first gesture. */
   unlock() {
     audio();

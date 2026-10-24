@@ -6,12 +6,13 @@ import { useEffect, useState } from "react";
 import { fmtUtc } from "@/lib/format";
 import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
+import { useOps, type Tab } from "@/lib/ops/store";
 import { LogoMark } from "./Logo";
 import { Tooltip } from "./Tooltip";
 
-const NAV = [
+const NAV: { id: Tab; label: string; ready: boolean }[] = [
   { id: "orbit", label: "Orbit", ready: true },
-  { id: "conjunctions", label: "Conjunctions", ready: false },
+  { id: "conjunctions", label: "Conjunctions", ready: true },
   { id: "rooms", label: "Rooms", ready: false },
   { id: "policy", label: "Policy", ready: false },
   { id: "audit", label: "Audit log", ready: false },
@@ -21,6 +22,8 @@ export function Navbar() {
   const soundOn = useOrbit((s) => s.soundOn);
   const set = useOrbit((s) => s.set);
   const source = useOrbit((s) => s.catalog?.meta.source);
+  const tab = useOps((s) => s.tab);
+  const redCount = useOps((s) => s.events.filter((e) => e.risk === "red" && !["verified", "scheduled", "no_action"].includes(e.status)).length);
 
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 p-2.5">
@@ -37,9 +40,25 @@ export function Navbar() {
         <nav className="flex items-center gap-0.5">
           {NAV.map((n) =>
             n.ready ? (
-              <button key={n.id} className="btn relative" data-active="true">
-                <motion.span layoutId="nav-pill" className="seg-pill" transition={{ type: "spring", stiffness: 500, damping: 38 }} />
+              <button
+                key={n.id}
+                className="btn relative"
+                data-active={tab === n.id}
+                onClick={() => {
+                  if (tab === n.id) return;
+                  sfx.click();
+                  useOps.getState().set({ tab: n.id });
+                }}
+              >
+                {tab === n.id && (
+                  <motion.span layoutId="nav-pill" className="seg-pill" transition={{ type: "spring", stiffness: 500, damping: 38 }} />
+                )}
                 <span className="relative">{n.label}</span>
+                {n.id === "conjunctions" && redCount > 0 && (
+                  <span className="relative ml-0.5 grid h-[15px] min-w-[15px] place-items-center rounded-full bg-red px-1 text-[9.5px] font-semibold text-black">
+                    {redCount}
+                  </span>
+                )}
               </button>
             ) : (
               <Tooltip key={n.id} label="Next screen in the build">
@@ -63,6 +82,7 @@ export function Navbar() {
           <span className="kbd ml-auto">⌘K</span>
         </button>
         <div className="mx-1 h-4 w-px bg-white/10" />
+        <DevSwitch />
         <SourcePill source={source} />
         <UtcClock />
         <div className="mx-0.5 h-4 w-px bg-white/10" />
@@ -85,6 +105,56 @@ export function Navbar() {
       </div>
     </header>
   );
+}
+
+/** Dev mode: synthetic scenarios and agents over the live catalog, so the UI can be built before the backend. */
+function DevSwitch() {
+  const dev = useOps((s) => s.dev);
+  return (
+    <Tooltip
+      label={
+        dev ? (
+          <span>
+            Synthetic scenarios over the live catalog. <span className="text-muted">Click to use backend data only.</span>
+          </span>
+        ) : (
+          "Run synthetic conjunctions and agents to test the UI"
+        )
+      }
+      hint="D"
+    >
+      <button
+        className="group relative flex h-6 items-center gap-1.5 rounded-full pl-1 pr-2 text-[11px] font-medium transition-colors"
+        style={{
+          color: dev ? "var(--orange)" : "var(--muted)",
+          background: dev ? "rgba(255,159,64,0.1)" : "rgba(255,255,255,0.03)",
+          boxShadow: `inset 0 0 0 1px ${dev ? "rgba(255,159,64,0.22)" : "rgba(255,255,255,0.07)"}`,
+        }}
+        onClick={() => toggleDev()}
+        aria-pressed={dev}
+        aria-label="Toggle dev mode"
+      >
+        <span
+          className="relative h-[14px] w-[24px] rounded-full transition-colors duration-200"
+          style={{ background: dev ? "rgba(255,159,64,0.85)" : "rgba(255,255,255,0.12)" }}
+        >
+          <motion.span
+            className="absolute top-[2px] h-[10px] w-[10px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.4)]"
+            animate={{ left: dev ? 12 : 2 }}
+            transition={{ type: "spring", stiffness: 700, damping: 34 }}
+          />
+        </span>
+        Dev
+      </button>
+    </Tooltip>
+  );
+}
+
+export function toggleDev() {
+  const s = useOps.getState();
+  const v = !s.dev;
+  sfx.toggle(v);
+  s.set({ dev: v });
 }
 
 function SourcePill({ source }: { source?: string }) {

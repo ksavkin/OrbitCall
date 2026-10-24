@@ -258,10 +258,18 @@ const satMotion = /* glsl */ `
   uniform float uHover;
   uniform float uSelected;
   uniform float uHideSelected; // the PBR hero model draws the selected object
+  uniform float uScan;      // Risk Monitor sweep strength, 0..1
+  uniform float uScanAngle; // sweep azimuth around the y axis
   vec3 currentPos() {
     float r = length(aPos);
     vec3 acc = -uMu * aPos / (r * r * r);
     return aPos + aVel * uDt + 0.5 * acc * uDt * uDt;
+  }
+  // 1 right behind the sweep's leading edge, fading over ~40°: objects light up as they are screened
+  float scanGlow(vec3 p) {
+    if (uScan < 0.001) return 0.0;
+    float d = mod(uScanAngle - atan(p.z, p.x), 6.28318530718);
+    return uScan * exp(-d * 4.5);
   }
   float shadowOf(vec3 p) {
     // Cylindrical umbra: behind Earth relative to the sun and within 1 radius of the axis.
@@ -395,11 +403,12 @@ export const dotVertex = /* glsl */ `
   void main() {
     vec3 p = currentPos();
     float focus = (abs(aIndex - uHover) < 0.5 || abs(aIndex - uSelected) < 0.5) ? 1.0 : 0.0;
-    vColor = aColor;
-    vAlpha = aVisible * (1.0 - 0.6 * shadowOf(p));
+    float scan = scanGlow(p);
+    vColor = mix(aColor, vec3(0.62, 0.92, 1.0), scan * 0.85);
+    vAlpha = aVisible * min(1.0 - 0.6 * shadowOf(p) + scan, 1.0);
     vec4 mv = viewMatrix * vec4(p, 1.0);
     float isSel = abs(aIndex - uSelected) < 0.5 ? 1.0 : 0.0;
-    gl_PointSize = uDotPx * uPixelRatio * (1.0 + focus * 1.5) * aVisible * (1.0 - isSel * uHideSelected);
+    gl_PointSize = uDotPx * uPixelRatio * (1.0 + focus * 1.5 + scan * 1.1) * aVisible * (1.0 - isSel * uHideSelected);
     gl_Position = projectionMatrix * mv;
   }
 `;

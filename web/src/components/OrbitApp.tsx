@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
 import { useEffect } from "react";
 import { Globe } from "@/components/globe/Globe";
 import { VIEW_MODES } from "@/components/globe/shaders";
@@ -13,6 +14,13 @@ import { SearchPalette } from "@/components/ui/SearchPalette";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
 import { WeatherSync } from "@/components/globe/WeatherSync";
 import { StormLabels, WeatherCard } from "@/components/ui/Weather";
+import { toggleDev } from "@/components/ui/Navbar";
+import { AgentsExpanded, AgentsPanel } from "@/components/ops/AgentsPanel";
+import { ConjunctionMarkers } from "@/components/ops/ConjunctionMarkers";
+import { ConjunctionQueue } from "@/components/ops/ConjunctionQueue";
+import { OpsSync } from "@/components/ops/OpsSync";
+import { ScenarioBar } from "@/components/ops/ScenarioBar";
+import { useOps } from "@/lib/ops/store";
 import { sceneRef } from "@/lib/sceneRef";
 import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
@@ -23,6 +31,10 @@ export function OrbitApp() {
   useGlobalInteractions();
   useShortcuts();
 
+  const tab = useOps((s) => s.tab);
+  const dev = useOps((s) => s.dev);
+  const conj = tab === "conjunctions";
+
   return (
     <main className="relative h-dvh w-screen overflow-hidden bg-black select-none">
       <Globe />
@@ -30,14 +42,27 @@ export function OrbitApp() {
       <div className="pointer-events-none absolute inset-0 z-10 bg-[radial-gradient(ellipse_at_center,transparent_55%,rgba(0,0,0,0.55)_100%)]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/50 to-transparent" />
       <WeatherSync />
+      <OpsSync />
       <StormLabels />
+      <ConjunctionMarkers />
       <Navbar />
-      {/* left column: catalog and live weather share the height */}
-      <div className="pointer-events-none absolute bottom-[112px] left-2.5 top-[58px] z-20 flex w-[244px] flex-col gap-2">
-        <CatalogPanel />
-        <WeatherCard />
+      {/* left column: per-screen panels share the height */}
+      <div className="pointer-events-none absolute bottom-[112px] left-2.5 top-[58px] z-20 flex w-[244px] flex-col gap-2" style={{ width: conj ? 300 : 244 }}>
+        <AnimatePresence mode="popLayout" initial={false}>
+          {conj ? (
+            <ConjunctionQueue key="queue" />
+          ) : (
+            <div key="orbit" className="flex min-h-0 flex-1 flex-col gap-2">
+              <CatalogPanel />
+              <WeatherCard />
+            </div>
+          )}
+        </AnimatePresence>
       </div>
-      <SatellitePanel />
+      {!conj && <SatellitePanel />}
+      <AnimatePresence>{conj && <AgentsPanel key="agents" />}</AnimatePresence>
+      <AnimatePresence>{conj && dev && <ScenarioBar key="scenario" />}</AnimatePresence>
+      <AgentsExpanded />
       <ViewSwitcher />
       <MapControls />
       <Footer />
@@ -116,8 +141,13 @@ function useShortcuts() {
       const scene = sceneRef.get();
       const k = e.key.toLowerCase();
       if (k === "escape") {
-        if (s.following) s.set({ following: false });
+        const ops = useOps.getState();
+        if (ops.agentsExpanded) ops.set({ agentsExpanded: false });
+        else if (s.following) s.set({ following: false });
+        else if (ops.tab === "conjunctions" && ops.focusEvent) ops.set({ focusEvent: null });
         else s.set({ selected: null });
+      } else if (k === "d") {
+        toggleDev();
       } else if (k === " ") {
         e.preventDefault();
         sfx.toggle(s.paused);

@@ -10,9 +10,11 @@ import { TileLayer } from "./tiles";
 import { WeatherLayers, llToVec } from "./weather";
 import { DensityLayers, type AltitudeBin } from "./density";
 import { HeroSatellite } from "./hero";
+import { ConjunctionLayer } from "./conjunctions";
+import { lineMaterial } from "./lines";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
-import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
+import type { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import {
   atmosphereFragment,
   atmosphereVertex,
@@ -86,6 +88,11 @@ class SimClock {
       this.basePerf = performance.now();
     }
   }
+  /** Jump to a simulated time, keeping speed and pause state. */
+  jumpTo(t: number) {
+    this.baseSim = t;
+    this.basePerf = performance.now();
+  }
   /** Jump back to real time. */
   live() {
     this.baseSim = Date.now();
@@ -153,6 +160,9 @@ export class GlobeScene {
   private tiles: TileLayer;
   readonly weather = new WeatherLayers();
   readonly density = new DensityLayers();
+  readonly conj: ConjunctionLayer;
+  /** Fixed inertial point the camera orbits (a conjunction's TCA point). */
+  private pivot: THREE.Vector3 | null = null;
   private lastDensity = 0;
   private cloudsOn = true;
   private lastFrame = performance.now();
@@ -335,6 +345,8 @@ export class GlobeScene {
       uHover: { value: -1 },
       uSelected: { value: -1 },
       uHideSelected: { value: 0 },
+      uScan: { value: 0 },
+      uScanAngle: { value: 0 },
     };
     this.satMat = new THREE.ShaderMaterial({
       vertexShader: satVertex,
@@ -367,32 +379,7 @@ export class GlobeScene {
     }
 
     /* orbit lines: screen-space fat lines so trajectories stay legible at any zoom */
-    const lineMat = (width: number, opacity: number, dashed = false) => {
-      const m = new LineMaterial({
-        linewidth: width,
-        vertexColors: true,
-        transparent: true,
-        opacity,
-        depthWrite: false,
-        worldUnits: false,
-        dashed,
-        dashSize: 0.02,
-        gapSize: 0.012,
-      });
-      // Vertex colors carry the fade as brightness. Turn that into alpha so we can
-      // use normal blending: additive double-counts where segment joints overlap
-      // and leaves bright beads along the line.
-      m.onBeforeCompile = (sh) => {
-        sh.fragmentShader = sh.fragmentShader.replace(
-          "#include <color_fragment>",
-          `#include <color_fragment>
-          float fadeLum = max(max(diffuseColor.r, diffuseColor.g), diffuseColor.b);
-          alpha *= clamp(fadeLum, 0.0, 1.0);
-          diffuseColor.rgb /= max(fadeLum, 1e-3);`,
-        );
-      };
-      return m;
-    };
+    const lineMat = lineMaterial;
     this.selGlow = new Line2(new LineGeometry(), lineMat(7, 0.22));
     this.selOrbit = new Line2(new LineGeometry(), lineMat(2.2, 1));
     this.hovOrbit = new Line2(new LineGeometry(), lineMat(1.6, 0.85));
@@ -409,6 +396,8 @@ export class GlobeScene {
 
     this.hero = new HeroSatellite();
     this.scene.add(this.hero.group);
+    this.conj = new ConjunctionLayer(this.renderer.getPixelRatio());
+    this.scene.add(this.conj.group);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping; // affects only the PBR hero model
     this.renderer.toneMappingExposure = 1.05;
 
@@ -897,6 +886,7 @@ export class GlobeScene {
   }
 
   flyToLatLon(lat: number, lon: number, dist = 2.4) {
+    this.pivot = null;
     if (this.following) this.setFollow(false);
     this.tracking = false;
     const dir = this.earthGroup.localToWorld(llToVec(lat, lon, 1)).normalize();
@@ -913,6 +903,63 @@ export class GlobeScene {
       fromPos: this.camera.position.clone(),
     };
     this.targetDist = dist;
+  }
+
+  /** Show an event's orbits; optionally fly to look at its TCA point from above the crossing. */
+  focusConjunction(id: string | null, opts: { fly?: boolean; dist?: number } = {}) {
+    this.conj.setFocus(id);
+    if (!id || !opts.fly) return;
+    const p = this.conj.tcaPoint(id);
+    if (!p) return;
+    if (this.following) this.setFollow(false);
+    this.tracking = false;
+    const dist = opts.dist ?? 1.15;
+    // above the TCA point, leaning toward the camera's side so the move stays short
+    const up = p.clone().normalize();
+    const side = this.camera.position.clone().sub(p).projectOnPlane(up).normalize();
+    const toDir = up.clone().multiplyScalar(0.82).addScaledVector(side, 0.57).normalize();
+    this.pivot = p.clone();
+    this.fly = {
+      t0: performance.now(),
+      dur: 1800,
+      fromDir: this.camera.position.clone().sub(this.controls.target).normalize(),
+      toDir,
+      fromDist: this.camera.position.distanceTo(this.controls.target),
+      toDist: dist,
+      fromTarget: this.controls.target.clone(),
+      toTarget: p.clone(),
+      world: true,
+      fromPos: this.camera.position.clone(),
+    };
+    this.targetDist = dist;
+  }
+
+  /** Simulated time was moved by a TCA preview (the screen hands it back on exit). */
+  previewing = false;
+
+  /** Jump simulated time to just before TCA and frame the crossing up close. */
+  previewTca(id: string, leadS = 70) {
+    const it = this.conj.item(id);
+    if (!it) return;
+    this.previewing = true;
+    this.clock.jumpTo(it.enc.tca - leadS * 1000);
+    this.requestSample(true);
+    this.focusConjunction(id, { fly: true, dist: 0.32 });
+  }
+
+  /** Back to real time after a preview. */
+  endPreview() {
+    if (!this.previewing) return;
+    this.previewing = false;
+    this.clock.live();
+    this.requestSample(true);
+  }
+
+  /** Leave the TCA pivot and go back to orbiting Earth. */
+  releasePivot() {
+    if (!this.pivot) return;
+    this.pivot = null;
+    this.release();
   }
 
   setShowGroundTrack(v: boolean) {
@@ -961,6 +1008,7 @@ export class GlobeScene {
 
   /** Fly to a satellite and keep it centered; the camera then orbits around it. */
   private flyToObject(i: number) {
+    this.pivot = null;
     const p = this.positionOf(i, new THREE.Vector3());
     const dist = 2.0;
     this.tracking = true;
@@ -1016,6 +1064,7 @@ export class GlobeScene {
 
   setFollow(on: boolean) {
     if (on && this.selected === null) return;
+    if (on) this.pivot = null;
     this.following = on;
     if (on) this.setHovered(null);
     const target = this.controls.target.clone();
@@ -1080,7 +1129,7 @@ export class GlobeScene {
   zoomBy(factor: number) {
     const [min, max] = this.distLimits();
     // Zoom on altitude, not distance to Earth's center, so it keeps working near the ground.
-    const floor = this.following || this.tracking ? 0 : 1;
+    const floor = this.following || this.tracking || this.pivot ? 0 : 1;
     this.targetDist = THREE.MathUtils.clamp(floor + (this.targetDist - floor) * factor, min, max);
     if (this.fly) this.fly.toDist = this.targetDist;
   }
@@ -1092,6 +1141,7 @@ export class GlobeScene {
 
   /** Esri-style zoom presets: LEO shell, MEO (GNSS) and the GEO belt. */
   zoomTo(preset: "leo" | "meo" | "geo") {
+    this.pivot = null;
     if (this.following) this.setFollow(false);
     this.tracking = false;
     const d = { leo: 4.6, meo: 10, geo: 19 }[preset];
@@ -1111,6 +1161,7 @@ export class GlobeScene {
   }
 
   resetView() {
+    this.pivot = null;
     if (this.following) this.setFollow(false);
     this.tracking = false;
     this.fly = {
@@ -1132,7 +1183,7 @@ export class GlobeScene {
 
   private distLimits(): [number, number] {
     if (this.following) return [0.012, 4];
-    if (this.tracking) return [0.03, 60];
+    if (this.tracking || this.pivot) return [0.02, 60];
     return [1.0006, 60];
   }
 
@@ -1263,6 +1314,7 @@ export class GlobeScene {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     for (const l of [this.selGlow, this.selOrbit, this.hovOrbit, this.groundTrack]) (l.material as LineMaterial).resolution.set(w, h);
+    this.conj.setResolution(w, h);
   }
 
   private loop = () => {
@@ -1369,6 +1421,11 @@ export class GlobeScene {
       this.computeDensity(gmst);
     }
     this.density.update(dt, this.camera.position);
+    this.conj.update(sim, dt, now, this.camera.position, (p) => this.project(p), (i, out) =>
+      this.sampleTime && this.sampleValid[i] ? this.positionOf(i, out) : null,
+    );
+    this.satMat.uniforms.uScan.value = this.conj.scanLevel;
+    this.satMat.uniforms.uScanAngle.value = this.conj.scanAngle;
     this.updateHero();
     this.renderer.render(this.scene, this.camera);
 
@@ -1413,8 +1470,8 @@ export class GlobeScene {
 
   private updateCamera(now: number) {
     const target = this.controls.target;
-    const centered = this.following || this.tracking;
-    const satPos = centered && this.selected !== null ? this.positionOf(this.selected, new THREE.Vector3()) : null;
+    const centered = this.following || this.tracking || this.pivot !== null;
+    const satPos = (this.following || this.tracking) && this.selected !== null ? this.positionOf(this.selected, new THREE.Vector3()) : null;
 
     if (this.fly) {
       const f = this.fly;
@@ -1462,6 +1519,8 @@ export class GlobeScene {
     } else if (satPos) {
       // tracking: the camera stays put and turns to keep the satellite centered
       target.copy(satPos);
+    } else if (this.pivot) {
+      target.copy(this.pivot);
     }
 
     // smooth zoom toward targetDist

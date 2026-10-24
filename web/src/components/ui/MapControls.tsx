@@ -6,6 +6,7 @@ import { useState } from "react";
 import { sceneRef } from "@/lib/sceneRef";
 import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
+import { useOps } from "@/lib/ops/store";
 import { Tooltip } from "./Tooltip";
 
 const PRESETS = [
@@ -18,9 +19,14 @@ export function MapControls() {
   const autoRotate = useOrbit((s) => s.autoRotate);
   const set = useOrbit((s) => s.set);
   const [preset, setPreset] = useState<string>("leo");
+  // the agents panel takes the right edge on the Conjunctions screen
+  const shifted = useOps((s) => s.tab === "conjunctions");
 
   return (
-    <div className="pointer-events-auto absolute bottom-[42px] right-2.5 z-20 flex flex-col items-end gap-2">
+    <div
+      className="pointer-events-auto absolute bottom-[42px] z-20 flex flex-col items-end gap-2 transition-[right] duration-500 ease-[cubic-bezier(.22,1,.36,1)]"
+      style={{ right: shifted ? 392 : 10 }}
+    >
       {/* zoom presets: the Esri-style "zoom out to GEO" move */}
       <div className="glass relative flex flex-col gap-0.5 rounded-[12px] p-1">
         {PRESETS.map((p) => (
