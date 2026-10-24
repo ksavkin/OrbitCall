@@ -31,7 +31,7 @@ export const catalogPairs = query({
   args: { limit: v.optional(v.number()) },
   returns: v.array(eventRow),
   handler: async (ctx, { limit }) => {
-    const n = Math.min(MAX_LIMIT, Math.max(1, Math.floor(limit !== undefined && Number.isFinite(limit) ? limit : DEFAULT_LIMIT)));
+    const n = Math.min(MAX_LIMIT, Math.max(0, Math.floor(limit !== undefined && Number.isFinite(limit) ? limit : DEFAULT_LIMIT)));
     const active = await ctx.db.query("events").withIndex("by_active", q => q.eq("active", true)).take(MAX_ACTIVE);
     const top = active.filter(e => !e.simulated).sort(compareQueue).slice(0, n);
     // Join only the returned rows; objects and snapshots are read once each.

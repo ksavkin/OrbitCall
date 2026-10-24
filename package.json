@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "convex dev",
+    "load": "node scripts/load_snapshot.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
