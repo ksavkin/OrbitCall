@@ -108,11 +108,10 @@ Addresses are filled in once the agents are registered on Agentverse.
 ## Docs
 
 - [Plan v1](docs/plan-v1.md) — the full pre-hackathon kit: problem, evidence, architecture, demo script, data sources, sponsors, judge Q&A, 36-hour plan.
-- [Features](docs/features.md) — the feature list with acceptance criteria and priority.
+- [Functionality](docs/functionality.md) — what OrbitCall does: actors, domain objects, lifecycle, functions by area, open questions for the specification.
 
 ## Team
 
-- **Adil** — frontend (queue, room, globe, log)
-- **Andrew** — data and orbital mechanics (fetch, SGP4, screening, validation, Verifier)
-- **Kostya** — agents, Fetch.ai, voice, sponsor integrations
-- **Freya** — product (demo script, pitch, Devpost, video)
+- **Kostya, Andrew** — backend
+- **Adil** — frontend
+- **Freya** — product and demo
