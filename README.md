@@ -71,8 +71,10 @@ Principles:
 | Backend, live state, scheduler | Convex |
 | Orbital mechanics | SGP4 (`sgp4` npm or `python-sgp4`) |
 | Reasoning agents, translation | Claude (Sonnet; Haiku for Risk Monitor) |
-| Agent runtime | Fetch.ai uAgents, Agentverse, Agent Chat Protocol, ASI:One |
-| Voice | STT → protect values → Claude translation → restore/check → Cartesia TTS; Grok Voice via LiveKit for the Coordination Host under the same value checks; text fallback |
+| Agent runtime | Fetch.ai uAgents, Agentverse, Agent Chat Protocol, ASI:One. The full workflow also runs inside an ASI:One chat with interactive cards (second demo, Fetch.ai track) |
+| Orbit data format | OMM (JSON / CSV) only, no TLE |
+| Voice | STT → protect values → Claude translation → restore/check → TTS; text fallback. **Russian:** xAI Grok speech-to-text and voice (Cartesia's STT has no Russian). **Other languages:** Cartesia. Grok Voice via LiveKit for the Coordination Host under the same value checks |
+| Open | Russian on Grok STT / TTS: confirm with a short test clip; Cartesia TTS supports Russian as a fallback for voice output. Grok voice model name: `grok-voice-think-fast-1.0` is not in xAI's docs, `grok-voice-latest` is the fallback — decide later |
 | Optional | Factory Droid SDK (Maneuver Scheduler diff), Backboard (agent memory), Tiger Data (Pc time series), Auth0 (two operator roles) |
 | Deploy | Vercel + Convex |
 

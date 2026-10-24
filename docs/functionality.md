@@ -121,7 +121,8 @@ Inbox access does not depend on reaching agreement. Reading an entry or receivin
 
 - **DATA-1** Pulls the public sources on a schedule: base catalog orbits (CelesTrak GP), operator-supplied orbits (CelesTrak SupGP), a reference conjunction list (CelesTrak SOCRATES), public conjunction messages (Space-Track `cdm_public`), and object metadata (KeepTrack) (§9). Keeps source URLs, object IDs, data epochs and fetch timestamps.
 - **DATA-2** Keeps permitted local source snapshots and provenance for reproducible screening and replay without live source requests. Offline room operation also requires the local backend in SYNC-3; cached data does not provide model or voice services.
-- **DATA-3** Respects each source's limits: CelesTrak GP at most once per 2 hours per file; Space-Track 3 full-conjunction requests a day, 30 per minute, 300 per hour; KeepTrack 500 per hour.
+- **DATA-3** Respects each source's limits: CelesTrak GP at most once per 2 hours per file; Space-Track 3 full-conjunction requests a day, 30 per minute, 300 per hour; KeepTrack 500 per hour. CelesTrak also blocks an IP address that uses more than about 100 MB a day or returns more than 50 HTTP errors (301 / 403 / 404) in 2 hours; venue Wi-Fi likely shares one public IP between teams. So each file is downloaded once per allowed interval and the team works from the local snapshot (DATA-2); a failed request is not retried in a loop.
+- **DATA-6** Ingests orbits in OMM format (JSON or CSV) only, not TLE. CelesTrak ran out of 5-digit catalog numbers on 2026-07-11, and the TLE format cannot hold longer ones; SupGP already contains 9-digit IDs. Each record is parsed and propagated on its own: a record that fails is skipped and recorded, and never stops the whole load. Decayed objects and propagation results that are invalid are excluded so they cannot create false conjunctions.
 
 **User**
 
@@ -139,7 +140,7 @@ Inbox access does not depend on reaching agreement. Reading an entry or receivin
 
 - **SCR-1** Propagates active objects ahead with SGP4 (deterministic code, not a model) and finds pairs closer than the threshold.
 - **SCR-2** Computes TCA, miss distance and relative velocity, and attaches supplied Pc from a matching public CDM where available, or a labeled SOCRATES value. Matches object IDs, encounter time and data version; retains source, epoch and metric type, including whether the source reports a maximum probability. Missing Pc stays unavailable. Does not invent a probability or covariance, use fixed sigma, or reuse the original event's Pc as a post-maneuver estimate.
-- **SCR-3** Validates detection over the complete SOCRATES reference list within the selected catalog coverage and horizon on one pinned snapshot. Reports matched / eligible reference events, recall, matching tolerances, exclusions and unmatched events. Separately reports TCA and miss-distance error for matched events. Identifies verified input/element-set differences separately from screening misses; unexplained differences remain unresolved and in the reported denominator.
+- **SCR-3** Validates detection over the complete SOCRATES reference list within the selected catalog coverage and horizon on one pinned snapshot. Matches by data timestamp: the validation run uses, for each object, the element set with the same epoch that SOCRATES used for that run. Newer orbit data moves objects by a kilometre or more, so comparing runs on different data measures the data difference, not the screening. Events where our input epoch differs from SOCRATES' are reported as "data differs", not as misses. Reports matched / eligible reference events, recall, matching tolerances, exclusions and unmatched events. Separately reports TCA and miss-distance error for matched events. Identifies verified input/element-set differences separately from screening misses; unexplained differences remain unresolved and in the reported denominator.
 - **SCR-4** Computes the same conjunction from GP and SupGP where both are available and shows the two results and their min–max spread, with epochs. Labels this as source disagreement, not a calibrated uncertainty interval or probability range.
 - **SCR-5** Compares SOCRATES with public CDMs; a pair listed in both, or flagged `EMERGENCY_REPORTABLE` in a CDM, gets higher priority.
 - **SCR-6** Retired: risk forecasting is removed entirely. No trained model, persistence forecast, threshold-based forecast, forecast benchmark or predicted trend arrow replaces it. Historical observations remain available as history only.
@@ -272,7 +273,7 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 
 **System** (§8)
 
-- **LANG-1** Recognizes speech as a stream, phrase by phrase.
+- **LANG-1** Recognizes speech as a stream, phrase by phrase, in each participant's language, including Russian.
 - **LANG-2** Translates voice transcripts and text with room context while protecting numbers, units, signs, dates/times, time zones and satellite IDs as typed placeholders. Restores them after translation from the authoritative proposal revision for proposal text, or the original message for human speech/text, including newly suggested values. Checks placeholder integrity before display or speech; retries or shows the original if validation fails. Does not replace a new conversational value with an older card value or ask the model to invent one. Ambiguous speech recognition is clarified before it changes a proposal.
 - **LANG-3** Delivers each phrase to the listener as voice and text in their language; the speaker sees their original in the transcript.
 - **LANG-4** Feeds transcribed voice and posted text messages into the agents' conversation context, retaining the speaker, original wording and translations. Relevant facts, hard constraints, preferences and corrections can trigger a revised proposal (AGT-11..AGT-13).
@@ -354,7 +355,13 @@ The queue ranks conjunctions for the company. The inbox gives each person a pers
 
 - **EXT-1** Each system role runs as a separate agent with its own address.
 - **EXT-2** Operator Advocates negotiate by real messages over a standard agent chat protocol.
-- **EXT-3** The main scenario can be started from an external agent chat (ASI:One).
+- **EXT-3** The complete primary workflow can be done inside an ASI:One conversation, without the OrbitCall web interface: see a red conjunction, read the summary and the Operator Advocates' negotiation, review the current proposal revision, and approve, veto or counter it. This is a Fetch.ai requirement at Cal Hacks 13.0: "Complete the primary user workflow entirely within an ASI:One conversation."
+- **EXT-4** ASI:One is another view of the same state, not a separate copy. It reads and writes the same events, proposal revisions, approvals and log as the web interface (SYNC-1). An approval given in ASI:One is the same approval record as one given in the room, bound to the same revision and the same identity rules (ROOM-7, ROOM-11). Status names, labels, numbers and units match the web interface exactly, and a change made in one appears in the other.
+- **EXT-5** Proposal and approval steps in ASI:One use interactive cards (ASI1 Interactive Cards) that carry the same fields as the room's proposal card: who moves, when, Δv, miss distance before → after, revision, and both sides' approval status. Private policy values are never shown, the same as in the room (POL-2).
+
+**Demo**
+
+- **EXT-6** One project, two demos. The main demo is the two-laptop conjunction room. The second demo, for the Fetch.ai track, is the same incident completed inside ASI:One. Both run on the same backend and data, so the same incident can be shown in either.
 
 ---
 
@@ -402,3 +409,4 @@ The accepted decisions below retain the original question numbers so existing re
 10. **Reporting template:** verify the current FCC rule, applicability, periods and required fields; choose the human-readable export format and define completion of fields absent from the incident log (S3).
 11. **Evidence methods:** specify the candidate grid, approximation validity, feasibility and re-screen criteria, and the verification baseline/window/thresholds. Do not substitute an unsupported post-maneuver Pc for these checks (S1, M7, M8).
 12. **Missing Pc:** define review priority for events without a usable supplied probability; unavailable does not mean safe (M8).
+13. **ASI:One identity:** how does a person in an ASI:One conversation prove which operator they act for, so an approval there meets ROOM-7 and ACC-2 (EXT-4)?
