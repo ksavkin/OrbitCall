@@ -45,7 +45,7 @@ const heatFragment = /* glsl */ `
     float k = d * 10.0;
     float w = fwidth(k);
     float iso = 1.0 - smoothstep(0.0, w * 1.5, abs(fract(k + 0.5) - 0.5));
-    vec3 col = ramp((d - uFloor) / (1.0 - uFloor));
+    vec3 col = ramp((d - uFloor) / (0.92 - uFloor));
     col = mix(col, vec3(1.0), iso * 0.25 * body);
     float facing = clamp(dot(normalize(vNormalW), normalize(uCamPos - vPosW)) * 3.0, 0.0, 1.0);
     float a = (body * (0.3 + 0.4 * d) + iso * 0.2 * body) * uOpacity * facing;
@@ -81,12 +81,12 @@ class Heatmap {
   readonly mesh: THREE.Mesh;
   private mat: THREE.ShaderMaterial;
   private tex: THREE.DataTexture;
-  private data = new Uint8Array(W * H * 4);
+  private data = new Uint16Array(W * H); // half floats: 8-bit banding showed the grid
   private target = 0;
   private field: Float32Array | null = null;
 
   constructor(radius: number, ramp: string[], floor: number) {
-    this.tex = new THREE.DataTexture(this.data, W, H, THREE.RGBAFormat);
+    this.tex = new THREE.DataTexture(this.data, W, H, THREE.RedFormat, THREE.HalfFloatType);
     this.tex.magFilter = THREE.LinearFilter;
     this.tex.minFilter = THREE.LinearFilter;
     this.tex.wrapS = THREE.RepeatWrapping;
@@ -156,8 +156,8 @@ class Heatmap {
     const sorted = f.slice().sort();
     const max = Math.max(sorted[Math.floor(sorted.length * 0.995)], 1e-6);
     for (let k = 0; k < W * H; k++) {
-      this.data[k * 4] = Math.min(255, Math.round((f[k] / max) * 255));
-      this.data[k * 4 + 3] = 255;
+      // soft knee instead of a clamp: peaks keep their shape rather than flattening into plateaus
+      this.data[k] = THREE.DataUtils.toHalfFloat(1 - Math.exp(-1.6 * (f[k] / max)));
     }
     this.tex.needsUpdate = true;
   }
@@ -177,8 +177,8 @@ export class DensityLayers {
   /** Inertial: altitude shells are spherical, frame doesn't matter. */
   readonly shells = new THREE.Group();
   // thermal-camera ramp for traffic, a hotter ember ramp for debris so both read when stacked
-  readonly traffic = new Heatmap(1.0035, ["#1b0c41", "#6a1b9a", "#e0365a", "#ff9f40", "#fff3b0"], 0.42);
-  readonly debris = new Heatmap(1.004, ["#2a0505", "#8c1414", "#ff3b2f", "#ffb340", "#ffffff"], 0.2);
+  readonly traffic = new Heatmap(1.0035, ["#1b0c41", "#6a1b9a", "#e0365a", "#ff9f40", "#fff3b0"], 0.49);
+  readonly debris = new Heatmap(1.004, ["#2a0505", "#8c1414", "#ff3b2f", "#ffb340", "#ffffff"], 0.27);
   private shellMeshes: THREE.Mesh[] = [];
   private shellOpacity = 0;
   vis = { traffic: false, debris: false };
