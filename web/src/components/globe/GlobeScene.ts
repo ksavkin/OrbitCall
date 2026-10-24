@@ -814,7 +814,7 @@ export class GlobeScene {
       const gtColor = color.clone().lerp(new THREE.Color("#ffffff"), 0.45);
       this.setLine(this.groundTrack, gt, new THREE.Color("#ffffff"), gtColor, 0.55);
       this.groundTrack.computeLineDistances(); // for the dashes
-      this.groundTrack.visible = this.showGroundTrack && !this.following;
+      this.groundTrack.visible = this.showGroundTrack;
     } else {
       this.setLine(this.hovOrbit, m.points, color.clone().lerp(new THREE.Color("#ffffff"), 0.35), color, 0.12);
       this.hovOrbit.visible = this.hovered !== this.selected;
@@ -917,7 +917,7 @@ export class GlobeScene {
 
   setShowGroundTrack(v: boolean) {
     this.showGroundTrack = v;
-    this.groundTrack.visible = v && this.selected !== null && !this.following;
+    this.groundTrack.visible = v && this.selected !== null;
   }
 
   /* ---------------------------------------------------------- selection */
@@ -1018,8 +1018,6 @@ export class GlobeScene {
     if (on && this.selected === null) return;
     this.following = on;
     if (on) this.setHovered(null);
-    // the ground track reads as a stray line from up close
-    this.groundTrack.visible = !on && this.showGroundTrack && this.selected !== null;
     const target = this.controls.target.clone();
     if (on) {
       const p = this.positionOf(this.selected!, new THREE.Vector3());
