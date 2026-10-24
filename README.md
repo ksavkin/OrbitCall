@@ -5,7 +5,17 @@
 Nothing moves without a human. It is a handshake, not a law.
 
 > Built at **Cal Hacks 13.0** (Oct 23–25, 2026).
-> **Status: frontend prototype with local simulation; backend integration pending.** Documents describe intended behavior, not completed capabilities. Product decisions updated Oct 24, 2026; see [Feature decisions](docs/analysis.md).
+> **Status: Phase 1 implementation.** The frontend lives in `web/`; the Convex backend at the repository root implements the first Incident Analyst and its checks. The broader workflow below remains the product plan. Product decisions updated Oct 24, 2026; see [Feature decisions](docs/analysis.md). Current assignments and feature-branch workflow are in [roadmap issue #1](https://github.com/ksavkin/OrbitCall/issues/1).
+
+## Current integration and modes
+
+See [the integration handoff](docs/integration-status.md) for what is implemented and what is still planned. **Dev on** uses the current TLE catalog and synthetic scenarios. **Dev off** requires backend OMM and shows an explicit pending state until the pipeline is ready. CelesTrak remains the source; switching formats does not itself guarantee more accurate orbits.
+
+## Development
+
+For the backend, run `npm ci` then `npm run check` from the repository root. Tests use simulated fixtures and a mocked model provider, so no accounts or keys are required. Run `npm run dev` to start Convex locally or connect to the team's existing OrbitCall development project.
+
+See [Andrew's Phase 1 implementation and integration guide](docs/phase1-andrew.md) for the live model settings, fixture walkthrough, event ingestion hook, summary query and remaining integration work. The frontend has its own package and setup in [web/README.md](web/README.md).
 
 ---
 
@@ -73,7 +83,7 @@ Principles:
 | Orbital mechanics | A separate Python service (`python-sgp4`, Python 3.12): catalog screening, re-screen, verification, validation and the simulated satellite's orbit. It keeps the catalog snapshot; Convex calls it and stores the results. `satellite.js` only draws orbits in the browser |
 | Reasoning agents, translation | Claude (Sonnet; Haiku for Risk Monitor) |
 | Agent runtime | Our own backend: each agent is a separate Claude call with its own instructions and data access; agent messages are stored with the incident state. No agent framework. Fetch.ai was dropped on Oct 24, 2026 |
-| Orbit data format | OMM (JSON / CSV) only, no TLE |
+| Orbit data format | Real mode: OMM (JSON / CSV), integration pending. Dev/demo: current TLE catalog and synthetic scenarios. No real-mode fallback to TLE |
 | Voice | Live call in a LiveKit room. A Python translation worker runs one chain per speaker: Grok STT (`grok-voice-transcribe-2.0`, both languages) → protect values → Claude translation → restore/check → Cartesia TTS. The Coordination Host speaks through Grok Voice (`grok-voice-latest`) via LiveKit under the same value checks. Text fallback |
 | Open | Russian on Grok STT is listed in xAI's docs; confirm with a short test clip. `grok-voice-think-fast-1.0` is not in xAI's docs, so the host uses `grok-voice-latest` |
 | Sign-in | Pre-created test users only, one per operator; no registration. Login through Auth0 with sign-ups disabled; Convex verifies the identity on every read, write and subscription |

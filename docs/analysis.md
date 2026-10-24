@@ -2,6 +2,10 @@
 
 Originally written Oct 24, 2026, ~00:40 PT (H≈4 of the hackathon). Updated Oct 24 after product review. This document now records the accepted and skipped recommendations; [functionality.md](functionality.md), [plan-v1.md](plan-v1.md) and the [README](../README.md) reflect those decisions. They describe planned behavior, not implemented features.
 
+## Runtime mode decision (October 24)
+
+The user confirmed: Dev on keeps the working TLE catalog and synthetic conjunction scenarios. Dev off is the real mode and requires backend OMM, with no silent TLE or simulation fallback. Until the OMM backend and frontend integration are ready, show an explicit unavailable/integration-pending state. This applies in both Git branches; `main` is not a runtime data mode. CelesTrak remains the source. OMM is an exchange format, not an automatic improvement in orbit accuracy. It supports larger object IDs and avoids legacy TLE format limits. See [CelesTrak format documentation](https://celestrak.org/NORAD/documentation/gp-data-formats.php).
+
 ## How the original analysis was made
 
 - **Inputs:** three research notes kept locally, not included in this repository: `features_commercial.md` (~27 commercial/government products), `features_github.md` (open-source projects and libraries), and `hackathons.md` (projects across 54 events).

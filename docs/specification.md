@@ -2,11 +2,15 @@
 
 The contract between the Next.js frontend and the Convex backend: data shapes, enums, functions, permissions, live updates, errors and the live-call join flow. Behavior comes from [functionality.md](functionality.md); IDs in brackets (for example `[ROOM-7]`) point there. Written Oct 24, 2026, from the locked docs (commit 49f930e).
 
-Updated Oct 24, 2026 after direct user decisions: [assigned-fleet workflow](user-flow.md), My Fleet + My Incidents + globe, fleet-versus-catalog Run Scan, severity then earliest closest approach, separate missing/stale-data review, up to four computed candidates, shared selection followed by independent Approve, and a separate unilateral debris path. Dual orbit ingest and the Dev Switch remain transitional prototype support. Appendix C specifies safe agent observability. These are requirements; the current simulator types are not yet identical to this contract.
+Updated Oct 24, 2026 after direct user decisions: [assigned-fleet workflow](user-flow.md), My Fleet + My Incidents + globe, fleet-versus-catalog Run Scan, severity then earliest closest approach, separate missing/stale-data review, up to four computed candidates, shared selection followed by independent Approve, and a separate unilateral debris path. The Dev Switch separates TLE development simulation from the OMM-only real mode. No TLE fallback is allowed with Dev off. Appendix C specifies safe agent observability. These are requirements; the current simulator types are not yet identical to this contract.
 
 The accepted decisions in user-flow.md and functionality.md govern behavior. There is no simulator-specific exception overriding approval integrity. Counter is a conversation message, not an approval status. Country and language do not grant fleet access.
 
 ---
+
+## Implementation boundary after branch reconciliation
+
+The merged Phase 1 backend implements catalog ingestion, catalog snapshot/pairs, Risk Monitor coloring and the checked Incident Analyst. Fleet assignments, fleet-scoped scans, authenticated rooms, candidate approvals and unilateral debris are accepted targets, not completed Phase 1 features. The public catalog queries in Phase 1 are an explicit temporary scope exception to section 1 and do not authorize private data or scheduling. See [integration status](integration-status.md) for the handoff and [Phase 1 guide](phase1-andrew.md) for current callable functions.
 
 ## 0. Conventions
 
@@ -88,7 +92,7 @@ type VerificationResult = "awaiting_data" | "consistent" | "mismatch";
 
 type SourceName =
   | "celestrak_gp" | "celestrak_supgp" | "socrates" | "cdm_public"
-  | "gp_history" | "keeptrack" | "simulated";
+  | "gp_history" | "keeptrack" | "simulated" | "celestrak_satcat";
 ```
 
 ### 2.2 Objects and events
@@ -251,8 +255,7 @@ interface RoomState {
   understood: Understood[];
   callActive: boolean;
   canAct: boolean;                  // current assignment to active side and supported workflow
-  omm: Record<Side, object> | null; // OMM records when available; null during GP/TLE dual-ingest fallback
-  elements?: Record<Side, object> | null; // GP/TLE-compatible elements for the globe until OMM cutover
+  omm: Record<Side, object> | null; // real mode waits when unavailable; TLE is dev-only
 }
 ```
 
@@ -471,7 +474,7 @@ interface ScanRun {
 
 `fleet.listMine` positions are a coarse display sample, not a high-rate Convex stream. The browser propagates the same pinned orbit elements between samples and labels position time separately from element epoch. Unknown position stays null.
 
-`catalog.snapshot` additionally returns `snapshotId` and source epochs. A production adapter joins each ObjectId to that snapshot, not to an unstable `catalogIndex`. `events.orbits({ eventId })` is an assignment-authorized query returning `{ snapshotId, evidenceVersion, objects: { objectId, epochUtc, simulated, format: "omm" | "tle", omm: object | null, line1: string | null, line2: string | null }[] }` for both objects, even before a room exists. OMM schemas and validity are checked at ingest. The TLE fields are temporary fallback. Rendering must propagate each supplied orbit, including simulated OMM, rather than inventing a synthetic counterpart with `engine.encounters`. Lat/lon are degrees, altitude is km and the position conversion is WGS84. Any provided Cartesian state must explicitly identify TEME, km, km/s and epoch; never pass an unlabelled vector.
+`catalog.snapshot` additionally returns `snapshotId` and source epochs. A production adapter joins each ObjectId to that snapshot, not to an unstable `catalogIndex`. `events.orbits({ eventId })` is an assignment-authorized query returning `{ snapshotId, evidenceVersion, objects: { objectId, epochUtc, simulated, format: "omm", omm: object }[] }` for both objects, even before a room exists. OMM schemas and validity are checked at ingest. Real mode accepts only OMM. TLE remains exclusively in the development simulator; there is no real-mode fallback. Rendering must propagate each supplied orbit, including simulated OMM, rather than inventing a synthetic counterpart with `engine.encounters`. Lat/lon are degrees, altitude is km and the position conversion is WGS84. Any provided Cartesian state must explicitly identify TEME, km, km/s and epoch; never pass an unlabelled vector.
 
 Runs pin assignments and snapshot. If either changes, old results remain historical and cannot be labeled current for the new scope. Negative results are meaningful only with complete disclosed coverage. Routine monitoring may share numerical work, but user-facing queries remain assignment-authorized and canonical events remain deduplicated. Source freshness limits are per-source versioned backend configuration; unknown freshness goes to data review. Past-TCA events cannot generate a new future maneuver approval.
 
@@ -500,7 +503,8 @@ The default dashboard is My Fleet + My Incidents + globe. Label the separate mis
 | `events.myQueue` | query | `{ objectId?: ObjectId }` → `EventRow[]` | Assigned-fleet events only, deduplicated. Optional filter must be assigned. Head of ops gets company read scope. Separate active, data-review, follow-up and history sections. Active order: red, yellow, other usable Pc; within severity earliest TCA, emergency flag, descending Pc, event ID. Data review: TCA, miss, event ID. No Pc/time score [Q-1, Q-5, §20 Q12] |
 | `events.orbits` | query | `{ eventId }` → orbit payload from section 2.6 | Authorized assigned incident only; available before room creation, stable object IDs and snapshot/evidence versions |
 | `events.catalogPairs` | query | `{ limit?: number }` (default 50) → `EventRow[]` | Real pairs from the snapshot for a separate Explore catalog view, never the default queue; read-only, `mySide: null`, `myObjectIds: []`, no room access [DATA-5] |
-| `catalog.snapshot` | query | `{}` → `{ snapshotId, takenAt, ommUrl: string \| null, gpUrl: string \| null, sources: SourceRef[] }` | Dual ingest: prefer `ommUrl` when present; otherwise use `gpUrl` (CelesTrak GP/TLE) for the globe via `satellite.js` until OMM cutover. `takenAt` drives the "snapshot from …" banner |
+| `agentSummaries.get` | query | `{ eventId }` → `{ eventId, summaryLines, numbersChecked, originalLang, createdAt, simulated, agentsWorking, agentsStalled, run }` | Phase 1 Analyst read endpoint, independent of a room. Only current checked evidence is returned; English output in this phase. Identity/party rules and the full return shape are in [the Phase 1 integration guide](phase1-andrew.md#adils-summary-integration) |
+| `catalog.snapshot` | query | `{}` → `{ snapshotId, takenAt, ommUrl: string \| null, gpUrl: string \| null, sources: SourceRef[] }` | Real mode requires `ommUrl`; null means OMM not ready and no real orbit/screening result is shown. `gpUrl` is provenance or legacy information, never an automatic real-mode TLE fallback. `takenAt` drives the "snapshot from …" banner |
 | `validation.latest` | query | `{}` → `ValidationSummary \| null` | Measured numbers only; nothing hard-coded [SCR-8] |
 | `data.refresh` | action | `{}` → `{ started: boolean, nextAllowedAt: ISODate }` | `RATE_LIMITED` inside source limits [DATA-3, DATA-4] |
 | `demo.launchDefaults` | query | `{}` → `{ name, ownerName, ownerCountry, targetObjectId, tcaUtc, scenarioPc }` | Prefilled, rehearsed values [DATA-7] |
@@ -607,11 +611,11 @@ Unrelated messages never reset approvals. Old approvals stay in the log and neve
 - One simulated satellite per demo run; `demo.reset` closes the run.
 - Simulated records are excluded from `validation.latest` and from `reports.*`.
 - The simulated event's `pc.source` is `"simulated"`. Only the synthetic object has no `celestrakUrl`; its real counterpart retains its real source link. Launch explicitly assigns the synthetic object to the caller, updates assignmentVersion and invalidates old scan coverage. Its OMM is included in a versioned demo-run overlay of the pinned catalog. Reset deactivates that overlay and assignment and advances assignmentVersion.
-- **Frontend Dev Switch** (see Appendix C): the UI may also run local synthetic scenarios against the live catalog for polish and demos without Convex. The target adapter maps simulator view models to this contract; flipping Dev off is intended to switch to Convex queries after integration. The current prototype is not connected merely by toggling Dev off. `demo.launchSatellite` remains the production Convex demo path and can coexist.
+- **Frontend Dev Switch** (see Appendix C): the UI may also run local synthetic scenarios against the live catalog for polish and demos without Convex. The target adapter maps simulator view models to this contract. Dev on uses the TLE catalog and synthetic scenarios. Dev off subscribes to the Convex snapshot and waits visibly for OMM. Phase 1 currently returns `ommUrl: null`; the OMM loader/renderer remains to be implemented, with an explicit integration-pending state even if a URL becomes available. `demo.launchSatellite` remains the production Convex demo path and can coexist.
 
 ### 4.5 Limits
 
-- The catalog is not stored as Convex documents. Dual ingest: the globe prefers OMM from `catalog.snapshot.ommUrl` when present; otherwise it uses GP/TLE from `gpUrl` (or the existing CelesTrak client path) until the OMM snapshot is ready. Screening still runs in the orbital service. Target end state is OMM-only [DATA-6].
+- The full orbital catalog is not stored as per-object live Convex updates. Real mode requires OMM from `catalog.snapshot.ommUrl`; unavailable/invalid OMM stays explicitly pending/error with no TLE or simulator fallback. `/api/catalog` and the TLE worker path are dev-only. OMM loading/rendering is still pending integration. Screening runs in the orbital service [DATA-6].
 - Queries read indexed tables only (Convex scans at most 32,000 documents per transaction). Lists are paged where noted.
 - Risk charts use historical observations only — no forecast model [SCR-6 retired, ROOM-10].
 
@@ -689,8 +693,8 @@ Powers the Agents panel (graph, step traces, latency, tokens, cost). Backend sho
 
 | Mode | Data |
 |---|---|
-| `dev: false` | Convex queries / mutations in this document |
-| `dev: true` | Local synthetic scenarios over the live catalog (`web/src/lib/ops/*`) |
+| `dev: false` | Real mode: backend OMM only; explicit unavailable/integration-pending state until the OMM pipeline is ready. No TLE fallback |
+| `dev: true` | TLE catalog plus local synthetic scenarios (`web/src/lib/ops/*`); explicitly development/demo data |
 
 Same UI components in both modes. Dev mode is for polishing the ops board, conjunction overlays, and agent animations before Convex is complete. It does not replace Auth0 in production mode.
 

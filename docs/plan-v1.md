@@ -6,6 +6,10 @@ Oct 23, 2026 · @K · Product decisions updated Oct 24, 2026
 >
 > **Final review, Oct 24, 2026 (~03:30 PT):** the demo conjunction comes from one flagged simulated satellite against the real catalog; orbital computation runs in a separate Python service next to Convex; the live call stays on LiveKit with Grok STT, Claude translation and Cartesia TTS, and the Coordination Host speaks through Grok Voice; sign-in uses pre-created test users; the sponsor table follows the Hive prize page. Nothing is cut in advance; section 13's cut order stays the fallback at H24.
 
+## Runtime mode decision (October 24)
+
+The user confirmed: Dev on keeps the working TLE catalog and synthetic conjunction scenarios. Dev off is the real mode and requires backend OMM, with no silent TLE or simulation fallback. Until the OMM backend and frontend integration are ready, show an explicit unavailable/integration-pending state. This applies in both Git branches; `main` is not a runtime data mode. CelesTrak remains the source. OMM is an exchange format, not an automatic improvement in orbit accuracy. It supports larger object IDs and avoids legacy TLE format limits. See [CelesTrak format documentation](https://celestrak.org/NORAD/documentation/gp-data-formats.php).
+
 ## Contents
 
 1. [The problem: who decides, who dodges](#1-the-problem-who-decides-who-dodges)

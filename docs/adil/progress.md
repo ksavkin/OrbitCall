@@ -10,6 +10,10 @@ Priority: severity first, then earliest closest approach; missing/stale data is 
 
 The historical implementation notes below describe the simulator. Its Pc/time sorting, fixed four options, auto-approved debris, private traces, affected-party notification and fast verification are not the accepted backend behavior. Country-based demo assignments and replay must remain visibly simulated.
 
+## Merged backend and mode boundary
+
+Phase 1 Convex catalog/snapshot/Analyst integration is now included alongside the latest simulator. Dev on keeps TLE plus synthetic scenarios. Dev off waits for backend OMM and never loads `/api/catalog` or substitutes a synthetic event. Phase 1 returns `ommUrl: null`; the real OMM loader and renderer are still pending. The full assigned-fleet flow below remains a target, not completed backend functionality. See [integration status](../integration-status.md).
+
 ## Where things stand
 
 The Orbit screen is done and the Conjunctions screen is built against the backend contract with a dev simulator. Rooms, Policy, Audit log and Inbox are not started.

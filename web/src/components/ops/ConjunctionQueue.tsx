@@ -17,6 +17,8 @@ import { Flag } from "@/components/ui/OwnerBadge";
 import { ClaudeGlyph } from "./Glyphs";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { toggleDev } from "@/components/ui/Navbar";
+import { CONVEX_ENABLED } from "@/lib/backend/provider";
+import { BackendListSafe, BackendSnapshotLine } from "./BackendQueue";
 import { RESOLVED, RISK_COLOR, STATUS_META } from "./meta";
 import { ScanButton } from "./DemoFlow";
 
@@ -49,8 +51,11 @@ export function ConjunctionQueue() {
     });
   }, [events, filter, rankAt, focusEvent]);
 
-  const red = events.filter((e) => e.risk === "red" && !RESOLVED.includes(e.status)).length;
-  const active = events.filter((e) => !RESOLVED.includes(e.status)).length;
+  // dev off: the backend's rows (events.catalogPairs); dev on: the synthetic scenarios
+  const backendRows = useOps((s) => s.backendRows);
+  const red = dev ? events.filter((e) => e.risk === "red" && !RESOLVED.includes(e.status)).length : (backendRows ?? []).filter((r) => r.color === "red").length;
+  const active = dev ? events.filter((e) => !RESOLVED.includes(e.status)).length : (backendRows?.length ?? 0);
+  const loadingBackend = !dev && (!CONVEX_ENABLED || backendRows === undefined);
 
   return (
     <motion.section
@@ -71,11 +76,18 @@ export function ConjunctionQueue() {
               </span>
             </Tooltip>
           )}
+          {!dev && CONVEX_ENABLED && backendRows !== undefined && (
+            <Tooltip label="Real conjunction pairs from the backend's catalog snapshot">
+              <span className="mono rounded-[4px] px-1 py-px text-[9px] font-medium uppercase tracking-[0.1em] text-green shadow-[inset_0_0_0_1px_rgba(61,220,151,0.25)]">
+                Live
+              </span>
+            </Tooltip>
+          )}
         </div>
         <div className="mt-1.5 flex items-baseline gap-2">
-          <span className="tnum text-[26px] font-semibold leading-none tracking-[-0.03em]">{active}</span>
+          <span className="tnum text-[26px] font-semibold leading-none tracking-[-0.03em]">{loadingBackend ? "–" : active}</span>
           <span className="text-[11px] text-muted">
-            active
+            {dev ? "active" : "conjunctions"}
             {red > 0 && (
               <>
                 {" · "}
@@ -88,30 +100,34 @@ export function ConjunctionQueue() {
           <ScanButton />
         </div>
         {dev && <ScanLine scanning={scanning} lastScan={lastScan} now={now} />}
+        {!dev && CONVEX_ENABLED && <BackendSnapshotLine now={now} />}
       </div>
 
-      {/* filter */}
-      <div className="flex items-center gap-0.5 px-2 pb-1.5">
-        {(["active", "resolved"] as Filter[]).map((f) => (
-          <button
-            key={f}
-            className="btn relative h-6 px-2 text-[11px]"
-            data-active={filter === f}
-            onClick={() => {
-              sfx.click();
-              setFilter(f);
-            }}
-          >
-            {filter === f && <motion.span layoutId="queue-filter" className="seg-pill" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
-            <span className="relative capitalize">{f}</span>
-          </button>
-        ))}
-      </div>
+      {/* filter (synthetic scenarios only: backend rows are all current and already in queue order) */}
+      {dev && (
+        <div className="flex items-center gap-0.5 px-2 pb-1.5">
+          {(["active", "resolved"] as Filter[]).map((f) => (
+            <button
+              key={f}
+              className="btn relative h-6 px-2 text-[11px]"
+              data-active={filter === f}
+              onClick={() => {
+                sfx.click();
+                setFilter(f);
+              }}
+            >
+              {filter === f && <motion.span layoutId="queue-filter" className="seg-pill" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
+              <span className="relative capitalize">{f}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="mx-3 h-px bg-white/[0.06]" />
 
       {/* list */}
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
-        {!dev && <BackendEmpty />}
+        {!dev && !CONVEX_ENABLED && <BackendEmpty />}
+        {!dev && CONVEX_ENABLED && <BackendListSafe now={now} />}
         {dev && sorted.length === 0 && (
           <div className="px-3 py-8 text-center text-[11px] text-muted">
             {filter === "active" ? "Nothing needs a decision. The Risk Monitor keeps screening." : "No resolved events yet."}
@@ -170,7 +186,7 @@ function BackendEmpty() {
       </div>
       <div className="mt-3 text-[12px] font-medium">Backend not connected</div>
       <p className="mt-1 max-w-[220px] text-[11px] leading-[1.5] text-muted">
-        Conjunctions arrive here from the Risk Monitor once the backend is live.
+        Real conjunctions appear here once <span className="mono text-[10px] text-fg-2">NEXT_PUBLIC_CONVEX_URL</span> points at a Convex deployment.
       </p>
       <button className="btn btn-ghost-line mt-3 h-7 text-[11px]" onClick={() => toggleDev()}>
         Run synthetic scenarios <span className="kbd">D</span>

@@ -23,7 +23,12 @@ export function Navbar() {
   const set = useOrbit((s) => s.set);
   const source = useOrbit((s) => s.catalog?.meta.source);
   const tab = useOps((s) => s.tab);
-  const redCount = useOps((s) => s.events.filter((e) => e.risk === "red" && !["verified", "scheduled", "no_action"].includes(e.status)).length);
+  // dev on: synthetic scenarios; dev off: red rows of the backend queue
+  const redCount = useOps((s) =>
+    s.dev
+      ? s.events.filter((e) => e.risk === "red" && !["verified", "scheduled", "no_action"].includes(e.status)).length
+      : (s.backendRows ?? []).filter((r) => r.color === "red").length,
+  );
 
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 p-2.5">
@@ -115,10 +120,10 @@ function DevSwitch() {
       label={
         dev ? (
           <span>
-            Synthetic scenarios over the live catalog. <span className="text-muted">Click to use backend data only.</span>
+            Synthetic scenarios over the TLE catalog. <span className="text-muted">Click to use the real OMM mode.</span>
           </span>
         ) : (
-          "Run synthetic conjunctions and agents to test the UI"
+          "Real mode requires backend OMM. Click for the TLE catalog and synthetic scenarios."
         )
       }
       hint="D"

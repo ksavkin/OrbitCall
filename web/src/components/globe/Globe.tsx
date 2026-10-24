@@ -9,7 +9,7 @@ import { useOrbit } from "@/lib/store";
 import { GlobeScene, type ScreenPoint } from "./GlobeScene";
 import { HoverCard } from "@/components/ui/HoverCard";
 
-export function Globe() {
+export function Globe({ dev }: { dev: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const hoverRef = useRef<HTMLDivElement>(null);
   const selRef = useRef<HTMLDivElement>(null);
@@ -60,9 +60,13 @@ export function Globe() {
     scene.setViewMode(store.viewMode);
 
     let cancelled = false;
-    (async () => {
+    const request = new AbortController();
+    // Never carry a TLE catalog or its selected object into real mode.
+    useOrbit.getState().set({ catalog: null, selected: null, hovered: null, following: false, density: null, error: null, stage: dev ? "catalog" : "ready" });
+    if (dev) void (async () => {
       try {
-        const res = await fetch("/api/catalog");
+        const res = await fetch("/api/catalog", { signal: request.signal });
+        if (cancelled) return;
         if (!res.ok) throw new Error(`Catalog request failed (HTTP ${res.status})`);
         useOrbit.getState().set({ stage: "parse" });
         const payload = (await res.json()) as CatalogPayload;
@@ -75,6 +79,7 @@ export function Globe() {
         scene.setHiddenOwners(st.hiddenOwners);
         scene.setColorBy(st.colorBy);
       } catch (e) {
+        if (cancelled) return;
         useOrbit.getState().set({ stage: "error", error: (e as Error).message });
       }
     })();
@@ -95,11 +100,12 @@ export function Globe() {
 
     return () => {
       cancelled = true;
+      request.abort();
       unsub();
       sceneRef.set(null);
       scene.dispose();
     };
-  }, []);
+  }, [dev]);
 
   return (
     <div className="absolute inset-0">

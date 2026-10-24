@@ -7,6 +7,10 @@ npm install
 npm run dev        # http://localhost:3000
 ```
 
+## Runtime mode decision
+
+Dev on is the TLE catalog and synthetic scenarios. Dev off requires backend OMM. While Phase 1 returns `ommUrl: null`, the real view shows an explicit waiting state with no TLE/simulator fallback. The OMM loader/renderer remains an integration task. Both modes are in `main` and `adil`; Git branch names do not choose data format. See [integration status](../docs/integration-status.md).
+
 ## What's on screen
 
 - Every object in the CelesTrak GP `active` group plus three debris clouds (Cosmos 2251, Iridium 33, Fengyun-1C), propagated with SGP4 in a Web Worker (`src/lib/orbit/propagate.worker.ts`). The GPU extrapolates between samples, so motion stays smooth at any time speed.
@@ -14,6 +18,12 @@ npm run dev        # http://localhost:3000
 - Five globe views: Realistic (real sun position, night lights, clouds), Imagery, Night, Terrain, Tactical.
 - Zooming in streams map tiles (`src/components/globe/tiles.ts`): Esri World Imagery, Esri World Hillshade and NASA GIBS VIIRS Black Marble. Attribution follows the source on screen.
 - The selected object gets a detailed PBR model (`hero.ts`). Its reflections come from a cube camera at the satellite's position, so the arrays show the real Earth below.
+
+## Backend (Convex)
+
+Set `NEXT_PUBLIC_CONVEX_URL` (in `web/.env.local`, never committed, and in the Vercel project) to the public URL of the Convex deployment. With the **Dev** switch off, the Conjunctions tab shows `events.catalogPairs` live, the catalog snapshot time, and the Incident Analyst's checked summary (`agentSummaries.get`) for the selected event. Without the variable the app still runs: the queue shows "Backend not connected" and the Dev switch gives the synthetic scenarios.
+
+The web app does not import the root `convex/` package. Functions are referenced by name with `anyApi` and the response types are declared in `src/lib/backend/types.ts` (from `docs/specification.md` §2.2).
 
 ## Live weather
 
