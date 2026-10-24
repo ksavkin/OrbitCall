@@ -18,7 +18,7 @@ export const begin = internalMutation({
     if (previous?.inputKey === key && ["running", "succeeded"].includes(previous.status)) return null;
     if (previous?.status === "running") await supersede(ctx, previous._id);
     const runId = await ctx.db.insert("agentRuns", {
-      eventId, inputKey: key, status: "running", stage: "loading",
+      eventId, role: "incident_analyst", inputKey: key, status: "running", stage: "loading",
       lastProgressAt: Date.now(), stalled: false,
     });
     await ctx.scheduler.runAfter(STALLED_AFTER_MS, internal.agentRuns.watchdog, { runId });
@@ -60,7 +60,7 @@ export const finish = internalMutation({
   },
   handler: async (ctx, { runId, raw, model, usage }) => {
     const run = await ctx.db.get(runId);
-    if (!run || run.status !== "running") return { published: false };
+    if (!run || run.status !== "running" || run.role === "operator_advocate") return { published: false };
     const event = await ctx.db.get(run.eventId);
     const latest = await latestRun(ctx, run.eventId);
     const facts = event && await loadFacts(ctx, event);

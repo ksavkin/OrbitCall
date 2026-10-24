@@ -17,6 +17,8 @@ See [the integration handoff](docs/integration-status.md) for what is implemente
 
 ## Development
 
+Andrew's Phase 1 stretch implementation adds private operator policies and a bounded two-Advocate negotiation round. See [Operator Advocate v1](docs/operator-advocate-v1.md) for its protected endpoints, synthetic fixture and integration boundaries.
+
 For the backend, run `npm ci` then `npm run check` from the repository root. Tests use simulated fixtures and a mocked model provider, so no accounts or keys are required. Run `npm run dev` to start Convex locally or connect to the team's existing OrbitCall development project.
 
 See [Andrew's Phase 1 implementation and integration guide](docs/phase1-andrew.md) for the live model settings, fixture walkthrough, event ingestion hook, summary query and remaining integration work. The frontend has its own package and setup in [web/README.md](web/README.md).

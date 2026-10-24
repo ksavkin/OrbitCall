@@ -12,6 +12,8 @@ The accepted decisions in the master roadmap, user-flow.md, and functionality.md
 
 ## Implementation boundary after branch reconciliation
 
+The Phase 1 stretch implements `policies.getMine`, `policies.update`, and protected `advocates.list`/`advocates.rerun`, plus trusted company/assignment setup and immutable candidate inputs. The implemented [Operator Advocate v1 contract](operator-advocate-v1.md) documents provisional risk outcomes, issuer-bound account lookup, the bounded negotiation round and the scheduling boundary. It does not implement the full Phase 2 room/approval APIs described below.
+
 The merged Phase 1 backend implements catalog ingestion, catalog snapshot/pairs, Risk Monitor coloring and the checked Incident Analyst. Fleet assignments, fleet-scoped scans, authenticated rooms, candidate approvals and unilateral debris are accepted targets, not completed Phase 1 features. The public catalog queries in Phase 1 are an explicit temporary scope exception to section 1 and do not authorize private data or scheduling. See [integration status](integration-status.md) for the handoff and [Phase 1 guide](phase1-andrew.md) for current callable functions.
 
 ## 0. Conventions
