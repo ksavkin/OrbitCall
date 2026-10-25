@@ -162,6 +162,15 @@ describe("orbit.computeCandidates", () => {
     expect(await t.run(ctx => ctx.db.query("candidateSets").collect())).toHaveLength(0);
   });
 
+  it("publishes nothing when the service's own geometry disagrees with the event's", async () => {
+    const { t, eventId } = await setup();
+    vi.stubEnv("ORBIT_SERVICE_URL", "https://orbit.test"); vi.stubEnv("ORBIT_SERVICE_TOKEN", "test-only-token");
+    fetchMock.mockImplementation(async () => json(200, { ...response(serviceGrid), missBeforeKm: 6.3 }));
+    const result = await t.action(internal.orbit.computeCandidates, { eventId, start: false });
+    expect(result).toMatchObject({ status: "failed", code: "GEOMETRY_MISMATCH" });
+    expect(await t.run(ctx => ctx.db.query("candidateRevisions").collect())).toHaveLength(0);
+  });
+
   it("does not call the service for a pair without two registered operators", async () => {
     const { t, eventId } = await setup(false);
     vi.stubEnv("ORBIT_SERVICE_URL", "https://orbit.test"); vi.stubEnv("ORBIT_SERVICE_TOKEN", "test-only-token");

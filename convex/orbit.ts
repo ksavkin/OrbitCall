@@ -54,6 +54,7 @@ const outcome = v.union(
 );
 
 type Outcome = Infer<typeof outcome>;
+export const GEOMETRY_TOLERANCE_KM = 1;
 type Context = { facts: Infer<typeof eventFacts>; baseVersion: number | null; open: boolean; coordinated: boolean } | null;
 
 // Incident Analyst tool [AGT-2]: asks the orbital service for the maneuver grid and publishes the computed
@@ -75,6 +76,12 @@ export const computeCandidates = internalAction({
         // Both sides are registered operators here; the service still keeps debris and dead payloads fixed.
         allowedMovingObjectIds: [facts.objectA.objectId, facts.objectB.objectId],
       });
+      // The service propagates its own pinned snapshot. When its pre-burn miss disagrees with the event's by more than
+      // the method's ~1 km resolution, "after" numbers would mix two element sets: publish nothing.
+      if (!Number.isFinite(response.missBeforeKm) || Math.abs(response.missBeforeKm - facts.missKm) > GEOMETRY_TOLERANCE_KM) {
+        return { status: "failed" as const, code: "GEOMETRY_MISMATCH",
+          message: `The orbital service sees ${response.missBeforeKm} km before any maneuver on ${response.snapshotId}; the event says ${facts.missKm} km.` };
+      }
       const selected = selectCandidates(response, facts);
       const latest = await ctx.runQuery(internal.orbit.latestRevisions, { eventId, candidateIds: selected.map(c => c.candidateId) });
       const candidates = assignRevisions(selected, latest);

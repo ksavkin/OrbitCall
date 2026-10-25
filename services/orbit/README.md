@@ -63,7 +63,7 @@ one catalog, and a job that names a snapshotId is not refused with 409 `SNAPSHOT
 | `src/orbit/` | FastAPI app (`app.py`), jobs (`jobs.py`), the physics (`candidates.py`, `rescreen.py`, `screen.py`, `verify.py`, `validation.py`, `objects.py`, `simulate.py`, `impulse.py`, `track.py`, `conjunction.py`, `catalog.py`) |
 | `src/tests/` | pytest suite (93 tests; 2 skip without the service's own OMM fetch), reads the data folder at `../data` (`/service/data` in the image) |
 | `src/tools/` | the measurements behind decisions O3 and O5, the replay builder, `run_validation.py` |
-| `data/omm/<fetch>/` | the service's own CelesTrak GP **OMM** fetch (six groups, 19,473 objects, fetched 2026-10-24T22:52:29Z, manifest with sha256 checked at load): an alternative used only with an explicit `ORBIT_SNAPSHOT_DIR`, and read by two tests. **Not in git** (~8 MB): unpack it from the delivery archive `orbitcall-orbit-service-20261024-1831.zip` if needed. Real mode uses the team's snapshot |
+| `data/omm/<fetch>/` | the service's own CelesTrak GP **OMM** fetch (six groups, 19,473 objects, fetched 2026-10-24T22:52:29Z, manifest with sha256 checked at load): an alternative used only with an explicit `ORBIT_SNAPSHOT_DIR`, and read by two tests. **Optional, not in git** (~8 MB): without it the two tests that read it skip; place a copy under `data/omm/<fetch>/` to run them. Real mode uses the team's snapshot |
 | `data/replay/` | NASA's public ISS ephemeris (OEM, sha256 in the meta file) and the **simulated** reboost replay built from it, labeled simulated |
 | `data/validation/` | the cached `/validation` result (rebuilt by `tools/run_validation.py`, ~12 min) |
 | `setup-data.sh` | builds the data folder: the OrbitCall repo's snapshot files plus the files above |
@@ -150,6 +150,8 @@ What this repo's Convex does today:
   publishes them through `candidates.publish`. Ids are rewritten to the characters publish accepts
   (`A:T-12h:-0.02` → `A-T12h-retro-20mms`); `missBeforeKm` is the event's figure, the service's own is in the
   assumptions; `estimatedFuelKg` stays null for the Advocates.
+- It publishes nothing (`GEOMETRY_MISMATCH`) when the service's pre-burn miss differs from the event's by more than
+  1 km: the "after" numbers would then mix two element sets. Expect this for SOCRATES rows on the OMM snapshot.
 - The Incident Analyst (`agents/analyst.start`) schedules it after each run, only when both env vars are set.
 - Not written yet: `/rescreen` before scheduling, `/verify`, Run Scan (`/screen`), `validation.latest`,
   `/objects` for debris rooms and `demo.launchSatellite` (`/simulate`). The client already covers them.
