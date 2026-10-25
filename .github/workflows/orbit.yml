@@ -26,8 +26,19 @@ jobs:
         working-directory: services/orbit
     steps:
       - uses: actions/checkout@v4
+      - name: Check that services/orbit exists
+        id: present
+        working-directory: .
+        run: |
+          if [ -d services/orbit ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::services/orbit is not on this branch yet, so its checks are skipped"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Detect dependency format
         id: layout
+        if: steps.present.outputs.present == 'true'
         run: |
           if [ -f uv.lock ]; then
             manager=uv
@@ -42,20 +53,22 @@ jobs:
             exit 1
           fi
           echo "manager=$manager" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@v5
+      - if: steps.present.outputs.present == 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: ${{ steps.layout.outputs.manager == 'pip' && 'pip' || '' }}
           cache-dependency-path: |
             services/orbit/requirements*.txt
             services/orbit/pyproject.toml
-      - if: steps.layout.outputs.manager == 'uv'
+      - if: steps.present.outputs.present == 'true' && steps.layout.outputs.manager == 'uv'
         uses: astral-sh/setup-uv@v10.3.2
         with:
           working-directory: services/orbit
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Install dependencies
+        if: steps.present.outputs.present == 'true'
         env:
           MANAGER: ${{ steps.layout.outputs.manager }}
           UV_PYTHON: "3.12"
@@ -71,6 +84,7 @@ jobs:
             pip install -e ".$extra"
           fi
       - name: Run tests
+        if: steps.present.outputs.present == 'true'
         env:
           MANAGER: ${{ steps.layout.outputs.manager }}
           UV_PYTHON: "3.12"
