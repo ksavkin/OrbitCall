@@ -288,7 +288,9 @@ describe("summary edit of a card whose burn is shared", () => {
 
   it("refuses a burn edit when a live plan lists this incident", async () => {
     const s = await summarySetup();
-    await plan(s.t, [s.eventId]);
+    // A plan of more than one incident, as syncPlans writes them; the other incident lies outside the horizon.
+    const other = await insertEvent(s.t, { ...advocateEvent, tcaUtc: atBurnPlus(30 * 24) });
+    await plan(s.t, [s.eventId, other]);
     await expect(edit(s, { deltaVMs: 0.75 })).rejects.toMatchObject({ data: { code: "SHARED_TRAJECTORY_REQUIRED" } });
     expect(await canEdit(s)).toBe(true);
   });
@@ -307,5 +309,30 @@ describe("summary edit of a card whose burn is shared", () => {
     await edit(s, { deltaVMs: 0.75 });
     rescreen(); await runJob(s);
     expect((await revisionsOf(s)).at(-1)).toMatchObject({ revision: 2, deltaVMs: 0.75 });
+  });
+});
+
+describe("shared-burn guard edges", () => {
+  const sideB = advocateCandidates.find(c => c.kind === "maneuver" && c.movingSide === "B")!;
+  /** A later encounter of the same pair, far outside the seeded event's horizon, with no candidate set yet. */
+  async function lateEvent() {
+    const { t, eventId: E1 } = await seed();
+    const tca = Date.parse(advocateEvent.tcaUtc) + 30 * 86_400_000;
+    const E = await insertEvent(t, { ...advocateEvent, tcaUtc: new Date(tca).toISOString().replace(".000Z", "Z") });
+    const card = { ...sideB, burnTimeUtc: new Date(tca - 6 * 3_600_000).toISOString().replace(".000Z", "Z") };
+    return { t, E1, E, card };
+  }
+
+  it("checks a first publication without a candidate set instead of refusing it", async () => {
+    const { t, E, card } = await lateEvent();
+    expect(await t.run(ctx => ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", E)).unique())).toBeNull();
+    expect(await t.query(internal.revisions.checkMovers, { eventId: E, candidates: [card] })).toBeNull();
+  });
+
+  it("does not treat a plan of this incident alone as a shared burn", async () => {
+    const { t, E, card } = await lateEvent();
+    await t.run(ctx => ctx.db.insert("trajectoryPlans", { objectId: card.movingObjectId!, planVersion: 1, state: "authorizing",
+      affectedEventIds: [E], eventRefs: [], maneuverId: null, demoRunId: null, createdAt: Date.now(), updatedAt: Date.now() }));
+    expect(await t.query(internal.revisions.checkMovers, { eventId: E, candidates: [card] })).toBeNull();
   });
 });
