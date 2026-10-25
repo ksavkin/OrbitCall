@@ -5,24 +5,9 @@
   "package": "https://registry.npmjs.org/simple-icons/-/simple-icons-16.35.0.tgz",
   "icons": [
     {
-      "file": "convex.svg",
-      "slug": "convex",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/convex.svg"
-    },
-    {
-      "file": "claude.svg",
-      "slug": "claude",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/claude.svg"
-    },
-    {
       "file": "auth0.svg",
       "slug": "auth0",
       "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/auth0.svg"
-    },
-    {
-      "file": "digitalocean.svg",
-      "slug": "digitalocean",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/digitalocean.svg"
     },
     {
       "file": "livekit.svg",
@@ -145,6 +130,37 @@
       "file": "grok.png",
       "source": "https://grok.com/images/android-chrome-512x512.png",
       "bytes": 8332
+    },
+    {
+      "file": "claude.svg",
+      "source": "https://claude.ai/favicon.svg",
+      "sourcePage": "https://claude.ai/",
+      "colors": [
+        "#D97757"
+      ],
+      "bytes": 2558
+    },
+    {
+      "file": "digitalocean.svg",
+      "source": "https://opensource.nyc3.cdn.digitaloceanspaces.com/attribution/assets/SVG/DO_Logo_icon_blue.svg",
+      "sourcePage": "https://opensource.nyc3.cdn.digitaloceanspaces.com/attribution/index.html",
+      "colors": [
+        "#0080FF"
+      ],
+      "bytes": 1185,
+      "normalization": "LF line endings and trailing whitespace only. Original paths and brand colors preserved."
+    },
+    {
+      "file": "convex.svg",
+      "source": "https://www.convex.dev/resources/logos.zip",
+      "archivePath": "Logos/SVG/symbol-color.svg",
+      "sourcePage": "https://www.convex.dev/brand",
+      "colors": [
+        "#F3B01C",
+        "#8D2676",
+        "#EE342F"
+      ],
+      "bytes": 948
     }
   ],
   "roleIcons": {

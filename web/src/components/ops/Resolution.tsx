@@ -26,7 +26,7 @@ export function ResolutionOverlay() {
   const replies = useOps((s) => s.replies);
   const spans = useOps((s) => s.spans);
   const played = useRef<string | null>(null);
-  const open = !!resolved && !!ev && tab === "conjunctions";
+  const open = !!resolved && !!ev && (tab === "orbit" || tab === "decision");
 
   useEffect(() => {
     if (!resolved || played.current === `${resolved.eventId}:${resolved.at}`) return;

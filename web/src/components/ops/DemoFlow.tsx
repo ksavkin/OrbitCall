@@ -34,7 +34,8 @@ const CONF = {
 /** How long the center warning holds before the results list opens. */
 export const WARN_MS = 3400;
 
-const priority = (e: ConjunctionEvent, now: number) => e.pc / Math.max((e.tca - now) / 3600_000, 1);
+/** Queue order (user-flow §4): red before yellow, then the earliest closest approach, then the higher chance. */
+const byPriority = (a: ConjunctionEvent, b: ConjunctionEvent) => (a.risk === b.risk ? 0 : a.risk === "red" ? -1 : 1) || a.tca - b.tca || b.pc - a.pc;
 
 /** Primary action on the queue: one full screening pass. */
 export function ScanButton() {
@@ -58,7 +59,7 @@ export function ScanButton() {
   const btn = (
     <button
       ref={anchor}
-      className="btn btn-primary h-8 w-full gap-1.5 text-[12px]"
+      className={`btn h-8 w-full gap-1.5 text-[12px] ${locked ? "bg-white/[0.06] text-neutral-500 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] hover:text-neutral-300" : "btn-primary"}`}
       disabled={!locked && (!dev || !ready || scanning || !!busy)}
       aria-haspopup={locked ? "dialog" : undefined}
       onClick={() => {
@@ -78,7 +79,7 @@ export function ScanButton() {
   if (locked)
     return (
       <>
-        {btn}
+        <Tooltip label={me ? "Your account has no scan access yet. Click to request it." : "Sign in as a dispatcher to scan your fleet"}>{btn}</Tooltip>
         <Popover open={gate} onClose={closeGate} anchor={anchor} width={260} label="Scanning needs an account">
           <div className="p-3">
             <div className="flex items-center gap-2 text-[13px] font-semibold text-white">
@@ -137,10 +138,10 @@ export function ScanResults() {
   const tab = useOps((s) => s.tab);
   const events = useOps((s) => s.events);
   const now = useNow(1000);
-  const open = scan.phase === "results" && tab === "conjunctions";
+  const open = scan.phase === "results" && tab === "orbit";
   const rows = useMemo(() => {
-    return events.filter((e) => scan.ids.includes(e.id)).sort((a, b) => priority(b, now) - priority(a, now));
-  }, [events, scan.ids, now]);
+    return events.filter((e) => scan.ids.includes(e.id)).sort(byPriority);
+  }, [events, scan.ids]);
   const [sel, setSel] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const chosen = sel && rows.some((r) => r.id === sel) ? sel : (rows[0]?.id ?? null);
@@ -272,8 +273,11 @@ export function ScanResults() {
                           <span className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-white">
                             <PairName e={e} />
                           </span>
-                          <span className="tnum mt-1 block text-[12.5px] text-neutral-500">
-                            Closest approach {now ? fmtIn(e.tca - now) : ""} · {fmtWhen(e.tca)}
+                          <span className="tnum mt-1 flex flex-wrap items-center gap-x-2 text-[12.5px] text-neutral-500">
+                            <span>
+                              Closest approach {now ? fmtIn(e.tca - now) : ""} · {fmtWhen(e.tca)}
+                            </span>
+                            {e.reference && <ReferenceTag e={e} />}
                           </span>
                         </span>
                         <span className="shrink-0 text-right">
@@ -322,6 +326,49 @@ export function ScanResults() {
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+const REF = {
+  matched: { label: "Matched in SOCRATES", color: "var(--green)" },
+  data_differs: { label: "SOCRATES: data differs", color: "var(--amber)" },
+  not_listed: { label: "Not in SOCRATES", color: "#9aa3ad" },
+} as const;
+
+/** The SOCRATES check of a row, with what SOCRATES is and their numbers on hover. */
+function ReferenceTag({ e }: { e: ConjunctionEvent }) {
+  const r = e.reference!;
+  const m = REF[r.status];
+  const now = useNow(60_000);
+  const hrs = now ? Math.max(1, Math.round((now - r.runAt) / 3600_000)) : null;
+  return (
+    <Tooltip
+      side="bottom"
+      label={
+        <span className="block max-w-[300px] whitespace-normal text-left leading-[1.5]">
+          <span className="block font-semibold text-white">SOCRATES check</span>
+          <span className="mt-0.5 block text-neutral-300">
+            SOCRATES is CelesTrak&rsquo;s public list of close approaches. It runs on its own schedule from older element sets, so it lags our scan{hrs ? ` (its last run was about ${hrs} h ago)` : ""}. We compare each pair our orbital service found with it.
+          </span>
+          {r.status === "matched" && (
+            <span className="mt-1 block text-neutral-300">
+              Same pair and time. Theirs: {fmtMiss(r.missM!)} apart, max probability {fmtOdds(r.maxProb!)}. Ours: {fmtMiss(e.missM)}, {fmtOdds(e.pc)}.
+            </span>
+          )}
+          {r.status === "data_differs" && (
+            <span className="mt-1 block text-neutral-300">
+              They list this pair, but from different element sets, so the numbers are not comparable: theirs {fmtMiss(r.missM!)}, ours {fmtMiss(e.missM)}.
+            </span>
+          )}
+          {r.status === "not_listed" && <span className="mt-1 block text-neutral-300">Their last run does not include this pair yet. That is not an error: their data may be older than ours.</span>}
+          <span className="mt-1 block text-neutral-500">Provenance, not a confidence score.</span>
+        </span>
+      }
+    >
+      <span className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[11px] font-medium" style={{ color: m.color, boxShadow: `inset 0 0 0 1px ${m.color}55` }}>
+        {r.status === "matched" ? "✓" : r.status === "data_differs" ? "≈" : "○"} {m.label}
+      </span>
+    </Tooltip>
   );
 }
 
@@ -423,7 +470,7 @@ export function UrgencyOverlay() {
   const now = useNow(200);
   const sounded = useRef<string | null>(null);
   // the glow is the alarm: it shows until a case is picked, not while the case runs
-  const active = !!alert && !!ev && tab === "conjunctions" && phase === "results" && !RESOLVED.includes(ev.status);
+  const active = !!alert && !!ev && tab === "orbit" && phase === "results" && !RESOLVED.includes(ev.status);
   // alarm first (center warning), strong while the dispatcher picks a case, calm once the agents are on it
   // no alarm screen: the results list itself carries the urgency
   const warning = false;

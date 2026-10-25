@@ -135,7 +135,9 @@ export function useSimCall(
   const join = useCallback(async () => {
     if (!e) return;
     setState("joining");
-    later(700, () => {
+    // not a tracked timer: React's development double-mount runs the cleanup that clears tracked timers right
+    // after a join started on mount, which left the call stuck on "Joining"
+    setTimeout(() => {
       setState("joined");
       // the host opens the room with a summary in each listener's language
       setMine((x) => [
@@ -148,8 +150,8 @@ export function useSimCall(
           `Room open for ${e.id}. ${e.a.name} and ${e.b.name} pass ${fmtMiss(e.missM)} apart on ${fmtWhen(e.tca)}, chance ${fmtOdds(e.pc)}. Current plan: ${planLine(e)}.`,
         ),
       ]);
-    });
-  }, [e, later]);
+    }, 700);
+  }, [e]);
 
   const leave = useCallback(async () => {
     rec.current?.stop();

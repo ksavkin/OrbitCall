@@ -99,7 +99,7 @@ function LocalPolicy({ companyId, companyName, fleet }: { companyId: string; com
     const stored = loadPolicy(companyId);
     // localStorage exists only after mount; fleet is the list that matches fleetKey
     // eslint-disable-next-line react-hooks/set-state-in-effect -- saved policy is browser storage, not render state
-    setInitial({ draft: hydrate(stored?.draft ?? null, fleet), savedAt: stored?.draft.savedAt ?? null });
+    setInitial({ draft: hydrate(stored?.draft ?? null, fleet, companyId), savedAt: stored?.draft.savedAt ?? null });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a new fleet array with the same ids must not reset the form
   }, [companyId, fleetKey]);
 

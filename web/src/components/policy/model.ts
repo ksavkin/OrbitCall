@@ -1,5 +1,6 @@
 import type { FleetSatellite, Lang } from "@/components/auth/session";
 import type { PolicySatellite } from "@/lib/backend/types";
+import { DEMO_POLICY, DEMO_SETTINGS, utcSlot } from "./demoDefaults";
 
 // Company policy as the operator edits it. Numbers stay strings until save so an empty field is
 // empty, not a zero we invented. The wire shape matches policies.update (convex/lib/policyValidators.ts).
@@ -163,7 +164,39 @@ function strip(s: SatelliteDraft): StoredSatellite {
 }
 
 /** Fleet rows the operator can see, plus any saved satellite that is no longer on the fleet list. */
-export function hydrate(stored: StoredPolicy | null, fleet: FleetSatellite[]): PolicyDraft {
+/** A demo satellite's starting policy as form text, when this browser has no saved copy of it. */
+function demoSatellite(f: FleetSatellite): SatelliteDraft | null {
+  const d = DEMO_POLICY[f.object.objectId];
+  if (!d) return null;
+  const win = (kind: string) => (w: { day: number; from: string; to: string; reason: string }, i: number) => ({
+    key: `${f.object.objectId}:${kind}:${i}`,
+    startUtc: utcSlot(w.day, w.from),
+    endUtc: utcSlot(w.day, w.to),
+    reason: w.reason,
+  });
+  return {
+    ...blankSatellite(f.object.objectId, f.object.name, f.object.norad, f.object.orbit),
+    minFuelReserveKg: String(d.minFuelReserveKg),
+    currentFuelKg: String(d.currentFuelKg),
+    dryMassKg: String(d.dryMassKg),
+    ispS: String(d.ispS),
+    acceptablePc: String(d.acceptablePc),
+    missionPriority: d.missionPriority,
+    protectedWindows: d.protected.map(win("protected")),
+    preferredWindows: d.preferred.map(win("preferred")),
+  };
+}
+
+export function hydrate(stored: StoredPolicy | null, fleet: FleetSatellite[], companyId?: string): PolicyDraft {
+  // nothing saved in this browser yet: start the demo companies from realistic values instead of empty fields
+  if (!stored && companyId && DEMO_SETTINGS[companyId]) {
+    const settings = DEMO_SETTINGS[companyId];
+    return {
+      language: settings.language,
+      contact: settings.contact,
+      satellites: fleet.map((f) => demoSatellite(f) ?? blankSatellite(f.object.objectId, f.object.name, f.object.norad, f.object.orbit)),
+    };
+  }
   const byId = new Map((stored?.satellites ?? []).map((s) => [s.objectId, s]));
   const seen = new Set<string>();
   const satellites: SatelliteDraft[] = [];

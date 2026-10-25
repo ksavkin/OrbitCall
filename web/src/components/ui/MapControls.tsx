@@ -20,7 +20,8 @@ export function MapControls() {
   const set = useOrbit((s) => s.set);
   const [preset, setPreset] = useState<string>("leo");
   // the agents panel takes the right edge on the Conjunctions screen
-  const shifted = useOps((s) => s.tab === "conjunctions");
+  // the agents panel takes the right edge on Orbit while a case runs
+  const shifted = useOps((s) => s.tab === "orbit" && !!s.incident && s.resolved?.eventId !== s.incident);
 
   return (
     <div

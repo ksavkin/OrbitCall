@@ -20,7 +20,8 @@ export function showObjectOnGlobe(eventId: string, side: "a" | "b") {
   const e = useOps.getState().events.find((x) => x.id === eventId);
   if (!scene || !e) return;
   sfx.whoosh();
-  useOps.setState({ incidentView: "collapsed" });
+  // looking at an object means the globe: Orbit, with the case bar to come back
+  useOps.setState({ incidentView: "collapsed", tab: "orbit" });
   // the director waits for the user after a manual shot
   scene.userCameraAt = performance.now();
   const ref = side === "a" ? e.a : e.b;

@@ -103,14 +103,21 @@ export function Footer() {
           <span className="ml-1 text-muted">UTC</span>
           <span ref={offsetRef} className="ml-1.5 text-orange" />
         </span>
-        <Tooltip label="Jump to real time" side="top">
+        <Tooltip label="Live: real time. Click again to stop the clock here" side="top">
           <button
             ref={liveRef}
             className="group ml-1 flex h-[22px] items-center gap-1 rounded-full px-2 text-[10.5px] font-medium text-muted shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] transition-colors hover:text-fg data-[live=true]:text-green data-[live=true]:shadow-[inset_0_0_0_1px_rgba(61,220,151,0.25)]"
             onClick={() => {
-              sfx.click();
+              // a toggle: live (real time) ↔ stopped at this moment; anything else jumps back to live
+              const clock = sceneRef.get()?.clock;
+              if (clock?.isLive() && !paused) {
+                sfx.toggle(false);
+                set({ paused: true });
+                return;
+              }
+              sfx.toggle(true);
               set({ speed: 1, paused: false });
-              sceneRef.get()?.clock.live();
+              clock?.live();
             }}
           >
             <Radio size={11} />

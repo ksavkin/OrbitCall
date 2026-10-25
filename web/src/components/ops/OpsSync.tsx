@@ -11,6 +11,9 @@ import { sceneRef } from "@/lib/sceneRef";
 import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
 
+/** Screens over the globe that show cases on it: Orbit, and Decision Center behind its panel. */
+const onGlobe = (t: string) => t === "orbit" || t === "decision";
+
 const QUIET: ConjunctionEvent["status"][] = ["verified", "no_action", "monitoring"];
 
 // NORAD → catalog object, rebuilt when the catalog changes
@@ -50,7 +53,7 @@ export function OpsSync() {
       const ops = useOps.getState();
       // dev off: the focused real pair from the backend queue, built from both catalog element sets
       if (!ops.dev) {
-        const item = ops.tab === "conjunctions" ? backendItem(ops.focusEvent) : null;
+        const item = onGlobe(ops.tab) ? backendItem(ops.focusEvent) : null;
         scene.conj.setItems(item ? [item] : []);
         return;
       }
@@ -61,7 +64,7 @@ export function OpsSync() {
         items.push({ id: e.id, enc, risk: e.risk, aIndex: e.a.catalogIndex, quiet: QUIET.includes(e.status) });
       }
       // only the conjunctions screen shows them on the globe
-      scene.conj.setItems(useOps.getState().tab === "conjunctions" ? items : []);
+      scene.conj.setItems(onGlobe(useOps.getState().tab) ? items : []);
     };
 
     const startIfReady = () => {
@@ -79,11 +82,20 @@ export function OpsSync() {
           sceneRef.get()?.endPreview();
         }
       }
+      // a decision for the person at this screen moves the case from Orbit to the Decision Center
+      if (s.humans !== p.humans && s.incident && s.tab === "orbit") {
+        const side = s.actAs ?? "a";
+        const isNew = (h: { eventId: string; side: string }) => h.eventId === s.incident && h.side === side;
+        if (s.humans.some(isNew) && !p.humans.some(isNew)) {
+          sfx.whoosh();
+          useOps.setState({ tab: "decision", incidentView: "expanded" });
+        }
+      }
       if (s.events !== p.events || s.tab !== p.tab || (!s.dev && (s.focusEvent !== p.focusEvent || s.backendRows !== p.backendRows))) pushItems();
-      if (s.scanning !== p.scanning) sceneRef.get()?.conj.setScanning(s.scanning && s.tab === "conjunctions");
+      if (s.scanning !== p.scanning) sceneRef.get()?.conj.setScanning(s.scanning && onGlobe(s.tab));
       if (s.tab !== p.tab) {
         const scene = sceneRef.get();
-        if (s.tab !== "conjunctions") {
+        if (!onGlobe(s.tab)) {
           scene?.focusConjunction(null);
           scene?.releasePivot();
           scene?.endPreview();
@@ -93,13 +105,13 @@ export function OpsSync() {
           if (s.focusEvent) scene?.focusConjunction(s.focusEvent, { fly: true });
         }
       }
-      if (s.focusEvent !== p.focusEvent && s.tab === "conjunctions") {
+      if (s.focusEvent !== p.focusEvent && onGlobe(s.tab)) {
         // a real pair zooms in closer: one crossing, not a whole scenario
         sceneRef.get()?.focusConjunction(s.focusEvent, { fly: s.focusEvent !== null, dist: s.dev ? undefined : 0.55 });
         if (s.focusEvent === null) sceneRef.get()?.releasePivot();
       }
       // sound cues for state changes the user should notice
-      if (s.events !== p.events && s.tab === "conjunctions") {
+      if (s.events !== p.events && onGlobe(s.tab)) {
         for (const e of s.events) {
           const before = p.events.find((x) => x.id === e.id);
           if (!before) continue;

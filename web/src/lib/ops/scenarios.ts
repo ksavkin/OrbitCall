@@ -906,6 +906,18 @@ export function runScan() {
         });
         if (!e) continue;
         variantOf.set(e.id, c.variant);
+        // the SOCRATES check for the simulated scan: most pairs match with slightly different numbers (their
+        // element sets are older), one has different element-set epochs, one is not in their run yet
+        const k = ids.length;
+        const runAt = Date.now() - 7.5 * 3600_000;
+        eng.update(e.id, (ev) => ({
+          reference:
+            k === 2
+              ? { status: "data_differs" as const, runAt, tca: ev.tca + 41_000, missM: Math.round(ev.missM * 2.6), maxProb: ev.pc * 0.3 }
+              : k === 4
+                ? { status: "not_listed" as const, runAt, tca: null, missM: null, maxProb: null }
+                : { status: "matched" as const, runAt, tca: ev.tca + ((k % 3) - 1) * 2_000, missM: Math.round(ev.missM * (1 + ((k % 5) - 2) * 0.06)), maxProb: ev.pc * (1 + ((k % 4) - 1.5) * 0.12) },
+        }));
         ids.push(e.id);
       }
       const n = useOps.getState().lastScan;
@@ -914,7 +926,8 @@ export function runScan() {
         scenarioDone: true,
       });
       const ranked = useOps.getState().events.filter((e) => ids.includes(e.id) && e.risk === "red");
-      ranked.sort((x, y) => y.pc / Math.max((y.tca - Date.now()) / 3600_000, 1) - x.pc / Math.max((x.tca - Date.now()) / 3600_000, 1));
+      // the queue rule (user-flow §4): severity first, then the earliest closest approach
+      ranked.sort((x, y) => x.tca - y.tca);
       if (ranked[0]) useOps.setState({ alert: { eventId: ranked[0].id, at: Date.now() } });
       eng.log("monitor", `Scan finished · ${ids.length} candidates · ${ranked.length} red`, ranked.length ? "warn" : "info");
     } catch (e) {
@@ -936,7 +949,10 @@ export function runIncident(eventId: string) {
     // the alarm did its job; the case view takes over from here
     alert: null,
     incident: eventId,
-    incidentView: "expanded",
+    // the agents work on Orbit (graph on the right, camera on the case); the Decision Center opens when a
+    // decision is needed (OpsSync)
+    incidentView: "collapsed",
+    tab: "orbit",
   });
   engine.runOn(s.id, async (eng, gen) => {
     try {

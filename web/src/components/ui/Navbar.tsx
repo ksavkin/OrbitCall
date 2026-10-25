@@ -14,10 +14,9 @@ import { Tooltip } from "./Tooltip";
 
 const NAV: { id: Tab; label: string; ready: boolean }[] = [
   { id: "orbit", label: "Orbit", ready: true },
-  { id: "conjunctions", label: "Conjunctions", ready: true },
-  { id: "rooms", label: "Rooms", ready: true },
+  { id: "decision", label: "Decision Center", ready: true },
   { id: "policy", label: "Policy", ready: true },
-  { id: "audit", label: "Audit log", ready: true },
+  { id: "audit", label: "Inbox", ready: true },
 ];
 
 export function Navbar() {
@@ -61,7 +60,7 @@ export function Navbar() {
                   <motion.span layoutId="nav-pill" className="seg-pill" transition={{ type: "spring", stiffness: 500, damping: 38 }} />
                 )}
                 <span className="relative">{n.label}</span>
-                {n.id === "conjunctions" && redCount > 0 && (
+                {n.id === "decision" && redCount > 0 && (
                   <span className="relative ml-0.5 grid h-[15px] min-w-[15px] place-items-center rounded-full bg-red px-1 text-[9.5px] font-semibold text-black">
                     {redCount}
                   </span>

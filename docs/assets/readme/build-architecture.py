@@ -74,8 +74,8 @@ def node(spec: tuple) -> str:
     brand_size = 55 if core else (30 if compact else 33)
     brand_x = badge_x + badge + (26 if core else 18)
     brand_y = y + (96 if core else (68 if compact else 77))
-    # Vendor favicon artwork retains its original background, clipped only at the corners.
-    full_badge = logo in {"grok.png", "factory.svg", "cartesia.svg"}
+    # Preserve vendor backgrounds and the Convex symbol's built-in clear space.
+    full_badge = logo in {"grok.png", "factory.svg", "cartesia.svg", "convex.svg"}
     logo_size = badge if full_badge else badge * 0.66
     logo_x, logo_y = cx - logo_size / 2, cy - logo_size / 2
     first_line = y + (177 if core else (124 if compact else 145))

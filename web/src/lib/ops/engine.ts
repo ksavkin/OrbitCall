@@ -45,6 +45,9 @@ export interface Decision {
   lang?: string;
 }
 
+/** How much slower a case's agent and tool calls run than their nominal time, so people can read them. */
+const CASE_PACE = 1.6;
+
 const uid = (p: string) => `${p}_${Math.random().toString(36).slice(2, 9)}`;
 
 export class Engine {
@@ -194,6 +197,8 @@ export class Engine {
   /** Run one traced step: a model call, a tool call or a handoff. */
   async span(spec: SpanSpec, ms: number, gen = this.gen): Promise<Span> {
     if (gen !== this.gen) throw new Cancelled();
+    // a case's calls run at a readable pace (their streamed text can be followed); background passes keep theirs
+    if (spec.eventId) ms *= CASE_PACE;
     const id = uid("sp");
     const span: Span = {
       id,
@@ -256,11 +261,12 @@ export class Engine {
       this.humanWaits.set(key, resolve);
       const st = useOps.getState();
       if (st.autopilot && st.actAs !== side) {
-        this.sleep(side === "a" ? 4200 : 6800, gen)
-          .then(() => {
-            if (this.humanWaits.get(key) === resolve) this.decide(eventId, side, auto);
-          })
-          .catch(reject);
+        void (async () => {
+          // parties decide in turn (A, then B, then others): a later side waits until side A has answered
+          if (side !== "a") while (useOps.getState().humans.some((h) => h.eventId === eventId && h.side === "a")) await this.sleep(400, gen);
+          await this.sleep(side === "a" ? 4200 : 3200, gen);
+          if (this.humanWaits.get(key) === resolve) this.decide(eventId, side, auto);
+        })().catch(reject);
       } else {
         // a reset rejects the wait through the generation check on the next sleep
         this.sleep(1e12, gen).catch(reject);

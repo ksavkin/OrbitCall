@@ -4,8 +4,6 @@ import { AnimatePresence, motion } from "motion/react";
 import { Lock, Mail, X } from "lucide-react";
 import { useMemo } from "react";
 import { useOps } from "@/lib/ops/store";
-import { sfx } from "@/lib/sound";
-import { useQueueView } from "@/components/ops/queueView";
 import { KIND_LABEL, SatGlyph } from "./SatGlyph";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { ACCESS_EMAIL, useFleet, useMe, useSession, type FleetSatellite, type Me } from "./session";
@@ -74,19 +72,13 @@ function Header({ me, onClose }: { me: Me; onClose: () => void }) {
 
 function Fleet({ fleet }: { fleet: FleetSatellite[] }) {
   const rows = useOps((st) => st.backendRows);
-  const close = useSession((st) => st.setProfileOpen);
   // conjunctions in the live queue that involve each satellite; the fixture never claims a count
   const inQueue = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of rows ?? []) for (const id of [r.objectA.objectId, r.objectB.objectId]) m.set(id, (m.get(id) ?? 0) + 1);
     return m;
   }, [rows]);
-  const showInQueue = (objectId: string) => {
-    sfx.whoosh();
-    useQueueView.getState().set({ mine: true, search: objectId, severity: "all", within: "all", objects: "all" });
-    useOps.getState().set({ tab: "conjunctions" });
-    close(false);
-  };
+
   return (
     <div className="px-6 py-5">
       <div className="flex items-baseline justify-between">
@@ -115,9 +107,9 @@ function Fleet({ fleet }: { fleet: FleetSatellite[] }) {
               {n === null ? (
                 <span className="w-[110px] text-right text-[12px] text-neutral-500">Queue not loaded</span>
               ) : n > 0 ? (
-                <button className="w-[110px] text-right text-[12.5px] font-medium text-[#ff8a80] hover:underline" onClick={() => showInQueue(f.object.objectId)}>
-                  {n} conjunction{n > 1 ? "s" : ""} →
-                </button>
+<span className="w-[110px] text-right text-[12.5px] font-medium text-[#ff8a80]">
+                  {n} conjunction{n > 1 ? "s" : ""}
+                </span>
               ) : (
                 <span className="w-[110px] text-right text-[12.5px] text-neutral-500">No conjunctions</span>
               )}

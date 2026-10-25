@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Check, Eye, RotateCcw, Send, Sparkles, X } from "lucide-react";
+import { Check, Eye, Mic, RotateCcw, Send, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 import { engine } from "@/lib/ops/engine";
 import { fmtCountdown, fmtMiss, fmtWhen } from "@/lib/ops/format";
@@ -45,7 +45,11 @@ export function ProposalPanel({
   // Approval needs an explicit shared selection; previewing or being first in the list is not one.
   const sel = cards.find((c) => c.selected);
   const [look, setLook] = useState<string | undefined>(undefined);
-  const viewing = cards.find((c) => c.option.id === look) ?? sel ?? cards[0];
+  // a plan named in the call ("option B") is shown and offered for a click; speech alone never acts
+  const intent = useOps((s) => (s.voiceIntent?.eventId === e.id ? s.voiceIntent : null));
+  const intentCard = intent && !readOnly ? cards.find((c) => c.label === intent.label) : undefined;
+  const viewing = intentCard ?? cards.find((c) => c.option.id === look) ?? sel ?? cards[0];
+  const clearIntent = () => useOps.setState({ voiceIntent: null });
   const [text, setText] = useState("");
   const me = partyOf(e, viewer);
   const rev = revisionOf(e, sel?.option);
@@ -103,6 +107,52 @@ export function ProposalPanel({
 
       <Approvals e={e} sel={sel} rev={rev} />
 
+      <AnimatePresence initial={false}>
+        {intentCard && (
+          <motion.div
+            key={intent!.at}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="mx-5 mt-3 flex items-center gap-3 rounded-[12px] bg-[rgba(79,140,255,0.1)] px-3.5 py-2.5 shadow-[inset_0_0_0_1px_rgba(79,140,255,0.3)]">
+              <Mic size={14} className="shrink-0 text-blue" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[12.5px] text-neutral-200">
+                  You said <span className="text-white">“{intent!.said}”</span>
+                </div>
+                <div className="text-[11.5px] text-neutral-500">Speech never decides. Confirm with a click.</div>
+              </div>
+              {intentCard.selected ? (
+                <button
+                  className="btn btn-primary h-8 shrink-0 gap-1.5 px-3 text-[12.5px]"
+                  onClick={() => {
+                    clearIntent();
+                    approve();
+                  }}
+                >
+                  <Check size={13} /> Approve {intentCard.label} · R{revisionOf(e, intentCard.option)}
+                </button>
+              ) : (
+                <button
+                  className="btn btn-primary h-8 shrink-0 gap-1.5 px-3 text-[12.5px]"
+                  onClick={() => {
+                    clearIntent();
+                    select(intentCard);
+                  }}
+                >
+                  <Eye size={13} /> Select {intentCard.label} for both sides
+                </button>
+              )}
+              <button className="shrink-0 text-[12px] text-neutral-500 hover:text-white" onClick={clearIntent}>
+                Dismiss
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="mx-5 mt-3 overflow-hidden rounded-[14px] bg-white/[0.02] shadow-[0_0_0_1px_rgba(255,255,255,0.07)]">
         {cards.map((c, i) => (
           <PlanCard
@@ -121,6 +171,9 @@ export function ProposalPanel({
 
       {!readOnly && (
         <>
+          {/* in the Decision Center the call below carries counters and questions (voice or text); one place to talk */}
+          {!embedded && (
+            <>
           <div className="flex items-center gap-2 px-5 pt-3">
             <div className="min-w-0 flex-1">
               <VoiceInput value={text} onChange={setText} onEnter={message} lang={me?.language ?? "English"} />
@@ -130,6 +183,8 @@ export function ProposalPanel({
             </button>
           </div>
           <div className="px-5 pt-1.5 text-[11.5px] text-neutral-600">A message is a counter or a question. It never approves anything.</div>
+            </>
+          )}
 
           {/* embedded in the case view the plans scroll; Approve and Veto stay pinned and visible */}
           <div
@@ -228,9 +283,10 @@ function PlanCard({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.05 + index * 0.05, duration: 0.25 }}
-      className={`relative ${last ? "" : "border-b border-white/[0.06]"} ${c.selected ? "bg-white/[0.06]" : viewing ? "bg-white/[0.035]" : ""}`}
+      className={`relative ${last ? "" : "border-b border-white/[0.06]"} ${c.selected ? "bg-white/[0.07]" : ""}`}
     >
-      {c.selected && <span className="absolute inset-y-0 left-0 w-[3px] bg-white" />}
+      {/* selected: the one filled card with a white bar; previewed: only a thin grey bar, no fill */}
+      {c.selected ? <span className="absolute inset-y-0 left-0 w-[3px] bg-white" /> : viewing && <span className="absolute inset-y-2 left-0 w-[2px] rounded-full bg-white/30" />}
       <button
         onClick={() => {
           sfx.click();
