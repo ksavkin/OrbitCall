@@ -68,7 +68,7 @@ export const useOrbit = create<OrbitState>((set, get) => ({
   showGroundTrack: false,
   colorBy: "category",
   hiddenOwners: [],
-  wx: { clouds: true, wind: false, currents: false, storms: true, tornado: true, aurora: true, traffic: false, debris: false },
+  wx: { clouds: true, wind: true, currents: true, storms: false, tornado: false, aurora: true, traffic: true, debris: false },
   wxStatus: {},
   storms: [],
   tornado: null,
