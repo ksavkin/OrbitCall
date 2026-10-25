@@ -296,8 +296,10 @@ export class Engine {
           // idle passes are slower than the real 5–15 min cadence would suggest, but often
           // enough that the screen never looks dead while building the UI
           const st = useOps.getState();
-          if (!st.scenario || st.scenarioDone) await screeningPass(this, gen, null);
-          await this.sleep(22_000, gen);
+          // routine monitoring is quiet: no sweep, no "scanning" state, only the last-pass time
+          if (!st.scenario || st.scenarioDone) await screeningPass(this, gen, null, { quiet: true });
+          // docs/user-flow.md: routine monitoring every five minutes
+          await this.sleep(300_000, gen);
         }
       } catch (e) {
         if (!(e instanceof Cancelled)) console.error(e);
@@ -507,12 +509,12 @@ export const isPatrolRoot = (s: { agent: string; eventId: string | null; parent:
   s.agent === "monitor" && s.eventId === null && s.parent === null && s.kind === "http";
 
 /** One Risk Monitor pass: screen, cross-check SOCRATES and CDMs, rank. */
-export async function screeningPass(eng: Engine, gen: number, flag: { eventId: string } | null) {
+export async function screeningPass(eng: Engine, gen: number, flag: { eventId: string } | null, opts: { quiet?: boolean } = {}) {
   const cat = catalog();
   const n = cat?.objects.length ?? 0;
   const pairs = Math.round((n * (n - 1)) / 2);
   if (!flag) prunePatrol(2);
-  useOps.setState({ scanning: true });
+  if (!opts.quiet) useOps.setState({ scanning: true });
   const t0 = Date.now();
   try {
     const root = await eng.span(
@@ -591,6 +593,6 @@ export async function screeningPass(eng: Engine, gen: number, flag: { eventId: s
       validation: { matchedWithin500m: 47, of: 50, at: Date.now() },
     });
   } finally {
-    if (gen === eng.generation) useOps.setState({ scanning: false });
+    if (gen === eng.generation && !opts.quiet) useOps.setState({ scanning: false });
   }
 }
