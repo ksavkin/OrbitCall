@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "../convex/_generated/api";
 import type { Doc, Id } from "../convex/_generated/dataModel";
 import { putFixture } from "../convex/lib/events";
-import { MAX_EVENTS, MAX_MESSAGES, validateHostContext, type HostContext, type HostOutput } from "../convex/lib/host";
+import { checkHostOutput, MAX_EVENTS, MAX_MESSAGES, validateHostContext, type HostContext, type HostOutput } from "../convex/lib/host";
 import { FIXTURE_NOW, redEvent } from "../fixtures/events";
 import { advocateCandidates, policyA } from "../fixtures/policies";
 import { backend, type Backend } from "./helpers";
@@ -104,10 +104,14 @@ const grokResponse = (result: unknown) => json({
 });
 const agreement = { agrees: true, reason: "The summary matches the candidate facts.", flaggedCandidateIds: [] };
 
-function stubProviders({ host = grounded, hostStatus, onHost }: {
-  host?: (c: HostContext) => unknown; hostStatus?: number; onHost?: () => Promise<unknown>;
+type SentCheck = { inputVersion: string; candidates: { candidateId: string }[]; explanation: string };
+// A checker answer, or an HTTP status for a provider failure.
+type CheckReply = (input: SentCheck) => typeof agreement | { agrees: boolean; reason: string; flaggedCandidateIds: string[] } | number;
+
+function stubProviders({ host = grounded, hostStatus, onHost, check = () => agreement }: {
+  host?: (c: HostContext) => unknown; hostStatus?: number; onHost?: () => Promise<unknown>; check?: CheckReply;
 } = {}) {
-  const calls = { host: [] as HostContext[], check: [] as { inputVersion: string; candidates: { candidateId: string }[]; explanation: string }[] };
+  const calls = { host: [] as HostContext[], check: [] as SentCheck[] };
   vi.stubGlobal("fetch", vi.fn(async (url: string | URL, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body));
     if (String(url) === GEMINI_URL) {
@@ -118,8 +122,11 @@ function stubProviders({ host = grounded, hostStatus, onHost }: {
       return geminiResponse(JSON.stringify(host(sent)));
     }
     if (String(url) === XAI_URL) {
-      calls.check.push(JSON.parse(body.messages[1].content));
-      return grokResponse(agreement);
+      const sent = JSON.parse(body.messages[1].content) as SentCheck;
+      calls.check.push(sent);
+      const reply = check(sent);
+      if (typeof reply === "number") return json({ error: { message: "secret diagnostic" } }, reply);
+      return grokResponse(reply);
     }
     throw new Error(`Unexpected fetch to ${String(url)}`);
   }));
@@ -303,7 +310,8 @@ describe("Coordination Host trigger", () => {
       attempt: 1, status: "succeeded", usage: { inputTokens: 812, outputTokens: 140 } });
     expect(row.output).toEqual(grounded(calls.host[0]));
     expect(row.output!.requestedRevisions[0].candidateId).toBe(p1);
-    expect(row.check).toMatchObject({ span: { role: "rationale_check", provider: "xai", model: "test-grok", status: "succeeded", attempt: 1 }, result: agreement });
+    expect(row.check).toMatchObject({ span: { role: "rationale_check", provider: "xai", model: "test-grok", status: "succeeded", attempt: 1 },
+      result: { agrees: true, flaggedCandidateIds: [], reason: `${calls.host[0].events[0].eventId}: ${agreement.reason}` } });
     expect(calls.check).toHaveLength(1);
     expect(calls.check[0].inputVersion).toBe(row.inputVersion);
     expect(calls.check[0].candidates.map(c => c.candidateId)).toEqual(calls.host[0].events[0].candidates.map(c => c.candidateId));
@@ -358,19 +366,118 @@ describe("Coordination Host trigger", () => {
     expect(await t.run(ctx => ctx.db.get(hostRunId))).toMatchObject({ status: "superseded", span: null, output: null });
   });
 
-  it("skips a final message trigger with no shared messages, but not a candidate change", async () => {
+  it("skips a final message trigger with no shared messages without storing a run, but not a candidate change", async () => {
     const t = backend();
     const room = await seedRoom(t);
     await say(t, room.roomId, hostAuthor, "Host line only.", 0);
     const calls = stubProviders({ host: c => ({ inputVersion: c.inputVersion, clarifications: [], requestedRevisions: [], summaries: [] }) });
-    const skipped = (await request(t, room.roomId))!;
-    await execute(t, skipped);
-    expect(calls.host).toHaveLength(0);
-    expect(await t.run(ctx => ctx.db.get(skipped))).toMatchObject({ status: "superseded", span: null });
+    expect(await request(t, room.roomId)).toBeNull();
+    expect(await runs(t)).toHaveLength(0);
+    expect(await scheduledRuns(t)).toHaveLength(0);
     const changed = (await request(t, room.roomId, "candidates_changed"))!;
     await execute(t, changed);
     expect(calls.host).toHaveLength(1);
     expect(await t.run(ctx => ctx.db.get(changed))).toMatchObject({ status: "succeeded" });
+  });
+
+  it("skips a room with no linked events without storing a run", async () => {
+    const t = backend();
+    const room = await seedRoom(t, { events: 0 });
+    await say(t, room.roomId, human(room, 0), "Anyone here?", 0);
+    expect(await request(t, room.roomId)).toBeNull();
+    expect(await request(t, room.roomId, "summary_requested")).toBeNull();
+    expect(await runs(t)).toHaveLength(0);
+  });
+
+  it("returns null for a closed room or a room of a closed demo run", async () => {
+    const t = backend();
+    const room = await seedRoom(t);
+    await say(t, room.roomId, human(room, 0), "Can we move the burn?", 0);
+    await t.run(ctx => ctx.db.patch(room.roomId, { state: "closed", closedAt: FIXTURE_NOW }));
+    expect(await request(t, room.roomId)).toBeNull();
+    await t.run(async ctx => {
+      const demoRunId = await ctx.db.insert("demoRuns", { scenario: "fixture", state: "closed", startedBy: null, manifest: null, startedAt: FIXTURE_NOW, closedAt: FIXTURE_NOW });
+      await ctx.db.patch(room.roomId, { state: "open", closedAt: null, demoRunId });
+    });
+    expect(await request(t, room.roomId)).toBeNull();
+    expect(await runs(t)).toHaveLength(0);
+  });
+
+  it("supersedes a run whose room closes or whose demo run is reset while the host runs", async () => {
+    const t = backend();
+    const room = await seedRoom(t);
+    await say(t, room.roomId, human(room, 0), "Can we move the burn?", 0);
+    const demoRunId = await t.run(ctx => ctx.db.insert("demoRuns", { scenario: "fixture", state: "open", startedBy: null, manifest: null, startedAt: FIXTURE_NOW, closedAt: null }));
+    await t.run(ctx => ctx.db.patch(room.roomId, { demoRunId }));
+    stubProviders({ onHost: () => t.run(ctx => ctx.db.patch(demoRunId, { state: "closed", closedAt: FIXTURE_NOW })) });
+    const reset = (await request(t, room.roomId))!;
+    expect(await t.run(ctx => ctx.db.get(reset))).toMatchObject({ demoRunId });
+    await execute(t, reset);
+    expect(await t.run(ctx => ctx.db.get(reset))).toMatchObject({ status: "superseded", output: null });
+
+    const other = await seedRoom(t);
+    await say(t, other.roomId, human(other, 0), "Can we move the burn?", 0);
+    stubProviders({ onHost: () => t.run(ctx => ctx.db.patch(other.roomId, { state: "closed", closedAt: FIXTURE_NOW })) });
+    const closed = (await request(t, other.roomId))!;
+    await execute(t, closed);
+    expect(await t.run(ctx => ctx.db.get(closed))).toMatchObject({ status: "superseded", output: null });
+  });
+
+  it("starts a new attempt when inputs return to a version whose run was superseded", async () => {
+    const t = backend();
+    const room = await seedRoom(t);
+    await say(t, room.roomId, human(room, 0), "Can we move the burn?", 0);
+    let interjection: Id<"messages"> | null = null;
+    stubProviders({ onHost: async () => { interjection = await say(t, room.roomId, human(room, 1), "Wait.", 1); } });
+    const first = (await request(t, room.roomId))!;
+    await execute(t, first);
+    expect(await t.run(ctx => ctx.db.get(first))).toMatchObject({ status: "superseded" });
+    await t.run(ctx => ctx.db.delete(interjection!));
+    stubProviders();
+    const second = (await request(t, room.roomId))!;
+    expect(second).not.toBe(first);
+    await execute(t, second);
+    expect(await t.run(ctx => ctx.db.get(second))).toMatchObject({ status: "succeeded", attempt: 2 });
+  });
+
+  it("fails a run whose context can no longer be built, and the room keeps working", async () => {
+    const t = backend();
+    const room = await seedRoom(t, { events: 2 });
+    await say(t, room.roomId, human(room, 0), "Can we move the burn?", 0);
+    const calls = stubProviders();
+    const broken = (await request(t, room.roomId))!;
+    const [brokenEvent] = room.eventIds;
+    await t.run(async ctx => ctx.db.delete((await ctx.db.get(brokenEvent))!.objectAId));
+    await execute(t, broken);
+    expect(calls.host).toHaveLength(0);
+    const row = (await t.run(ctx => ctx.db.get(broken)))!;
+    expect(row).toMatchObject({ status: "failed", output: null, check: null,
+      span: { role: "coordination_host", provider: "google", status: "failed", errorCode: "NOT_FOUND", attempt: 1, inputVersion: row.inputVersion } });
+    expect(row.finishedAt).not.toBeNull();
+    await t.run(async ctx => {
+      const link = await ctx.db.query("roomEvents").withIndex("by_event", q => q.eq("eventId", brokenEvent)).unique();
+      await ctx.db.delete(link!._id);
+    });
+    const next = (await request(t, room.roomId))!;
+    await execute(t, next);
+    expect(await t.run(ctx => ctx.db.get(next))).toMatchObject({ status: "succeeded" });
+  });
+
+  it("expires lost running runs of older input versions across the room", async () => {
+    const t = backend();
+    const room = await seedRoom(t);
+    await say(t, room.roomId, human(room, 0), "Can we move the burn?", 0);
+    const old = (await request(t, room.roomId))!;
+    const oldSummary = (await request(t, room.roomId, "summary_requested"))!;
+    await say(t, room.roomId, human(room, 1), "We are checking.", 1);
+    vi.setSystemTime(FIXTURE_NOW + 5 * 60_000);
+    const fresh = (await request(t, room.roomId))!;
+    expect(await t.run(ctx => ctx.db.get(old))).toMatchObject({ status: "running" });
+    vi.setSystemTime(FIXTURE_NOW + 11 * 60_000);
+    expect(await request(t, room.roomId)).toBe(fresh);
+    expect(await t.run(ctx => ctx.db.get(old))).toMatchObject({ status: "failed" });
+    expect(await t.run(ctx => ctx.db.get(oldSummary))).toMatchObject({ status: "failed" });
+    expect(await t.run(ctx => ctx.db.get(fresh))).toMatchObject({ status: "running" });
   });
 
   it("stores a failed host attempt with a sanitized span and allows bounded retries", async () => {
@@ -436,6 +543,127 @@ describe("Coordination Host trigger", () => {
     expect(calls.host[0].events).toHaveLength(MAX_EVENTS);
     expect(calls.host[0].members).toHaveLength(6);
     expect(await t.run(ctx => ctx.db.get(full))).toMatchObject({ status: "succeeded" });
+  });
+});
+
+// A summary near the host's limit for every event: three together exceed one checker input.
+const LONG_SUMMARY = "The operators are still discussing this encounter. ".repeat(28).trim();
+const summarizeAll = (c: HostContext): HostOutput => ({
+  inputVersion: c.inputVersion, clarifications: [], requestedRevisions: [],
+  summaries: c.events.map(e => ({ eventId: e.eventId, text: LONG_SUMMARY, messageIds: [c.messages[0].messageId] })),
+});
+async function threeEventRoom(t: Backend) {
+  const room = await seedRoom(t, { companies: 3, events: 3 });
+  for (const eventId of room.eventIds) await publishSet(t, eventId, room.companyIds[0], room.companyIds[1]);
+  await say(t, room.roomId, human(room, 0), "Please summarize every encounter.", 0);
+  return room;
+}
+
+describe("Rationale checks of host summaries", () => {
+  it("checks each summary against its own event's candidates and merges the results", async () => {
+    const t = backend();
+    const room = await threeEventRoom(t);
+    expect(LONG_SUMMARY.length).toBeGreaterThan(1400);
+    const calls = stubProviders({ host: summarizeAll });
+    const hostRunId = (await request(t, room.roomId))!;
+    await execute(t, hostRunId);
+    expect(calls.check).toHaveLength(3);
+    const events = calls.host[0].events;
+    expect(calls.check.map(c => c.candidates.map(x => x.candidateId)).sort())
+      .toEqual(events.map(e => e.candidates.map(x => x.candidateId)).sort());
+    for (const sent of calls.check) expect(sent.explanation).toBe(LONG_SUMMARY);
+    const row = (await t.run(ctx => ctx.db.get(hostRunId)))!;
+    expect(row.status).toBe("succeeded");
+    expect(row.check!.span).toMatchObject({ role: "rationale_check", provider: "xai", model: "test-grok", status: "succeeded",
+      attempt: 1, inputVersion: row.inputVersion, usage: { inputTokens: 150, outputTokens: 30 }, errorCode: null, errorMessage: null });
+    expect(row.check!.result).toMatchObject({ agrees: true, flaggedCandidateIds: [] });
+    for (const e of events) expect(row.check!.result!.reason).toContain(`${e.eventId}: ${agreement.reason}`);
+  });
+
+  it("fails the run but keeps its output when one check disagrees", async () => {
+    const t = backend();
+    const room = await threeEventRoom(t);
+    const calls = stubProviders({ host: summarizeAll, check: sent => sent.candidates[0].candidateId === flagged
+      ? { agrees: false, reason: "The burn time is misstated.", flaggedCandidateIds: [flagged] } : agreement });
+    const flagged = (await context(t, room.roomId)).events[1].candidates[0].candidateId;
+    const hostRunId = (await request(t, room.roomId))!;
+    await execute(t, hostRunId);
+    expect(calls.check).toHaveLength(3);
+    const row = (await t.run(ctx => ctx.db.get(hostRunId)))!;
+    expect(row.status).toBe("failed");
+    expect(row.span).toMatchObject({ status: "succeeded" });
+    expect(row.output!.summaries).toHaveLength(3);
+    expect(row.check!.span.status).toBe("succeeded");
+    expect(row.check!.result).toMatchObject({ agrees: false, flaggedCandidateIds: [flagged] });
+    expect(row.check!.result!.reason).toContain("The burn time is misstated.");
+    expect(row.check!.result!.reason.length).toBeLessThanOrEqual(1000);
+  });
+
+  it("fails the run when a check call fails, with the first failure on the merged span", async () => {
+    const t = backend();
+    const room = await threeEventRoom(t);
+    const failing = (await context(t, room.roomId)).events[2].candidates[0].candidateId;
+    stubProviders({ host: summarizeAll, check: sent => sent.candidates[0].candidateId === failing ? 503 : agreement });
+    const hostRunId = (await request(t, room.roomId))!;
+    await execute(t, hostRunId);
+    const row = (await t.run(ctx => ctx.db.get(hostRunId)))!;
+    expect(row.status).toBe("failed");
+    expect(row.output!.summaries).toHaveLength(3);
+    expect(row.check!.span).toMatchObject({ status: "failed", errorCode: "UPSTREAM_UNAVAILABLE", usage: { inputTokens: 100, outputTokens: 20 } });
+    expect(row.check!.result).toMatchObject({ agrees: false, flaggedCandidateIds: [] });
+    expect(JSON.stringify(row)).not.toContain("secret diagnostic");
+  });
+
+  it("stores no check result when every check call fails", async () => {
+    const t = backend();
+    const room = await threeEventRoom(t);
+    stubProviders({ host: summarizeAll, check: () => 429 });
+    const hostRunId = (await request(t, room.roomId))!;
+    await execute(t, hostRunId);
+    const row = (await t.run(ctx => ctx.db.get(hostRunId)))!;
+    expect(row).toMatchObject({ status: "failed", check: { span: { status: "failed", errorCode: "RATE_LIMITED", usage: null }, result: null } });
+    expect(row.output!.summaries).toHaveLength(3);
+  });
+});
+
+describe("Proposal labels", () => {
+  async function labelled(t: Backend) {
+    const room = await seedRoom(t);
+    const [eventId] = room.eventIds;
+    const ids = await publishSet(t, eventId, room.companyIds[0], room.companyIds[1], ["P1", "P2", "P3"]);
+    await t.run(async ctx => {
+      // The P1 card's computed label differs from its proposal label; P2 and P3 have no proposal yet.
+      await ctx.db.patch(ids[0], { label: "Raise early" });
+      await ctx.db.insert("proposals", { eventId, candidateId: "P1", label: "P1", latestRevision: 1, demoRunId: null, createdAt: FIXTURE_NOW });
+    });
+    await say(t, room.roomId, human(room, 0), "We prefer P1.", 0);
+    return room;
+  }
+
+  it("sends the proposal label, falling back to the candidate label", async () => {
+    const t = backend();
+    const room = await labelled(t);
+    expect((await context(t, room.roomId)).events[0].candidates.map(c => c.label)).toEqual(["P1", "P2", "P3"]);
+  });
+
+  it("accepts host prose naming a proposal label and rejects a label that is not in the room", async () => {
+    const t = backend();
+    const room = await labelled(t);
+    const c = await context(t, room.roomId);
+    const output = (text: string) => JSON.stringify({ ...summarizeAll(c), summaries: [{ eventId: c.events[0].eventId, text, messageIds: [c.messages[0].messageId] }] });
+    expect(checkHostOutput(output("Operators prefer P1 over P3."), c).summaries[0].text).toBe("Operators prefer P1 over P3.");
+    expect(() => checkHostOutput(output("Operators prefer P7."), c)).toThrow("names an ID that is not in this room");
+
+    stubProviders({ host: x => ({ ...summarizeAll(x), summaries: [{ eventId: x.events[0].eventId, text: "Operators prefer P1.", messageIds: [x.messages[0].messageId] }] }) });
+    const named = (await request(t, room.roomId))!;
+    await execute(t, named);
+    expect(await t.run(ctx => ctx.db.get(named))).toMatchObject({ status: "succeeded" });
+
+    await say(t, room.roomId, human(room, 1), "What about P7?", 1);
+    stubProviders({ host: x => ({ ...summarizeAll(x), summaries: [{ eventId: x.events[0].eventId, text: "Someone asked about P7.", messageIds: [] }] }) });
+    const invented = (await request(t, room.roomId))!;
+    await execute(t, invented);
+    expect(await t.run(ctx => ctx.db.get(invented))).toMatchObject({ status: "failed", output: null, span: { errorCode: "CONSTRAINT_CHECK_FAILED" } });
   });
 });
 
