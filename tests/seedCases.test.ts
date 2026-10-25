@@ -32,6 +32,7 @@ describe("seeded demo cases", () => {
     expect(eventIds).toHaveLength(3);
     expect((await t.run(ctx => Promise.all(eventIds.map(id => ctx.db.get(id))))).every(e => e && !e.active)).toBe(true);
 
+    expect(await as("us").query(api.myQueue.myQueue, {})).toEqual([]);
     const { scanId } = await as("us").mutation(api.scans.startMine, { requestId: "demo-1" });
     await run(t);
     const scan = await as("us").query(api.scans.getMine, { scanId });
@@ -39,6 +40,7 @@ describe("seeded demo cases", () => {
     const events = await t.run(ctx => Promise.all(eventIds.map(id => ctx.db.get(id))));
     // US×CN and RU×US are on the US fleet; CN×RU stays hidden until China or Russia scans.
     expect(events.map(e => e!.active)).toEqual([true, false, true]);
+    expect((await as("us").query(api.myQueue.myQueue, {})).slice(0, 2).map(r => r.eventId).sort()).toEqual([eventIds[0], eventIds[2]].sort());
     expect((await t.run(ctx => ctx.db.query("spaceObjects").collect())).every(o => !/demo/i.test(o.name))).toBe(true);
 
     const eventId = eventIds[0];
