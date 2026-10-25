@@ -14,7 +14,7 @@ import type { ConjunctionEvent, Party } from "@/lib/ops/types";
 const LANG_OF: Record<string, Lang> = { English: "en", Russian: "ru", Chinese: "zh", Japanese: "en" };
 
 /** Numbers with units, times and designators become protected values, like the worker's tokenizer. */
-function protect(text: string): ProtectedValue[] {
+export function protect(text: string): ProtectedValue[] {
   // times, case IDs and numbers with a unit; digits inside a name like STARLINK-34510 stay part of the name
   const re = /((?:\w{3} )?\d{2}:\d{2}(?: UTC)?|\bCE-\d+|(?<![\w-])\d[\d.,]*\s?(?:m\/s|km\/s|km|m|g|h|%)(?!\w)|(?<![\w-])1 in [\d,]+\d)/g;
   return [...text.matchAll(re)].map((m, i) => ({
@@ -24,7 +24,7 @@ function protect(text: string): ProtectedValue[] {
   }));
 }
 
-function msg(
+export function msg(
   e: ConjunctionEvent,
   author: CallMessage["author"],
   originalLang: Lang,
@@ -69,12 +69,16 @@ const B_LINES: { ru: string; en: string }[] = [
   { ru: "Подтверждаю: наш спутник остаётся на месте.", en: "Confirmed: our satellite stays where it is." },
 ];
 
-export function useSimCall(e: ConjunctionEvent | undefined): UseCoordinationCall & { simulated: true; sendText: (t: string) => void } {
+export function useSimCall(
+  e: ConjunctionEvent | undefined,
+  opts: { seed?: CallMessage[]; joined?: boolean } = {},
+): UseCoordinationCall & { simulated: true; sendText: (t: string) => void } {
   const replies = useOps((s) => s.replies);
-  const [state, setState] = useState<CallState>("idle");
+  // the sample room starts mid-conversation, already joined, so its look is visible at once
+  const [state, setState] = useState<CallState>(opts.joined ? "joined" : "idle");
   const [micMode, setMicMode] = useState<MicMode>("hold");
   const [micOn, setMicOn] = useState(false);
-  const [mine, setMine] = useState<CallMessage[]>([]);
+  const [mine, setMine] = useState<CallMessage[]>(opts.seed ?? []);
   const [speaking, setSpeaking] = useState<string | null>(null);
   const bTurn = useRef(0);
   const rec = useRef<{ stop: () => void } | null>(null);
@@ -211,8 +215,8 @@ export function useSimCall(e: ConjunctionEvent | undefined): UseCoordinationCall
 
   const participants: CallParticipant[] = useMemo(() => {
     if (state !== "joined") return [];
+    // everyone the case involves is in the room: the two sides and any affected operator (2-4 operators)
     const list: CallParticipant[] = parties
-      .filter((p) => p.role !== "affected")
       .map((p) => ({
         identity: `user-${p.id}`,
         name: p.operator.replace(/\s*\(synthetic\)/i, ""),

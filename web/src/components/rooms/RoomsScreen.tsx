@@ -11,6 +11,7 @@ import { Flag } from "@/components/ui/OwnerBadge";
 import { STATUS_META } from "@/components/ops/meta";
 import { CallStage, type FlagOf } from "./CallStage";
 import { useSimCall } from "./simCall";
+import { SAMPLE_ID, sampleCards, sampleEvent, sampleMessages } from "./sampleRoom";
 import { roomCards } from "@/components/roomChat/model";
 import { LiveRoom, useLiveTarget, type LiveTarget } from "./LiveRoom";
 
@@ -42,9 +43,12 @@ export function RoomsScreen() {
         .sort((a, b) => (a.id === incident ? -1 : b.id === incident ? 1 : a.tca - b.tca)),
     [events, incident],
   );
+  // with no case room yet, dev mode shows a sample call in progress so the room's look is always visible
+  const [sample] = useState(sampleEvent);
+  const shown = rooms.length ? rooms : [sample];
   const [pick, setPick] = useState<string | null>(null);
-  const roomId = pick && rooms.some((r) => r.id === pick) ? pick : (rooms[0]?.id ?? null);
-  const e = rooms.find((r) => r.id === roomId);
+  const roomId = pick && shown.some((r) => r.id === pick) ? pick : (shown[0]?.id ?? null);
+  const e = shown.find((r) => r.id === roomId);
   const [live, setLive] = useLiveTarget();
 
   return (
@@ -55,7 +59,7 @@ export function RoomsScreen() {
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="pointer-events-auto absolute inset-x-2.5 bottom-[42px] top-[58px] z-[38] grid grid-cols-[280px_minmax(0,1fr)_320px] overflow-hidden rounded-[18px] bg-[rgba(4,4,5,0.94)] text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_40px_100px_-30px_rgba(0,0,0,0.9)] backdrop-blur-2xl"
     >
-      {dev ? <RoomList rooms={rooms} active={roomId} onPick={setPick} /> : <LiveList target={live} onClose={() => setLive(null)} />}
+      {dev ? <RoomList rooms={shown} active={roomId} onPick={setPick} /> : <LiveList target={live} onClose={() => setLive(null)} />}
       <div className="flex min-h-0 flex-col border-x border-white/[0.06]">
         {!dev ? (
           <LiveRoom target={live} onOpen={setLive} onLeave={() => setLive(null)} />
@@ -75,9 +79,11 @@ export function RoomsScreen() {
 
 /** One room's call. Keyed by room: switching rooms leaves the call, as the real hook does. */
 function RoomCall({ e }: { e: ConjunctionEvent }) {
-  const call = useSimCall(e);
+  const isSample = e.id === SAMPLE_ID;
+  const [seed] = useState(() => (isSample ? sampleMessages(e) : undefined));
+  const call = useSimCall(e, { seed, joined: isSample });
   const replies = useOps((s) => s.replies);
-  const cards = useMemo(() => roomCards(e, replies), [e, replies]);
+  const cards = useMemo(() => (isSample ? sampleCards(e) : roomCards(e, replies)), [e, replies, isSample]);
   const flagOf: FlagOf = (p) => {
     if (p.isTranslator) return null;
     const id = p.identity.replace(/^user-/, "");
@@ -125,6 +131,7 @@ function RoomList({ rooms, active, onPick }: { rooms: ConjunctionEvent[]; active
               <div className="flex items-center gap-2 text-[11px] text-neutral-500">
                 <span className="mono">{e.id}</span>
                 {e.id === incident && <span className="rounded-full bg-[rgba(79,140,255,0.14)] px-1.5 text-[10px] font-medium text-blue">your case</span>}
+                {e.id === SAMPLE_ID && <span className="rounded-full bg-[rgba(255,159,64,0.12)] px-1.5 text-[10px] font-medium text-orange">sample</span>}
                 <span className="ml-auto" style={{ color: st.color }}>
                   {st.label}
                 </span>
