@@ -6,11 +6,22 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { sfx } from "@/lib/sound";
 import { Flag } from "@/components/ui/OwnerBadge";
+import { CONVEX_ENABLED } from "@/lib/backend/provider";
+import { BackendSession } from "./BackendSession";
 import { restoreSession, useMe, useSession } from "./session";
 
 // Top right: who is signed in, with their company's flag. The menu opens the profile and fleet, or signs out.
 
 export function AccountMenu() {
+  return (
+    <>
+      {CONVEX_ENABLED && <BackendSession />}
+      <AccountButton />
+    </>
+  );
+}
+
+function AccountButton() {
   const me = useMe();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -46,7 +57,7 @@ export function AccountMenu() {
         aria-expanded={open}
       >
         <span className="grid h-5 w-5 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.18)]">
-          {me.company ? <Flag code={me.company.country} h={20} /> : <UserRound size={12} className="text-neutral-400" />}
+          {me.company?.country ? <Flag code={me.company.country} h={20} /> : <UserRound size={12} className="text-neutral-400" />}
         </span>
         <span className="max-w-[150px] truncate text-[11.5px] text-fg-2">{me.company?.name ?? me.name}</span>
         <ChevronDown size={12} className="text-muted" />
@@ -61,7 +72,7 @@ export function AccountMenu() {
             className="glass glass-strong absolute right-0 top-9 z-50 w-[260px] overflow-hidden rounded-[14px] p-1.5"
           >
             <div className="px-2.5 pb-2.5 pt-2">
-              <div className="text-[13px] font-semibold text-white">{me.name}</div>
+              <div className="text-[13px] font-semibold text-white">{me.name ?? "Name not set"}</div>
               <div className="truncate text-[11.5px] text-neutral-500">{me.email}</div>
               <div className={`mt-1.5 text-[11.5px] ${me.access === "granted" ? "text-green" : "text-orange"}`}>
                 {me.access === "granted" ? `Dispatcher · ${me.company?.name}` : "No scan access yet"}

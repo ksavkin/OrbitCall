@@ -42,9 +42,10 @@ export function ProposalPanel({
 }) {
   const autopilot = useOps((s) => s.autopilot && s.actAs !== viewer);
   const cards = cardsOf(e);
-  const sel = cards.find((c) => c.selected) ?? cards[0];
+  // Approval needs an explicit shared selection; previewing or being first in the list is not one.
+  const sel = cards.find((c) => c.selected);
   const [look, setLook] = useState<string | undefined>(undefined);
-  const viewing = cards.find((c) => c.option.id === look) ?? sel;
+  const viewing = cards.find((c) => c.option.id === look) ?? sel ?? cards[0];
   const [text, setText] = useState("");
   const me = partyOf(e, viewer);
   const rev = revisionOf(e, sel?.option);
@@ -81,7 +82,7 @@ export function ProposalPanel({
         <div className="min-w-0 flex-1">
           <div className={`flex items-center gap-2 text-[11px] font-medium ${readOnly ? "text-neutral-500" : "text-orange"}`}>
             {!readOnly && <span className="pulse-dot" style={{ width: 5, height: 5 }} />}
-            {readOnly ? "Shared view · read only" : "Your decision"} · {selName} selected
+            {readOnly ? "Shared view · read only" : "Your decision"} · {sel ? `${selName} selected` : "no plan selected yet"}
           </div>
           <div className="mt-1 text-[19px] font-semibold leading-tight tracking-[-0.02em] text-white">
             {readOnly ? "Plans on the table" : `Review the plans for ${clean(me?.operator) || "your side"}`}
@@ -141,8 +142,8 @@ export function ProposalPanel({
             <button className="btn ml-auto h-9 gap-1.5 px-3.5 text-[13px] text-neutral-300 hover:text-red" onClick={veto}>
               <X size={13} /> Veto {sel?.label}
             </button>
-            <button className="btn btn-primary h-9 gap-1.5 px-4 text-[13px]" onClick={approve}>
-              <Check size={14} /> Approve {selName}
+            <button className="btn btn-primary h-9 gap-1.5 px-4 text-[13px]" disabled={!sel} onClick={approve}>
+              <Check size={14} /> {sel ? `Approve ${selName}` : "Select a plan to approve"}
             </button>
           </div>
         </>

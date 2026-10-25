@@ -2,10 +2,11 @@
 
 import { create } from "zustand";
 
-// Who is at this screen, in the shapes of `users.me` and `fleet.listMine` (spec §3.1, §3.2). Until Auth0 and
-// those queries are deployed, a server-checked demo login maps to one of the fixture accounts below (profile
-// data only: no credentials live here); the screens read this store
-// either way, so wiring the real queries replaces the source, not the UI.
+// Who is at this screen, in the shapes of `users.me` and `fleet.listMine` (spec §3.1, §3.2). When Convex has a
+// signed-in identity, BackendSession reads `session.me` and that account wins. Otherwise a server-checked demo
+// login (/api/session) maps to one of the fixture accounts below; they hold profile data only, no credentials.
+// `fleet.listMine` has not landed, so a server account's fleet lists its assigned IDs with the details it does not
+// have left null.
 //
 // Access is the gate on everything that spends model or screening credits (Run scan, cases). Anyone may sign
 // up, but only accounts the team provisioned have access; the server enforces it (users table plus fleet
@@ -13,26 +14,44 @@ import { create } from "zustand";
 
 export type Access = "granted" | "none";
 
+export type Lang = "en" | "ru" | "zh";
+export type Role = "operator" | "head_of_ops" | "demo_observer";
+
 export interface Me {
   userId: string;
-  name: string;
-  email: string;
-  role: "operator" | "head_of_ops" | "demo_observer";
-  language: "en" | "ru" | "zh";
-  dispatcherCountry: string;
-  company: { companyId: string; name: string; country: string; simulated: boolean } | null;
+  name: string | null;
+  email: string | null;
+  role: Role;
+  language: Lang | null;
+  dispatcherCountry: string | null;
+  company: { companyId: string; name: string; country: string | null; simulated: boolean } | null;
   assignedObjectIds: string[];
-  assignmentVersion: number;
+  assignmentVersion: number | null;
   access: Access;
 }
 
 export interface FleetSatellite {
-  object: { objectId: string; name: string; norad: number; orbit: string };
-  assignedAt: string;
+  object: { objectId: string; name: string; norad: number | null; orbit: string | null };
+  assignedAt: string | null;
   freshness: "current" | "stale" | "unknown";
-  unresolvedIncidentCount: number;
-  scanCoverage: "not_scanned" | "complete" | "partial" | "failed";
+  unresolvedIncidentCount: number | null;
+  scanCoverage: "not_scanned" | "complete" | "partial" | "failed" | "unknown";
 }
+
+/** `session.me` as the server returns it (convex/session.ts). */
+export interface ServerMe {
+  userId: string;
+  name: string | null;
+  role: Role;
+  language: Lang | null;
+  dispatcherCountry: string | null;
+  company: { companyId: string; name: string; country: string | null; simulated: boolean };
+  assignedObjectIds: string[];
+  assignmentVersion: number | null;
+}
+
+/** The server's answer for the signed-in identity: an account, not provisioned, or not readable right now. */
+export type BackendAccount = { status: "ok"; me: ServerMe } | { status: "forbidden" } | { status: "error" };
 
 const sat = (objectId: string, name: string, norad: number, orbit: string, incidents = 0, freshness: FleetSatellite["freshness"] = "current"): FleetSatellite => ({
   object: { objectId, name, norad, orbit },
@@ -111,16 +130,20 @@ export const ACCESS_EMAIL = "bazarkua@oregonstate.edu";
 interface Session {
   /** null while signed out; undefined until the server has answered. */
   userId: string | null | undefined;
+  /** Set only while Convex has a signed-in identity; it replaces the demo account. */
+  backend: BackendAccount | null;
   profileOpen: boolean;
   signIn: (username: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
   setProfileOpen: (v: boolean) => void;
+  setBackend: (v: BackendAccount | null) => void;
 }
 
 // Who is signed in comes from the server (/api/session reads a signed httpOnly cookie); the browser never
 // holds a password or decides on its own that someone is signed in.
 export const useSession = create<Session>((set) => ({
   userId: undefined,
+  backend: null,
   profileOpen: false,
   signIn: async (username, password) => {
     const res = await fetch("/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password }) }).catch(() => null);
@@ -134,6 +157,7 @@ export const useSession = create<Session>((set) => ({
     set({ userId: null, profileOpen: false });
   },
   setProfileOpen: (profileOpen) => set({ profileOpen }),
+  setBackend: (backend) => set({ backend }),
 }));
 
 /** Ask the server who is signed in (once per page load). */
@@ -144,13 +168,36 @@ export async function restoreSession() {
   useSession.setState({ userId: DEMO_ACCOUNTS.some((a) => a.me.userId === id) ? id : null });
 }
 
+function serverAccount(b: BackendAccount): Me {
+  if (b.status !== "ok") {
+    return { userId: "server", name: null, email: null, role: "operator", language: null, dispatcherCountry: null,
+      company: null, assignedObjectIds: [], assignmentVersion: null, access: "none" };
+  }
+  const { me } = b;
+  // The server returns an account only for a provisioned user with a company; responsibility is the assignment list.
+  return { ...me, email: null, access: me.assignedObjectIds.length ? "granted" : "none" };
+}
+
 export function useMe(): Me | null {
   const id = useSession((s) => s.userId);
+  const backend = useSession((s) => s.backend);
+  if (backend) return serverAccount(backend);
   return DEMO_ACCOUNTS.find((a) => a.me.userId === id)?.me ?? null;
 }
 
 export function useFleet(): FleetSatellite[] {
   const id = useSession((s) => s.userId);
+  const backend = useSession((s) => s.backend);
+  if (backend) {
+    if (backend.status !== "ok") return [];
+    return backend.me.assignedObjectIds.map((objectId) => ({
+      object: { objectId, name: objectId, norad: /^\d+$/.test(objectId) ? Number(objectId) : null, orbit: null },
+      assignedAt: null,
+      freshness: "unknown",
+      unresolvedIncidentCount: null,
+      scanCoverage: "unknown",
+    }));
+  }
   return DEMO_ACCOUNTS.find((a) => a.me.userId === id)?.fleet ?? [];
 }
 
