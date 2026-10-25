@@ -256,6 +256,12 @@ describe("GET /jobs/{id} for a screen", () => {
     expect(done.result?.coLocated).toHaveLength(1);
   });
 
+  it("accepts an event whose rounded miss reads exactly the threshold", async () => {
+    // screen.py keeps encounters with an unrounded miss under 5 km and reports round(miss, 3): 4.9996 reads 5.0.
+    mockFetch(json(doneJob({ ...screenResult, events: [{ ...event, missKm: 5.0, spread: { ...spread, gpMissKm: 5.0 } }] })));
+    expect((await getScreenJob("screen-scan-1", expectScreen)).result?.events[0].missKm).toBe(5.0);
+  });
+
   it("accepts a result that timed out and says so", async () => {
     const timedOut = { ...fullCoverage, complete: false, timedOut: true };
     mockFetch(json(doneJob({ ...screenResult, coverage: timedOut }, { coverage: timedOut })));

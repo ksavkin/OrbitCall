@@ -370,8 +370,9 @@ function parseScreenResult(v: unknown, expected: ScreenExpectation): ScreenResul
   }
   const events = list(r.events, MAX_EVENTS, `${what} (events)`).map(parseEvent);
   if (counts.eventsFound !== events.length) fail(`${what} (eventsFound)`);
-  // Events are under the screening threshold and sorted by TCA (screen.py).
-  if (events.some(e => e.missKm >= (r.thresholdKm as number))) fail(`${what} (event beyond the threshold)`);
+  // Events are under the screening threshold and sorted by TCA (screen.py). The threshold is compared with the
+  // unrounded miss and the miss is reported rounded to 3 decimals, so a reported miss may equal the threshold.
+  if (events.some(e => e.missKm > (r.thresholdKm as number))) fail(`${what} (event beyond the threshold)`);
   if (events.some((e, i) => i > 0 && ms(e.tcaUtc) < ms(events[i - 1].tcaUtc))) fail(`${what} (events out of TCA order)`);
   const named = new Set<string>();
   for (const e of events) named.add(e.objectA).add(e.objectB);
