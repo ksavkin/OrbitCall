@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUpRight, DoorOpen } from "lucide-react";
+import { ArrowUpRight, Check, DoorOpen } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
@@ -39,10 +39,12 @@ export function RoomsScreen() {
       events
         // a room needs someone on the other side: debris and dead satellites have no operator to call
         .filter((e) => (e.parties ?? []).some((p) => p.role === "b"))
-        .filter((e) => e.id === incident || ROOM_STATUSES.includes(e.status))
+        .filter((e) => !e.outcome?.resolvedAt && (e.id === incident || ROOM_STATUSES.includes(e.status)))
         .sort((a, b) => (a.id === incident ? -1 : b.id === incident ? 1 : a.tca - b.tca)),
     [events, incident],
   );
+  // closed rooms stay readable: the whole meeting and the report, newest first
+  const past = useMemo(() => events.filter((e) => e.outcome?.resolvedAt).sort((a, b) => b.outcome!.resolvedAt! - a.outcome!.resolvedAt!), [events]);
   // with no case room yet, dev mode shows a sample call in progress so the room's look is always visible
   const [sample] = useState(sampleEvent);
   const shown = rooms.length ? rooms : [sample];
@@ -59,7 +61,7 @@ export function RoomsScreen() {
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="pointer-events-auto absolute inset-x-2.5 bottom-[42px] top-[58px] z-[38] grid grid-cols-[280px_minmax(0,1fr)_320px] overflow-hidden rounded-[18px] bg-[rgba(4,4,5,0.94)] text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_40px_100px_-30px_rgba(0,0,0,0.9)] backdrop-blur-2xl"
     >
-      {dev ? <RoomList rooms={shown} active={roomId} onPick={setPick} /> : <LiveList target={live} onClose={() => setLive(null)} />}
+      {dev ? <RoomList rooms={shown} past={past} active={roomId} onPick={setPick} /> : <LiveList target={live} onClose={() => setLive(null)} />}
       <div className="flex min-h-0 flex-col border-x border-white/[0.06]">
         {!dev ? (
           <LiveRoom target={live} onOpen={setLive} onLeave={() => setLive(null)} />
@@ -158,8 +160,13 @@ export function RoomCall({ e, compact = false }: { e: ConjunctionEvent; compact?
   );
 }
 
-function RoomList({ rooms, active, onPick }: { rooms: ConjunctionEvent[]; active: string | null; onPick: (id: string) => void }) {
+function RoomList({ rooms, past, active, onPick }: { rooms: ConjunctionEvent[]; past: ConjunctionEvent[]; active: string | null; onPick: (id: string) => void }) {
   const incident = useOps((s) => s.incident);
+  // a past room opens as its case: the meeting from the first note to the report
+  const openPast = (id: string) => {
+    sfx.click();
+    useOps.setState({ incident: id, focusEvent: id, tab: "decision", incidentView: "expanded", resolved: null });
+  };
   return (
     <div className="flex min-h-0 flex-col">
       <div className="px-5 pb-3 pt-5">
@@ -167,6 +174,7 @@ function RoomList({ rooms, active, onPick }: { rooms: ConjunctionEvent[]; active
         <div className="text-[12px] text-neutral-500">One room per case · voice and text, translated live</div>
       </div>
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-2.5 pb-3">
+        {past.length > 0 && <div className="px-3 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500">Open</div>}
         {rooms.length === 0 && <div className="px-3 py-6 text-[12.5px] text-neutral-600">No rooms yet.</div>}
         {rooms.map((e) => {
           const st = STATUS_META[e.status];
@@ -206,6 +214,38 @@ function RoomList({ rooms, active, onPick }: { rooms: ConjunctionEvent[]; active
             </button>
           );
         })}
+        {past.length > 0 && (
+          <>
+            <div className="px-3 pb-1.5 pt-4 text-[11px] font-medium text-neutral-500">Past · {past.length}</div>
+            {past.map((e) => {
+              const p = e.proposal;
+              const plan = !p ? "Closed" : p.action === "wait" ? "Both waited" : `${p.mover === "a" ? e.a.name : e.b.name} ${p.action === "raise" ? "raised" : "lowered"} ${p.dvMs} m/s`;
+              const at = new Date(e.outcome!.resolvedAt!);
+              return (
+                <button
+                  key={e.id}
+                  data-testid="past-room"
+                  onClick={() => openPast(e.id)}
+                  onPointerEnter={() => sfx.hover()}
+                  className="mb-1 block w-full rounded-[12px] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.035]"
+                >
+                  <div className="flex items-center gap-2 text-[11px] text-neutral-600">
+                    <span className="mono">{e.id}</span>
+                    <span className="tnum ml-auto">
+                      Resolved {String(at.getUTCHours()).padStart(2, "0")}:{String(at.getUTCMinutes()).padStart(2, "0")} UTC
+                    </span>
+                  </div>
+                  <div className="mt-1 truncate text-[13px] font-medium text-neutral-300">
+                    {e.a.name} <span className="text-neutral-600">×</span> {e.b.name}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 truncate text-[11.5px] text-neutral-500">
+                    <Check size={11} className="shrink-0 text-green" /> {plan}
+                  </div>
+                </button>
+              );
+            })}
+          </>
+        )}
       </div>
     </div>
   );
