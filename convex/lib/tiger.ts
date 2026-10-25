@@ -183,7 +183,8 @@ async function createObservationTable(db: TigerSql): Promise<void> {
     exported_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (observation_key, observed_at)
   )`);
-  await db.sql(`SELECT create_hypertable('${OBSERVATION_TABLE}', by_range('observed_at'), if_not_exists => TRUE)`);
+  // The two-argument form works on every TimescaleDB 2.x; the by_range() dimension builder needs 2.13 or later.
+  await db.sql(`SELECT create_hypertable('${OBSERVATION_TABLE}', 'observed_at', if_not_exists => TRUE)`);
   await db.sql(`CREATE INDEX IF NOT EXISTS ${OBSERVATION_TABLE}_event_idx ON ${OBSERVATION_TABLE} (event_id, observed_at)`);
 }
 

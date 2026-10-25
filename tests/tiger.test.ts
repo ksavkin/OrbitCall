@@ -210,7 +210,7 @@ describe("ensureObservationTable", () => {
     expect(statements[2]).toContain("observed_at timestamptz NOT NULL");
     expect(statements[2]).toContain("value double precision,");
     expect(statements[2]).toContain("simulated boolean NOT NULL");
-    expect(statements[3]).toBe(`SELECT create_hypertable('${OBSERVATION_TABLE}', by_range('observed_at'), if_not_exists => TRUE)`);
+    expect(statements[3]).toBe(`SELECT create_hypertable('${OBSERVATION_TABLE}', 'observed_at', if_not_exists => TRUE)`);
     expect(statements[4]).toContain("CREATE INDEX IF NOT EXISTS");
     expect(statements[5]).toBe("COMMIT");
   });
@@ -326,12 +326,36 @@ describe("writeObservations", () => {
     expect(text).not.toContain("2026-10-24");
   });
 
-  it("is idempotent: the same rows written again report everything skipped", async () => {
-    const db = recorder({ rows: [], rowCount: 2 }, { rows: [], rowCount: 0 });
-    await expect(writeObservations(db, [observation, simulatedObservation])).resolves.toEqual({ written: 2, skipped: 0 });
-    await expect(writeObservations(db, [observation, simulatedObservation])).resolves.toEqual({ written: 0, skipped: 2 });
-    expect(db.calls[0].text).toBe(db.calls[1].text);
-    expect(db.calls[0].values).toEqual(db.calls[1].values);
+  // A table stand-in that enforces the primary key the way ON CONFLICT (observation_key, observed_at) DO NOTHING does.
+  function conflictingTable() {
+    const stored = new Set<string>();
+    return {
+      stored,
+      async sql(_text: string, values: unknown[] = []): Promise<SqlResult> {
+        let inserted = 0;
+        for (let i = 0; i < values.length; i += 9) {
+          const pair = `${String(values[i])}\u0000${String(values[i + 3])}`;
+          if (!stored.has(pair)) { stored.add(pair); inserted += 1; }
+        }
+        return { rows: [], rowCount: inserted };
+      },
+    };
+  }
+
+  it("is idempotent: re-exporting rows skips the ones whose key and time already exist", async () => {
+    const table = conflictingTable();
+    await expect(writeObservations(table, [observation, simulatedObservation])).resolves.toEqual({ written: 2, skipped: 0 });
+    await expect(writeObservations(table, [observation, simulatedObservation])).resolves.toEqual({ written: 0, skipped: 2 });
+    await expect(writeObservations(table, [observation, at(5)])).resolves.toEqual({ written: 1, skipped: 1 });
+    expect(table.stored.size).toBe(3);
+  });
+
+  it("keeps observations of different demo runs apart", async () => {
+    const table = conflictingTable();
+    const otherRun = keyed({ ...simulatedObservation, runId: "run-8" });
+    await expect(writeObservations(table, [simulatedObservation])).resolves.toEqual({ written: 1, skipped: 0 });
+    await expect(writeObservations(table, [otherRun])).resolves.toEqual({ written: 1, skipped: 0 });
+    expect(table.stored.size).toBe(2);
   });
 
   it("writes the canonical time, so two spellings of one instant are one row", async () => {
