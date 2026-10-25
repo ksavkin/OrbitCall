@@ -128,6 +128,20 @@ describe("configuration and transport", () => {
     expect(error.message).toContain("time limit");
   });
 
+  it("treats a body that stalls past the time limit as a timeout, not as a malformed answer", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn((_url: string, init: RequestInit) => Promise.resolve({
+      status: 202, ok: true,
+      json: () => new Promise((_, reject) => init.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+    }));
+    vi.stubGlobal("fetch", fetch);
+    const pending = startScreen(screenReq).catch(e => e);
+    await vi.advanceTimersByTimeAsync(ORBIT_TIMEOUTS.submit);
+    const error = await pending;
+    expect(error.code).toBe("UPSTREAM_UNAVAILABLE");
+    expect(error.message).toContain("time limit");
+  });
+
   it("rejects a non-JSON success body", async () => {
     mockFetch(new Response("<html>gateway</html>", { status: 200 }));
     expect(await codeOf(startScreen(screenReq))).toBe("INVALID_RESPONSE");
@@ -177,6 +191,7 @@ describe("POST /screen", () => {
     ["a reversed window", { fromUtc: "2026-10-28T00:00:00Z", toUtc: "2026-10-25T00:00:00Z" }],
     ["a window over 168 h", { toUtc: "2026-11-02T00:00:01Z" }],
     ["a non-UTC time", { fromUtc: "2026-10-25T00:00:00+03:00" }],
+    ["a time with fractional seconds", { fromUtc: "2026-10-25T00:00:00.500Z" }],
     ["a missing snapshot", { snapshotId: "" }],
     ["an empty evidence version", { evidenceVersion: "" }],
     ["a scan ID that cannot name a job", { scanId: "scan 1" }],
@@ -231,12 +246,21 @@ describe("GET /jobs/{id} for a screen", () => {
     expect((await getScreenJob("screen-scan-1", expectScreen)).result?.coverage.timedOut).toBe(true);
   });
 
-  it("passes a failed job's error through", async () => {
-    mockFetch(json(job({ status: "failed", phase: "failed", finishedAt: "2026-10-25T00:00:05Z",
-      error: { code: "SERVICE_RESTARTED", message: "the service restarted before the job finished; resubmit" } })));
+  it("keeps a failed job's code and replaces its raw exception text", async () => {
+    const failedJob = (code: string) => json(job({ status: "failed", phase: "failed", finishedAt: "2026-10-25T00:00:05Z",
+      error: { code, message: "Traceback: secret /srv/orbit/data/jobs/x.json" } }));
+    mockFetch(failedJob("SERVICE_RESTARTED"));
     const failed = await getScreenJob("screen-scan-1", expectScreen);
-    expect(failed.error).toEqual({ code: "SERVICE_RESTARTED", message: "the service restarted before the job finished; resubmit" });
+    expect(failed.error?.code).toBe("SERVICE_RESTARTED");
+    expect(failed.error?.message).not.toContain("secret");
     expect(failed.result).toBeNull();
+    mockFetch(failedJob("KeyError"));
+    expect((await getScreenJob("screen-scan-1", expectScreen)).error?.code).toBe("ERROR");
+  });
+
+  it("reports an unknown or evicted job as not found", async () => {
+    mockFetch(upstreamError(404, "NOT_FOUND"));
+    expect(await codeOf(getScreenJob("screen-scan-9", expectScreen))).toBe("NOT_FOUND");
   });
 
   it.each([
@@ -253,6 +277,10 @@ describe("GET /jobs/{id} for a screen", () => {
     ["no request hash", job({ requestHash: "" })],
     ["complete coverage with a missing primary", doneJob({ ...screenResult, missingPrimaryIds: [SAT] })],
     ["complete coverage with an unfinished primary", doneJob({ ...screenResult, counts: { ...counts, primariesCompleted: 1 } })],
+    ["complete coverage with an unpropagated object", doneJob({ ...screenResult, unpropagatedObjectIds: [DEB] })],
+    ["a completed job still in the screening phase", doneJob(screenResult, { phase: "screening" })],
+    ["a job coverage that differs from the result's", doneJob(screenResult, { coverage: { ...fullCoverage, excludedObjects: 0 } })],
+    ["an event whose object has no classification", doneJob({ ...screenResult, objects: { [ISS]: screenResult.objects[ISS] } })],
     ["coverage both complete and timed out", doneJob({ ...screenResult, coverage: { ...fullCoverage, timedOut: true } })],
     ["an event count that disagrees with the events", doneJob({ ...screenResult, counts: { ...counts, eventsFound: 2 } })],
     ["a spread value that is not a number", doneJob({ ...screenResult, events: [{ ...event, spread: { ...spread, supgpMissKm: "n/a" } }] })],
@@ -293,6 +321,18 @@ describe("POST /rescreen and its job", () => {
     expect(await startRescreen(req)).toMatchObject({ jobId: req.jobId, created: true });
     expect(call(fetch).url).toBe("https://orbit.test/rescreen");
     expect(call(fetch).body).toEqual(req);
+  });
+
+  it("reports a resubmitted re-screen as the same job", async () => {
+    mockFetch(json({ jobId: req.jobId, status: "completed", created: false, statusUrl: `/jobs/${req.jobId}` }, 200));
+    expect(await startRescreen(req)).toMatchObject({ jobId: req.jobId, created: false });
+  });
+
+  it("limits the screened horizon from the burn, not from fromUtc", async () => {
+    const fetch = mockFetch(json({ jobId: req.jobId, status: "queued", created: true, statusUrl: `/jobs/${req.jobId}` }, 202));
+    await startRescreen({ ...req, fromUtc: "2026-10-10T00:00:00Z" });   // 19 days before toUtc, 3 days after the burn
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(await codeOf(startRescreen({ ...req, toUtc: "2026-11-02T00:00:00Z" }))).toBe("VALIDATION");   // > 168 h after the burn
   });
 
   it.each([
@@ -382,6 +422,15 @@ describe("POST /candidates", () => {
     expect(result.notMovable[0].objectId).toBe(ISS);
   });
 
+  it("accepts a pass flag computed before rounding when the rounded miss reads exactly 1.0", async () => {
+    // candidates.py: missAfterKm is round(miss, 3) but passesPairThreshold compares the unrounded miss.
+    const edge = { ...response, candidates: [{ ...maneuver, missAfterKm: 1.0, passesPairThreshold: false }], wait: { ...wait, missBeforeKm: 1.0, passesPairThreshold: false }, missBeforeKm: 1.0 };
+    mockFetch(json(edge));
+    expect((await getCandidates(req)).candidates[0].passesPairThreshold).toBe(false);
+    mockFetch(json({ ...edge, candidates: [{ ...maneuver, missAfterKm: 1.0, passesPairThreshold: true }] }));
+    expect((await getCandidates(req)).candidates[0].passesPairThreshold).toBe(true);
+  });
+
   it("accepts a grid where nobody may move and only waiting is left", async () => {
     const frozen = { ...response, candidates: [], notMovable: [{ side: "A", objectId: ISS, reason: "not in allowedMovingObjectIds" }, { side: "B", objectId: SAT, reason: "not in allowedMovingObjectIds" }] };
     mockFetch(json(frozen));
@@ -392,6 +441,7 @@ describe("POST /candidates", () => {
     ["an allowed mover outside the pair", { allowedMovingObjectIds: [DEB] }],
     ["a self-pair", { objectB: ISS }],
     ["a bad not-before time", { notBeforeUtc: "yesterday" }],
+    ["a TCA with fractional seconds the service would round", { tcaUtc: "2026-10-26T04:12:00.500Z" }],
     ["an empty evidence version", { evidenceVersion: "" }],
   ])("checks the request before sending it: %s", async (_, over) => {
     const fetch = mockFetch();
@@ -409,6 +459,7 @@ describe("POST /candidates", () => {
     ["another input TCA", { ...response, tcaInputUtc: "2026-10-26T04:13:00Z" }],
     ["a refined TCA far from the input", { ...response, tcaUtc: "2026-10-26T05:00:00Z" }],
     ["a wait card with a burn", { ...response, wait: { ...wait, deltaVMs: 0.1 } }],
+    ["a wait card with another miss before", { ...response, wait: { ...wait, missBeforeKm: 0.5 } }],
     ["a maneuver without a burn time", { ...response, candidates: [{ ...maneuver, burnTimeUtc: null }] }],
     ["a burn after closest approach", { ...response, candidates: [{ ...maneuver, burnTimeUtc: "2026-10-26T05:00:00Z" }] }],
     ["fuel estimated by the service", { ...response, candidates: [{ ...maneuver, estimatedFuelKg: 1.2 }] }],
@@ -512,6 +563,18 @@ describe("POST /verify", () => {
     expect((await verify(req)).result).toBe("awaiting_data");
   });
 
+  it("accepts an element set that carries both mean motion and semi-major axis, as the service does", async () => {
+    const fetch = mockFetch(json(consistent));
+    const both = [{ epochUtc: "2026-10-24T06:00:00Z", meanMotionRevPerDay: 15.49, smaKm: 6921.31 }, req.series[1]];
+    await verify({ ...req, series: both });
+    expect(call(fetch).body.series).toEqual(both);
+  });
+
+  it("accepts an expected change the service rounded to zero while keeping its sign", async () => {
+    mockFetch(json({ ...consistent, expected: { deltaAKm: 0, sign: 1 } }));
+    expect((await verify({ ...req, expected: { burnTimeUtc: req.expected.burnTimeUtc, deltaAKm: 0.00004 } })).expected.sign).toBe(1);
+  });
+
   it("asks for a labeled replay and accepts its simulated verdict", async () => {
     const replay = { objectId: ISS, replay: "iss-simulated-reboost", expected: { burnTimeUtc: "2026-10-22T18:00:00Z", deltaVMs: 0.5 } };
     const fetch = mockFetch(json({ ...consistent, kind: "replay", simulated: true, expected: { deltaAKm: 0.9, sign: 1 } }));
@@ -526,7 +589,8 @@ describe("POST /verify", () => {
     ["a verdict with missing evidence", { ...consistent, missing: ["8 element sets (have 2)"] }],
     ["awaiting data without saying what is missing", { ...awaiting, missing: [] }],
     ["an expectation whose sign contradicts the burn direction", { ...consistent, expected: { deltaAKm: -0.09, sign: -1 } }],
-    ["an expectation of no change", { ...consistent, expected: { deltaAKm: 0, sign: 1 } }],
+    ["an expectation whose sign contradicts its value", { ...consistent, expected: { deltaAKm: 0.09, sign: -1 } }],
+    ["a label that contradicts the verdict", { ...consistent, label: "awaiting verification data" }],
     ["an element set count that disagrees with the series", { ...consistent, elementSetCount: 9 }],
     ["a series point without a semi-major axis", { ...consistent, series: [{ epochUtc: "2026-10-24T06:00:00Z" }, base.series[1]] }],
     ["an unlabeled verdict", { ...consistent, simulated: "no" }],
@@ -539,8 +603,10 @@ describe("POST /verify", () => {
     ["both a series and a replay", { replay: "iss-simulated-reboost" }],
     ["neither a burn size nor a semi-major axis change", { expected: { burnTimeUtc: req.expected.burnTimeUtc } }],
     ["a replay name that is a path", { series: undefined, replay: "../secrets" }],
-    ["an element set with both mean motion and semi-major axis", { series: [{ epochUtc: "2026-10-24T06:00:00Z", meanMotionRevPerDay: 15.49, smaKm: 6921 }] }],
+    ["an element set with neither mean motion nor semi-major axis", { series: [{ epochUtc: "2026-10-24T06:00:00Z" }] }],
     ["an expectation of zero", { expected: { burnTimeUtc: req.expected.burnTimeUtc, deltaAKm: 0 } }],
+    ["a burn time with fractional seconds", { expected: { ...req.expected, burnTimeUtc: "2026-10-25T22:12:00.250Z" } }],
+    ["a kind that contradicts the evidence given", { kind: "replay" }],
   ])("checks the request before sending it: %s", async (_, over) => {
     const fetch = mockFetch();
     expect(await codeOf(verify({ ...req, ...over } as typeof req))).toBe("VALIDATION");

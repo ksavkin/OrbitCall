@@ -104,8 +104,10 @@ export interface OrbitJob<R> {
   requestHash: string; createdAt: ISODate; startedAt: ISODate | null; finishedAt: ISODate | null;
   result: R | null;                             // only when completed
   resultRef: string | null;
-  error: { code: string; message: string } | null;   // only when failed
+  error: { code: JobErrorCode; message: string } | null;   // only when failed; the message is this client's, never the service's
 }
+
+export type JobErrorCode = "VALIDATION" | "ERROR" | "SERVICE_RESTARTED";
 
 export interface ServiceCandidate {
   candidateId: string; kind: "maneuver" | "wait";
@@ -195,7 +197,8 @@ export interface VerifyRequest {
 // ---------- Validation helpers ----------
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
-const OBJECT_ID = /^(\d{1,9}|SIM-\d{4})$/;
+const ISO_SECOND = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;   // what the client sends: the service echoes whole seconds
+const OBJECT_ID = /^(\d{1,9}|SIM-\d{4})$/;                 // catalog.py decodes Alpha-5 designators to decimal
 const SIM_ID = /^SIM-\d{4}$/;
 const JOB_ID = /^[A-Za-z0-9._:-]{1,128}$/;                 // jobs.py JOB_ID_RE
 const REPLAY_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;           // verify.py: a file stem, never a path
@@ -204,8 +207,16 @@ const MAX_WINDOW_MS = 168 * 3_600_000;
 const MAX_EVENTS = 10_000;
 const MAX_CANDIDATES = 100;                                // the grid is at most 48 maneuvers
 const MAX_LIST = 1_000;
+const MAX_OBJECTS = 25_000;                                // lists keyed by catalog objects (the snapshot has ~19.5k)
 const TCA_SEARCH_MS = 600_000;                             // the service refines the given TCA within ±10 min
 const PAIR_THRESHOLD_KM = 1;                               // §20 Q11
+const JOB_ERROR_CODES = ["VALIDATION", "ERROR", "SERVICE_RESTARTED"] as const;
+const JOB_ERROR_MESSAGES: Record<JobErrorCode, string> = {
+  VALIDATION: "The orbit service rejected the job's request.",
+  ERROR: "The orbit service could not finish the job. Resubmit it.",
+  SERVICE_RESTARTED: "The orbit service restarted before the job finished. Resubmit it.",
+};
+const VERIFY_LABELS = { awaiting_data: "awaiting verification data", consistent: "evidence consistent with plan", mismatch: "mismatch" } as const;
 const DIRECTIONS = ["prograde", "retrograde"] as const;
 const SIDES = ["A", "B"] as const;
 const JOB_STATUSES = ["queued", "running", "completed", "failed"] as const;
@@ -228,6 +239,7 @@ const isBool = (v: unknown): v is boolean => typeof v === "boolean";
 const isStr = (v: unknown): v is string => typeof v === "string";
 const isNonEmpty = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 const isIso = (v: unknown): v is string => typeof v === "string" && ISO_UTC.test(v) && Number.isFinite(Date.parse(v));
+const isIsoSecond = (v: unknown): v is string => isIso(v) && ISO_SECOND.test(v);
 const isObjectId = (v: unknown): v is string => typeof v === "string" && OBJECT_ID.test(v);
 const isSim = (v: unknown): v is string => typeof v === "string" && SIM_ID.test(v);
 const orNull = <T>(check: (v: unknown) => v is T) => (v: unknown): v is T | null => v === null || check(v);
@@ -251,8 +263,8 @@ function strList(v: unknown, what: string): string[] {
   if (!l.every(isStr)) fail(what);
   return l as string[];
 }
-function idList(v: unknown, what: string): ObjectId[] {
-  const l = list(v, MAX_LIST, what);
+function idList(v: unknown, what: string, max = MAX_LIST): ObjectId[] {
+  const l = list(v, max, what);
   if (!l.every(isObjectId)) fail(what);
   return l as ObjectId[];
 }
@@ -279,10 +291,14 @@ function parseObjectInfo(v: unknown, what: string): ObjectInfo {
 function parseObjects(v: unknown, what: string): Record<ObjectId, ObjectInfo> {
   const r = rec(v, what);
   const keys = Object.keys(r);
-  if (keys.length > MAX_LIST) fail(what);
+  if (keys.length > MAX_OBJECTS) fail(what);
   for (const key of keys) if (parseObjectInfo(r[key], what).objectId !== key) fail(`${what} (key)`);
   return r as unknown as Record<ObjectId, ObjectInfo>;
 }
+
+// The service compares the unrounded miss with the 1 km threshold and reports the miss rounded to 3 decimals, so
+// a flag may disagree with the rounded figure only when that figure is exactly 1.0.
+const passFlagAgrees = (passes: boolean, missKm: number) => passes ? missKm >= PAIR_THRESHOLD_KM : missKm <= PAIR_THRESHOLD_KM;
 
 function parseSpread(v: unknown): SourceSpread {
   const what = "source spread";
@@ -340,7 +356,7 @@ function parseScreenResult(v: unknown, expected: { scanId: string; snapshotId: s
   const coverage = parseCoverage(r.coverage);
   const counts = parseCounts(r.counts);
   const missing = idList(r.missingPrimaryIds, `${what} (missingPrimaryIds)`);
-  idList(r.unpropagatedObjectIds, `${what} (unpropagatedObjectIds)`);
+  const unpropagated = idList(r.unpropagatedObjectIds, `${what} (unpropagatedObjectIds)`, MAX_OBJECTS);
   const docked = rec(r.dockedBodies, `${what} (dockedBodies)`);
   for (const key of Object.keys(docked)) {
     if (!isObjectId(key)) fail(`${what} (dockedBodies)`);
@@ -348,15 +364,23 @@ function parseScreenResult(v: unknown, expected: { scanId: string; snapshotId: s
   }
   const events = list(r.events, MAX_EVENTS, `${what} (events)`).map(parseEvent);
   if (counts.eventsFound !== events.length) fail(`${what} (eventsFound)`);
+  const named = new Set<string>();
+  for (const e of events) named.add(e.objectA).add(e.objectB);
   for (const c of list(r.coLocated, MAX_EVENTS, `${what} (coLocated)`)) {
-    fields(rec(c, "co-located pair"), { objectA: isObjectId, objectB: isObjectId, minDistanceKm: isNonNeg }, "co-located pair");
+    const p = rec(c, "co-located pair");
+    fields(p, { objectA: isObjectId, objectB: isObjectId, minDistanceKm: isNonNeg }, "co-located pair");
+    named.add(p.objectA as string).add(p.objectB as string);
   }
-  parseObjects(r.objects, `${what} (objects)`);
+  // Every object named in an event or a co-located pair comes with its classification (debris, rocket body, …).
+  const objects = parseObjects(r.objects, `${what} (objects)`);
+  for (const id of named) if (!(id in objects)) fail(`${what} (object ${id} without classification)`);
   const uncovered = list(r.uncovered, MAX_EVENTS, `${what} (uncovered)`);
   uncovered.forEach(u => rec(u, `${what} (uncovered)`));
   strList(r.limitations, `${what} (limitations)`);
-  // A missing primary or an unrefined encounter is partial coverage; it is never reported as complete (SCAN-1).
-  if (coverage.complete && (missing.length > 0 || uncovered.length > 0 || counts.primariesCompleted !== counts.primaryObjects)) {
+  // A missing primary, an unrefined encounter or an unpropagated object is partial coverage; it is never reported
+  // as complete (SCAN-1).
+  if (coverage.complete && (missing.length > 0 || uncovered.length > 0 || unpropagated.length > 0 ||
+    counts.primariesCompleted !== counts.primaryObjects)) {
     fail(`${what} (complete coverage with gaps)`);
   }
   return r as unknown as ScreenResult;
@@ -407,19 +431,29 @@ function parseJob<R>(v: unknown, jobId: string, kind: JobKind, parseResult: (val
   const counters = rec(j.counters, `${what} (counters)`);
   if (!Object.values(counters).every(isCount)) fail(`${what} (counters)`);
   const coverage = j.coverage === undefined || j.coverage === null ? null : parseCoverage(j.coverage);
-  if (j.error !== null) fields(rec(j.error, "job error"), { code: isNonEmpty, message: isStr }, "job error");
   const status = j.status as JobStatus;
   const hasResult = j.result !== null && j.result !== undefined;
-  if (status === "completed" && (!hasResult || j.error !== null)) fail("completed job without a result");
-  if (status === "failed" && (j.error === null || hasResult)) fail("failed job without an error");
+  if (status === "completed" && (!hasResult || j.error !== null || j.phase !== "done")) fail("completed job without a result");
+  if (status === "failed" && (j.error === null || hasResult || j.phase !== "failed")) fail("failed job without an error");
   if ((status === "queued" || status === "running") && (hasResult || j.error !== null)) fail("unfinished job with a result");
+  // The job's error carries raw exception text (jobs.py: str(exc)[:500]). Only its code is kept, from a fixed list;
+  // the message stored and shown is this client's.
+  let error: OrbitJob<R>["error"] = null;
+  if (j.error !== null) {
+    const e = rec(j.error, "job error");
+    fields(e, { code: isNonEmpty, message: isStr }, "job error");
+    const code = oneOf(JOB_ERROR_CODES)(e.code) ? e.code : "ERROR";
+    error = { code, message: JOB_ERROR_MESSAGES[code] };
+  }
+  const result = hasResult ? parseResult(j.result) : null;
+  // The job's coverage is the result's (jobs.py done()).
+  if (coverage !== null && isRecord(j.result) && JSON.stringify(j.result.coverage) !== JSON.stringify(coverage)) fail(`${what} (coverage differs from the result's)`);
   return {
     jobId, kind, status, phase: j.phase as JobPhase, progress: j.progress as number | null,
     counters: counters as Record<string, number>, coverage,
     requestHash: j.requestHash as string, createdAt: j.createdAt as string,
     startedAt: j.startedAt as string | null, finishedAt: j.finishedAt as string | null,
-    result: hasResult ? parseResult(j.result) : null, resultRef: j.resultRef as string | null,
-    error: j.error as OrbitJob<R>["error"],
+    result, resultRef: j.resultRef as string | null, error,
   };
 }
 
@@ -448,11 +482,11 @@ function parseCandidate(v: unknown, ctx: CandidateContext, what: string): Servic
       c.direction !== null || c.deltaAKm !== null || c.missAfterKm !== null || c.tcaAfterUtc !== null || c.relSpeedKmS !== null || c.rank !== null) {
       fail(`${what} (wait with maneuver fields)`);
     }
-    if (c.passesPairThreshold !== (c.missBeforeKm as number) >= PAIR_THRESHOLD_KM) fail(`${what} (passesPairThreshold)`);
+    if (!passFlagAgrees(c.passesPairThreshold as boolean, c.missBeforeKm as number)) fail(`${what} (passesPairThreshold)`);
     return c as unknown as ServiceCandidate;
   }
   fields(c, { movingSide: oneOf(SIDES), movingObjectId: isObjectId, burnTimeUtc: isIso, deltaVMs: isPos, direction: oneOf(DIRECTIONS), rank: isPosInt }, what);
-  if (c.missAfterKm !== null && c.passesPairThreshold !== (c.missAfterKm as number) >= PAIR_THRESHOLD_KM) fail(`${what} (passesPairThreshold)`);
+  if (c.missAfterKm !== null && !passFlagAgrees(c.passesPairThreshold as boolean, c.missAfterKm as number)) fail(`${what} (passesPairThreshold)`);
   const mover = c.movingSide === "A" ? ctx.objectA : ctx.objectB;
   if (c.movingObjectId !== mover) fail(`${what} (moving object is not its side's object)`);
   // Debris, rocket bodies, nonoperational payloads and anything the caller did not allow never move (ROOM-14).
@@ -485,7 +519,8 @@ function parseCandidates(v: unknown, req: CandidatesRequest): CandidatesResponse
     allowed: new Set(req.allowedMovingObjectIds), objects, simulated };
   const candidates = list(r.candidates, MAX_CANDIDATES, `${what} (candidates)`).map(c => parseCandidate(c, ctx, "candidate"));
   if (candidates.some(c => c.kind === "maneuver" && frozen.has(c.movingObjectId as string))) fail("candidate (moving object listed as not movable)");
-  if (parseCandidate(r.wait, ctx, "wait candidate").kind !== "wait") fail("wait candidate (kind)");
+  const wait = parseCandidate(r.wait, ctx, "wait candidate");
+  if (wait.kind !== "wait" || wait.missBeforeKm !== r.missBeforeKm) fail("wait candidate (kind or miss before)");
   for (const f of list(r.failed, MAX_CANDIDATES, `${what} (failed)`)) fields(rec(f, "failed grid point"), { candidateId: isNonEmpty, reason: isStr }, "failed grid point");
   strList(r.assumptions, `${what} (assumptions)`);
   return r as unknown as CandidatesResponse;
@@ -521,9 +556,11 @@ function parseVerification(v: unknown, req: VerifyRequest): Verification {
     kind: oneOf(["live", "replay"] as const), result: oneOf(["awaiting_data", "consistent", "mismatch"] as const),
     label: isNonEmpty, elementSetCount: isCount, method: isStr, simulated: isBool,
   }, what);
+  if (r.label !== VERIFY_LABELS[r.result as keyof typeof VERIFY_LABELS]) fail(`${what} (label does not match the result)`);
   const expected = rec(r.expected, "verification expectation");
-  if (!isNum(expected.deltaAKm) || expected.deltaAKm === 0 || (expected.sign !== 1 && expected.sign !== -1) ||
-    Math.sign(expected.deltaAKm) !== expected.sign) fail("verification expectation");
+  // The service rounds the expected Δa to 4 decimals, so a tiny expectation may read 0 while keeping its sign.
+  if (!isNum(expected.deltaAKm) || (expected.sign !== 1 && expected.sign !== -1) ||
+    (expected.deltaAKm !== 0 && Math.sign(expected.deltaAKm) !== expected.sign)) fail("verification expectation");
   // The expectation must be the one we asked about: same sign as the given Δa or the burn direction.
   const askedSign = req.expected.deltaAKm !== undefined ? Math.sign(req.expected.deltaAKm)
     : req.expected.direction === "retrograde" ? -1 : 1;
@@ -546,10 +583,16 @@ function parseVerification(v: unknown, req: VerifyRequest): Verification {
 
 // ---------- Request checks ----------
 
-function checkWindow(fromUtc: unknown, toUtc: unknown) {
-  if (!isIso(fromUtc) || !isIso(toUtc)) badInput("time window");
+// Times the client sends are whole seconds (contract: "times ISO 8601 UTC, whole seconds"); the service echoes
+// them as such, and the echo checks compare exactly.
+function checkTime(v: unknown, what: string) {
+  if (!isIsoSecond(v)) badInput(what);
+}
+function checkWindow(fromUtc: unknown, toUtc: unknown, maxMs: number | null = MAX_WINDOW_MS) {
+  checkTime(fromUtc, "time window");
+  checkTime(toUtc, "time window");
   const span = ms(toUtc as string) - ms(fromUtc as string);
-  if (span <= 0 || span > MAX_WINDOW_MS) badInput("time window");
+  if (span <= 0 || (maxMs !== null && span > maxMs)) badInput("time window");
 }
 function checkVersions(snapshotId: unknown, evidenceVersion: unknown, evidenceRequired: boolean) {
   if (!isNonEmpty(snapshotId)) badInput("snapshot ID");
@@ -599,6 +642,8 @@ function mapFailure(status: number, body: unknown): OrbitServiceError {
   return error("UPSTREAM_UNAVAILABLE", "The orbit service is unavailable. Retry later.");
 }
 
+const TIMED_OUT = "The orbit service did not answer within the time limit. Retry later.";
+
 async function request(method: "GET" | "POST", path: string, body: unknown, timeoutMs: number, accept: readonly number[] = [200]): Promise<unknown> {
   const { url, token } = orbitConfig();
   // AbortController + setTimeout instead of AbortSignal.timeout: both exist in the Convex default runtime.
@@ -616,13 +661,13 @@ async function request(method: "GET" | "POST", path: string, body: unknown, time
       });
     } catch {
       // Timeouts and network failures. Never echo the URL, headers or token.
-      throw new OrbitServiceError("UPSTREAM_UNAVAILABLE", controller.signal.aborted
-        ? "The orbit service did not answer within the time limit. Retry later."
-        : "The orbit service is unreachable. Retry later.");
+      throw new OrbitServiceError("UPSTREAM_UNAVAILABLE", controller.signal.aborted ? TIMED_OUT : "The orbit service is unreachable. Retry later.");
     }
     let parsed: unknown = null;
     let json = true;
     try { parsed = await response.json(); } catch { json = false; }
+    // A body that stalls past the limit is a timeout, not a malformed answer.
+    if (controller.signal.aborted) throw new OrbitServiceError("UPSTREAM_UNAVAILABLE", TIMED_OUT, response.status);
     if (!accept.includes(response.status)) throw mapFailure(response.status, json ? parsed : null);
     if (!json) throw new OrbitServiceError("INVALID_RESPONSE", "Orbit service returned a response that is not JSON.", response.status);
     return parsed;
@@ -656,9 +701,10 @@ export async function startRescreen(req: RescreenRequest): Promise<JobAccepted> 
   checkVersions(req.snapshotId, req.evidenceVersion, true);
   checkPair(req.objectId, req.partnerObjectId);
   const m = req.maneuver;
-  if (!isRecord(m) || !isIso(m.burnTimeUtc) || !isNum(m.deltaVMs) || m.deltaVMs <= 0 || m.deltaVMs > 1 || !oneOf(DIRECTIONS)(m.direction)) badInput("maneuver");
-  if (!isIso(req.tcaUtc)) badInput("TCA");
-  checkWindow(req.fromUtc, req.toUtc);
+  if (!isRecord(m) || !isIsoSecond(m.burnTimeUtc) || !isNum(m.deltaVMs) || m.deltaVMs <= 0 || m.deltaVMs > 1 || !oneOf(DIRECTIONS)(m.direction)) badInput("maneuver");
+  checkTime(req.tcaUtc, "TCA");
+  // rescreen.py: fromUtc ≤ burn, and the screened horizon (toUtc − burn) is at most 168 h; fromUtc itself may be earlier.
+  checkWindow(req.fromUtc, req.toUtc, null);
   const burn = ms(m.burnTimeUtc);
   if (ms(req.fromUtc) > burn || ms(req.toUtc) <= burn || ms(req.toUtc) - burn > MAX_WINDOW_MS) badInput("time window around the burn");
   if (ms(req.tcaUtc) <= burn) badInput("TCA (the maneuver acts on the encounter that follows it)");
@@ -689,8 +735,8 @@ export async function getRescreenJob(jobId: string, expected: { snapshotId: stri
 export async function getCandidates(req: CandidatesRequest): Promise<CandidatesResponse> {
   checkVersions(req.snapshotId, req.evidenceVersion, true);
   checkPair(req.objectA, req.objectB);
-  if (!isIso(req.tcaUtc)) badInput("TCA");
-  if (req.notBeforeUtc !== undefined && !isIso(req.notBeforeUtc)) badInput("not-before time");
+  checkTime(req.tcaUtc, "TCA");
+  if (req.notBeforeUtc !== undefined) checkTime(req.notBeforeUtc, "not-before time");
   const allowed = req.allowedMovingObjectIds;
   if (!Array.isArray(allowed) || allowed.length > 2 || new Set(allowed).size !== allowed.length ||
     !allowed.every(id => id === req.objectA || id === req.objectB)) badInput("allowed moving objects");
@@ -699,10 +745,11 @@ export async function getCandidates(req: CandidatesRequest): Promise<CandidatesR
   return parseCandidates(await request("POST", "/candidates", body, ORBIT_TIMEOUTS.candidates), req);
 }
 
-/** POST /simulate: deterministic, flagged demo orbit. The returned ID is always a reserved SIM- ID. */
+/** POST /simulate: deterministic, flagged demo orbit. The returned ID is always a reserved SIM- ID. The target is a
+ *  real catalog object (SCR-10: the demo satellite meets a real one); the service itself would accept a SIM target. */
 export async function simulate(req: SimulateRequest): Promise<SimulateResult> {
   if (!isObjectId(req.targetObjectId) || isSim(req.targetObjectId)) badInput("target object ID");
-  if (!isIso(req.tcaUtc)) badInput("TCA");
+  checkTime(req.tcaUtc, "TCA");
   if (req.name !== undefined && (!isNonEmpty(req.name) || req.name.length > 80)) badInput("name");
   if (req.objectId !== undefined && !isSim(req.objectId)) badInput("simulated object ID");
   if (req.tiltDeg !== undefined && !(isNum(req.tiltDeg) && req.tiltDeg > 0 && req.tiltDeg <= 10)) badInput("tilt");
@@ -717,7 +764,7 @@ export async function simulate(req: SimulateRequest): Promise<SimulateResult> {
 export async function verify(req: VerifyRequest): Promise<Verification> {
   if (!isObjectId(req.objectId)) badInput("object ID");
   const e = req.expected;
-  if (!isRecord(e) || !isIso(e.burnTimeUtc)) badInput("expectation");
+  if (!isRecord(e) || !isIsoSecond(e.burnTimeUtc)) badInput("expectation");
   if (e.deltaVMs !== undefined && !isPos(e.deltaVMs)) badInput("expectation (deltaVMs)");
   if (e.direction !== undefined && !oneOf(DIRECTIONS)(e.direction)) badInput("expectation (direction)");
   if (e.deltaAKm !== undefined && (!isNum(e.deltaAKm) || e.deltaAKm === 0)) badInput("expectation (deltaAKm)");
@@ -725,13 +772,16 @@ export async function verify(req: VerifyRequest): Promise<Verification> {
   if (req.series !== undefined) {
     if (!Array.isArray(req.series) || req.series.length > MAX_EVENTS) badInput("element set series");
     for (const p of req.series) {
-      if (!isRecord(p) || !isIso(p.epochUtc) || (p.meanMotionRevPerDay === undefined) === (p.smaKm === undefined) ||
+      // verify.py reads smaKm when present, else the mean motion; a set with neither is dropped there, refused here.
+      if (!isRecord(p) || !isIso(p.epochUtc) || (p.meanMotionRevPerDay === undefined && p.smaKm === undefined) ||
         (p.meanMotionRevPerDay !== undefined && !isPos(p.meanMotionRevPerDay)) || (p.smaKm !== undefined && !isPos(p.smaKm))) badInput("element set");
     }
   }
   if (req.replay !== undefined && (!isStr(req.replay) || !REPLAY_NAME.test(req.replay))) badInput("replay name");
   if (req.series !== undefined && req.replay !== undefined) badInput("evidence (give series or replay, not both)");
   if (req.kind !== undefined && !oneOf(["live", "replay"] as const)(req.kind)) badInput("kind");
+  // verify.py: a kind that contradicts the evidence given is a 400.
+  if (req.kind !== undefined && req.kind !== (req.replay !== undefined ? "replay" : "live")) badInput("kind (contradicts the evidence given)");
   if (req.sources !== undefined && !Array.isArray(req.sources)) badInput("sources");
   const body = { ...pick(req, ["objectId", "series", "replay", "kind", "sources"]), expected: pick(e, ["burnTimeUtc", "deltaVMs", "direction", "deltaAKm"]) };
   return parseVerification(await request("POST", "/verify", body, ORBIT_TIMEOUTS.verify), req);
