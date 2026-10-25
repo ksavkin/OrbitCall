@@ -1,27 +1,31 @@
 "use client";
 
-import { AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { Sparkles } from "lucide-react";
 import { useMemo } from "react";
 import { useMe } from "@/components/auth/session";
-import { ResetBanner } from "@/components/live/DecisionStatus";
 import { SummaryFormPanel } from "@/components/live/SummaryForm";
+import { VerificationPanel } from "@/components/live/Verification";
+import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 import { useLive } from "@/lib/backend/live";
-import type { EventId } from "@/lib/backend/types";
 import { useOps } from "@/lib/ops/store";
+import type { ConjunctionEvent } from "@/lib/ops/types";
+import { useNow } from "@/lib/useNow";
 import { aboutEvent, mergeTimeline } from "./live";
 import { LiveItem } from "./LiveLines";
 import { usePinnedScroll } from "./useRoom";
 
-// Real mode: the Decision Center's meeting on the backend room (wiring map §3). This incident's lines and the room-wide
-// ones, oldest at the top, with the call's voice phrases; system lines (every reset, the room closing) as centred
-// notices. The reset banner stays above the discussion; the end-of-call summary form closes it. Decisions stay in the
-// plan panel: nothing here selects or approves.
+// Real mode: the Decision Center's meeting on the backend room (wiring map §3). The plans stay pinned above the
+// discussion while there are any; the panel gates turns itself and carries the reset banner. Below: this incident's
+// lines and the room-wide ones, oldest at the top, with the call's voice phrases; system lines (every reset, the room
+// closing) as centred notices. The end-of-call summary form and the verification close the case.
 
-export function LiveMeeting({ eventId }: { eventId: EventId }) {
+export function LiveMeeting({ e, viewer }: { e: ConjunctionEvent; viewer: "a" | "b" }) {
+  const eventId = e.id;
   const roomId = useLive((s) => s.roomId);
   const room = useLive((s) => s.room);
   const messages = useLive((s) => s.messages);
+  const plans = useLive((s) => (s.proposals?.length ?? 0) > 0);
   const voice = useOps((s) => (s.callLive?.eventId === eventId ? s.callLive.messages : undefined));
   const myUserId = useMe()?.userId ?? null;
   const items = useMemo(() => mergeTimeline(aboutEvent(messages ?? [], eventId), aboutEvent(voice ?? [], eventId)), [messages, voice, eventId]);
@@ -29,11 +33,8 @@ export function LiveMeeting({ eventId }: { eventId: EventId }) {
 
   return (
     <div className="absolute inset-0 flex flex-col" data-testid="meeting-wrap" data-mode="live">
-      {/* a reset in any linked incident shows here even if this side did nothing */}
-      <div className="mx-auto w-full max-w-[908px] shrink-0 px-6 pt-1 empty:hidden">
-        <ResetBanner eventId={eventId} />
-      </div>
-      <div ref={box} className="thin-scroll min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]" data-testid="meeting">
+      {plans && <PinnedPlans e={e} viewer={viewer} />}
+      <div ref={box} className={`thin-scroll min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] ${plans ? "mt-3 border-t border-white/[0.06]" : ""}`} data-testid="meeting">
         <div ref={list} className="mx-auto flex max-w-[908px] flex-col gap-4 px-6 pb-6 pt-3">
           <div className="pb-1 text-center text-[11.5px] text-neutral-600">
             Shared with everyone in this room · each person reads it in their own language · nothing here approves anything
@@ -45,8 +46,30 @@ export function LiveMeeting({ eventId }: { eventId: EventId }) {
           </AnimatePresence>
           <MeetingState hasRoom={!!roomId} loading={messages === undefined} empty={items.length === 0} />
           <SummaryFormPanel eventId={eventId} roomId={roomId} />
+          <VerificationPanel eventId={eventId} />
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The plans, pinned above the discussion as in the simulator, so people talk about them underneath. The panel gates
+ * turns from approvals.status itself; the orange rim says it is this side's turn. The countdown runs on its own clock,
+ * at the case view's 250 ms.
+ */
+function PinnedPlans({ e, viewer }: { e: ConjunctionEvent; viewer: "a" | "b" }) {
+  const now = useNow(250);
+  const myTurn = useLive((s) => s.approvals?.myTurn ?? false);
+  return (
+    <div className="thin-scroll max-h-[58%] shrink-0 overflow-y-auto px-6 pt-1 [scrollbar-gutter:stable]">
+      <motion.div
+        layout
+        className={`mx-auto max-w-[860px] rounded-[16px] ${myTurn ? "bg-white/[0.02] shadow-[inset_0_0_0_1px_rgba(255,159,64,0.32)]" : "bg-white/[0.015] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)]"}`}
+        data-testid="meeting-decision"
+      >
+        <ProposalPanel e={e} viewer={viewer} now={now} embedded />
+      </motion.div>
     </div>
   );
 }

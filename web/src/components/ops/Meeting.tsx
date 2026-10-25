@@ -118,7 +118,8 @@ export function Meeting({ e, now, room, onRun }: { e: ConjunctionEvent; now: num
     // the box exists only in the simulator's view: attach again when the Dev switch brings it back
   }, [real]);
 
-  if (real) return <LiveMeeting eventId={e.id} />;
+  // `now` is not passed on: the plan panel inside keeps its own clock
+  if (real) return <LiveMeeting e={e} viewer={room.viewer} />;
 
   const due = open && st?.mode === "decide";
 
