@@ -7,7 +7,7 @@ import { CONVEX_ENABLED } from "@/lib/backend/provider";
 import { QueryBoundary, briefError } from "@/lib/backend/QueryBoundary";
 import { sfx } from "@/lib/sound";
 import { toggleDev } from "@/components/ui/Navbar";
-import { CallStage } from "./CallStage";
+import { CallStage, type FlagOf } from "./CallStage";
 
 // Live mode: the real call. Rooms are not linked to cases in the backend yet (the call module keeps roomId as a
 // string until the team's rooms table exists), and until sign-in exists each person joins with a dev token from
@@ -77,8 +77,13 @@ export function LiveRoom({ target, onLeave, onOpen }: { target: LiveTarget | nul
 
 function Call({ target }: { target: LiveTarget }) {
   const call = useCoordinationCall({ roomId: target.roomId, devToken: target.devToken });
-  return <CallStage call={call} flagOf={() => null} title={`Coordination room · ${target.roomId}`} subtitle="Live call · translated by the voice worker" />;
+  return <CallStage call={call} flagOf={flagOfLang} title={`Coordination room · ${target.roomId}`} subtitle="Live call · translated by the voice worker" />;
 }
+
+// Test identities carry a language, not a country. The demo's three dispatchers are US, Russia and China, so the
+// flag follows the language for display only; a flag never grants access.
+const FLAG_BY_LANG: Record<string, string> = { en: "us", ru: "ru", zh: "cn" };
+const flagOfLang: FlagOf = (p) => (p.lang ? (FLAG_BY_LANG[p.lang] ?? null) : null);
 
 function JoinForm({ onOpen }: { onOpen: (t: LiveTarget) => void }) {
   const [roomId, setRoomId] = useState("");

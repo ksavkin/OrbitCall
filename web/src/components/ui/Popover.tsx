@@ -127,6 +127,9 @@ export function Select<T extends string>({
   label,
   icon,
   width = 220,
+  size = "sm",
+  disabled = false,
+  maxTriggerWidth,
 }: {
   value: T;
   options: { value: T; label: string; hint?: string }[];
@@ -134,6 +137,10 @@ export function Select<T extends string>({
   label: string;
   icon?: ReactNode;
   width?: number;
+  /** sm: toolbar chips; md: pill controls next to 36-40 px buttons. */
+  size?: "sm" | "md";
+  disabled?: boolean;
+  maxTriggerWidth?: number;
 }) {
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
@@ -143,7 +150,11 @@ export function Select<T extends string>({
     <>
       <button
         ref={btn}
-        className="flex h-7 min-w-0 items-center gap-1.5 rounded-[8px] bg-white/[0.04] px-2 text-[11.5px] text-neutral-300 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)] transition-colors hover:bg-white/[0.07] hover:text-white"
+        disabled={disabled}
+        style={maxTriggerWidth ? { maxWidth: maxTriggerWidth } : undefined}
+        className={`flex min-w-0 items-center gap-1.5 bg-white/[0.04] text-neutral-300 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)] transition-colors hover:bg-white/[0.07] hover:text-white disabled:pointer-events-none disabled:opacity-40 ${
+          size === "md" ? "h-9 rounded-full px-3 text-[12px]" : "h-7 rounded-[8px] px-2 text-[11.5px]"
+        }`}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={`${label}: ${cur?.label ?? ""}`}

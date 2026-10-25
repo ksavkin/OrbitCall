@@ -10,6 +10,7 @@ import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ClaudeGlyph } from "@/components/ops/Glyphs";
 import { RoomTimeline } from "@/components/roomChat/RoomTimeline";
+import { Select } from "@/components/ui/Popover";
 import type { RoomCard } from "@/components/roomChat/model";
 
 // The coordination call, in the app's design, on useCoordinationCall (or its dev stand-in: same shape).
@@ -95,6 +96,12 @@ function TranslatorBadge({ c }: { c: StageCall }) {
   );
 }
 
+/** "Dispatcher US" → "DU", "Ирина Волкова" → "ИВ": two letters for an avatar without a flag. */
+function initials(name: string) {
+  const parts = name.replace(/\(.*?\)/g, "").trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "?") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+
 function Participants({ list, flagOf }: { list: CallParticipant[]; flagOf: FlagOf }) {
   return (
     <motion.div
@@ -116,7 +123,14 @@ function Participants({ list, flagOf }: { list: CallParticipant[]; flagOf: FlagO
               style={p.speaking ? { boxShadow: "0 0 0 1.5px var(--green), 0 0 18px -4px rgba(61,220,151,0.7)" } : { boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.07)" }}
             >
               <span className="relative grid h-8 w-8 place-items-center overflow-hidden rounded-full bg-[#16171b] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
-                {p.isTranslator ? <ClaudeGlyph size={15} /> : flag ? <Flag code={flag} h={32} /> : null}
+                {p.isTranslator ? (
+                  <ClaudeGlyph size={15} />
+                ) : flag ? (
+                  <Flag code={flag} h={32} />
+                ) : (
+                  // no flag known for this person: their initials, never an empty circle
+                  <span className="text-[11px] font-semibold tracking-[0.02em] text-neutral-300">{initials(p.name)}</span>
+                )}
               </span>
               <span className="min-w-0">
                 <span className="block text-[13px] font-medium leading-tight text-white">
@@ -273,36 +287,30 @@ function Controls({ c, joined }: { c: StageCall; joined: boolean }) {
         </button>
       )}
       {c.devices.mics.length > 0 && c.role === "operator" && (
-        <select
-          className="h-9 max-w-[160px] rounded-full bg-white/[0.05] px-3 text-[12px] text-neutral-300 outline-none"
+        <Select
+          size="md"
+          label="Microphone"
           value={c.devices.micId ?? ""}
           disabled={c.state !== "joined"}
-          onChange={(e) => void c.devices.chooseMic(e.target.value)}
-          aria-label="Microphone"
-        >
-          <option value="">Default microphone</option>
-          {c.devices.mics.map((d) => (
-            <option key={d.deviceId} value={d.deviceId}>
-              {d.label || d.deviceId.slice(0, 8)}
-            </option>
-          ))}
-        </select>
+          onChange={(id) => void c.devices.chooseMic(id)}
+          options={[{ value: "", label: "Default microphone" }, ...c.devices.mics.map((d) => ({ value: d.deviceId, label: d.label || `Microphone ${d.deviceId.slice(0, 6)}` }))]}
+          icon={<Mic size={13} className="shrink-0 text-neutral-500" />}
+          width={280}
+          maxTriggerWidth={190}
+        />
       )}
       {c.devices.canChooseSpeaker && c.devices.speakers.length > 0 && (
-        <select
-          className="h-9 max-w-[160px] rounded-full bg-white/[0.05] px-3 text-[12px] text-neutral-300 outline-none"
+        <Select
+          size="md"
+          label="Speaker"
           value={c.devices.speakerId ?? ""}
           disabled={c.state !== "joined"}
-          onChange={(e) => c.devices.chooseSpeaker(e.target.value)}
-          aria-label="Speaker"
-        >
-          <option value="">Default speaker</option>
-          {c.devices.speakers.map((d) => (
-            <option key={d.deviceId} value={d.deviceId}>
-              {d.label || d.deviceId.slice(0, 8)}
-            </option>
-          ))}
-        </select>
+          onChange={(id) => c.devices.chooseSpeaker(id)}
+          options={[{ value: "", label: "Default speaker" }, ...c.devices.speakers.map((d) => ({ value: d.deviceId, label: d.label || `Speaker ${d.deviceId.slice(0, 6)}` }))]}
+          icon={<Volume2 size={13} className="shrink-0 text-neutral-500" />}
+          width={280}
+          maxTriggerWidth={190}
+        />
       )}
       <button
         className="btn h-10 gap-1.5 px-3.5 text-[13px] text-neutral-300 hover:text-red"

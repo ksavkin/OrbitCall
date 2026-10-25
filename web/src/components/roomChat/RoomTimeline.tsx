@@ -134,7 +134,7 @@ function Message({ m, myUserId }: { m: CallMessage; myUserId: string | null }) {
           )}
           {!mine && m.translationStatus === "ok" && m.voiceError && (
             <span className="text-amber" data-testid="call-caption-voice-failed">
-              Text only: the voice failed ({m.voiceError.code})
+              {m.voiceError.code === "VOICE_UNAVAILABLE" ? "Captions only: no voice is set up for your language yet" : `Text only: the voice failed (${m.voiceError.code})`}
             </span>
           )}
           {!mine && m.text !== m.originalText && (
