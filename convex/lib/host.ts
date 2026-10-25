@@ -121,19 +121,21 @@ export const agentSpanValidator = v.object({
   errorCode: nullable(v.string()), errorMessage: nullable(v.string()),
 });
 
-const citations = { type: "array", items: { type: "string" }, maxItems: MAX_CITED };
+// Gemini rejects the combined nested maxItems grammar with HTTP 400. Keep list limits
+// in checkHostOutput, not the provider schema: https://ai.google.dev/gemini-api/docs/structured-output#limitations
+const citations = { type: "array", items: { type: "string" } };
 export const hostResponseSchema: object = {
   type: "object", additionalProperties: false,
   required: ["inputVersion", "clarifications", "requestedRevisions", "summaries"],
   properties: {
     inputVersion: { type: "string", description: "The context inputVersion, copied exactly." },
-    understood: { type: "array", maxItems: MAX_ITEMS, items: {
+    understood: { type: "array", items: {
       type: "object", additionalProperties: false, required: ["eventId", "kind", "hard", "text", "sourceMessageId", "correctsId"],
       properties: { eventId: { anyOf: [{ type: "string" }, { type: "null" }] }, kind: { type: "string", enum: understoodKinds },
         hard: { type: "boolean" }, text: { type: "string", maxLength: MAX_SUMMARY }, sourceMessageId: { type: "string" },
         correctsId: { anyOf: [{ type: "string" }, { type: "null" }] } },
     } },
-    clarifications: { type: "array", maxItems: MAX_ITEMS, items: {
+    clarifications: { type: "array", items: {
       type: "object", additionalProperties: false, required: ["question", "eventId", "messageIds"],
       properties: {
         question: { type: "string", maxLength: MAX_QUESTION },
@@ -141,14 +143,14 @@ export const hostResponseSchema: object = {
         messageIds: citations,
       },
     } },
-    requestedRevisions: { type: "array", maxItems: MAX_ITEMS, items: {
+    requestedRevisions: { type: "array", items: {
       type: "object", additionalProperties: false, required: ["eventId", "candidateId", "reason", "messageIds"],
       properties: {
         eventId: { type: "string" }, candidateId: { type: "string" },
         reason: { type: "string", maxLength: MAX_QUESTION }, messageIds: citations,
       },
     } },
-    summaries: { type: "array", maxItems: MAX_EVENTS, items: {
+    summaries: { type: "array", items: {
       type: "object", additionalProperties: false, required: ["eventId", "text", "messageIds"],
       properties: { eventId: { type: "string" }, text: { type: "string", maxLength: MAX_SUMMARY }, messageIds: citations },
     } },

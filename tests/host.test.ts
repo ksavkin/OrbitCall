@@ -128,10 +128,21 @@ describe("Coordination Host output check", () => {
     ["a missing key", raw({ inputVersion: output.inputVersion, clarifications: [], summaries: [] })],
     ["a wrong type", raw({ ...output, clarifications: "none" })],
     ["too many clarifications", raw({ ...output, clarifications: Array(7).fill(output.clarifications[0]) })],
+    ["too many requested revisions", raw({ ...output, requestedRevisions: Array(7).fill(output.requestedRevisions[0]) })],
+    ["too many summaries", raw({ ...output, summaries: Array(25).fill(output.summaries[0]) })],
     ["an oversized summary", raw({ ...output, summaries: [{ ...output.summaries[0], text: "co-a is checking. ".repeat(100) }] })],
     ["an empty question", raw({ ...output, clarifications: [{ ...output.clarifications[0], question: "  " }] })],
   ])("rejects %s as INVALID_OUTPUT", (_, text) => {
     expect(codeOf(() => checkHostOutput(text, hostContext))).toBe("INVALID_OUTPUT");
+  });
+
+  it.each(["clarifications", "requestedRevisions", "summaries"] as const)("enforces citation bounds in %s independently of Gemini's schema", field => {
+    const context = { ...hostContext, messages: [...hostContext.messages, ...Array.from({ length: 10 }, (_, i) => ({
+      ...hostContext.messages[0], messageId: `msg-${i + 4}`,
+    }))] };
+    const cited = (count: number) => ({ ...output, [field]: [{ ...output[field][0], messageIds: context.messages.slice(0, count).map(m => m.messageId) }] });
+    expect(codeOf(() => checkHostOutput(raw(cited(12)), context))).toBe("NO_ERROR");
+    expect(codeOf(() => checkHostOutput(raw(cited(13)), context))).toBe("INVALID_OUTPUT");
   });
 
   it.each([
@@ -290,6 +301,8 @@ describe("Gemini transport", () => {
     expect(body.systemInstruction.parts).toEqual([{ text: "Instructions" }]);
     expect(body.contents).toEqual([{ role: "user", parts: [{ text: "Evidence" }] }]);
     expect(body.generationConfig).toMatchObject({ responseMimeType: "application/json", responseJsonSchema: hostResponseSchema });
+    // Nested finite array limits caused a real Gemini 400 before model execution.
+    expect(JSON.stringify(body.generationConfig.responseJsonSchema)).not.toContain('"maxItems"');
     expect(result).toEqual({ raw: raw(), model: "test-gemini", usage: { inputTokens: 812, outputTokens: 200 } });
   });
 
@@ -404,6 +417,10 @@ describe("Host understood extraction", () => {
     const chinese = { ...source, language: "zh" as const, text: "我们不能在星期三机动。" };
     expect(checkHostOutput(raw(result([{ ...item, text: chinese.text }])), { ...context, messages: [chinese] }).understood![0].text).toBe(chinese.text);
     expect(checkHostOutput(raw(), hostContext)).toEqual(output);
+  });
+  it("enforces the understood list limit independently of Gemini's schema", () => {
+    expect(checkHostOutput(raw(result(Array(6).fill(item))), context).understood).toHaveLength(6);
+    expect(codeOf(() => checkHostOutput(raw(result(Array(7).fill(item))), context))).toBe("INVALID_OUTPUT");
   });
   it.each([
     { ...item, kind: "preference" },
