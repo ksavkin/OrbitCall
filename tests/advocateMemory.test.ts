@@ -51,6 +51,23 @@ describe("memoryNote", () => {
     for (const limit of [0, -1, 1.5, Number.NaN]) expect(() => memoryNote(available(...entries), "company-a", limit)).toThrow(AnalystError);
   });
 
+  it("quotes a repeated memoryId once", () => {
+    const note = memoryNote(available(entry(), entry({ text: "Avoids burns during downlink passes." }), entry({ memoryId: "mem-2", createdAt: "2026-10-23T10:00:00Z" })), "company-a");
+    expect(note.quotes.map(q => q.memoryId)).toEqual(["mem-1", "mem-2"]);
+  });
+
+  it("drops entries whose createdAt is not a valid time", () => {
+    const note = memoryNote(available(entry({ memoryId: "mem-bad", createdAt: "yesterday" }), entry({ memoryId: "mem-empty", createdAt: "" }), entry()), "company-a");
+    expect(note.quotes.map(q => q.memoryId)).toEqual(["mem-1"]);
+  });
+
+  it("filters by company before applying the limit", () => {
+    const foreign = entry({ memoryId: "mem-b", companyId: "company-b", createdAt: "2026-10-25T10:00:00Z", sourceEventId: "event-b" });
+    const note = memoryNote(available(foreign, entry({ createdAt: "2026-10-20T10:00:00Z" })), "company-a", 1);
+    expect(note.status).toBe("used");
+    expect(note.quotes.map(q => q.memoryId)).toEqual(["mem-1"]);
+  });
+
   it("drops entries that belong to another company, from quotes, prompt and shareable text", () => {
     const foreign = entry({ memoryId: "mem-b", companyId: "company-b", text: "PRIVATE_B prefers waiting.", sourceEventId: "event-b" });
     const note = memoryNote(available(foreign, entry()), "company-a");
