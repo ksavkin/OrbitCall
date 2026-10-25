@@ -74,8 +74,20 @@ async function failure(promise: Promise<unknown>): Promise<{ code: string; messa
 beforeEach(() => { vi.stubEnv("TIGER_DATABASE_URL", URL_WITH_SECRET); vi.stubEnv("TIGER_DATABASE_CA", ""); });
 afterEach(() => { vi.unstubAllEnvs(); });
 
-// Not a real CA: a PEM-shaped placeholder is enough to check that the value is passed through verbatim.
-const CA_PEM = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUTESTtestTESTtestTESTtestTESTtest=\n-----END CERTIFICATE-----";
+// A throwaway self-signed test certificate (EC P-256, O=OrbitCall tests, CN=tiger-test-ca). It signs nothing real;
+// the adapter only has to parse it and hand it to pg verbatim.
+const CA_PEM = `-----BEGIN CERTIFICATE-----
+MIIBuDCCAV+gAwIBAgIUc+L/kziTIDeMTM5FBT+6QgjFmp4wCgYIKoZIzj0EAwIw
+MjEYMBYGA1UECgwPT3JiaXRDYWxsIHRlc3RzMRYwFAYDVQQDDA10aWdlci10ZXN0
+LWNhMB4XDTI2MTAyNTA1NTYwMloXDTM2MTAyMjA1NTYwMlowMjEYMBYGA1UECgwP
+T3JiaXRDYWxsIHRlc3RzMRYwFAYDVQQDDA10aWdlci10ZXN0LWNhMFkwEwYHKoZI
+zj0CAQYIKoZIzj0DAQcDQgAEOazY/Ryrn/QWDfNFMHjGCAamdRQH/lkcPi+0vga1
+3OQ9tHRTUc6Vc8IdEXHxyus+xxEaVRDzIFXj1MKFwNEfeKNTMFEwHQYDVR0OBBYE
+FKkh6+k3mbHVWqAuxkgoCPaW0/5NMB8GA1UdIwQYMBaAFKkh6+k3mbHVWqAuxkgo
+CPaW0/5NMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgaiMCz4Mz
+Iv8TXhO69tSuepZVScQKR8EpnBodjtfuIrgCIAUzhl4a03rxUo/P8osNOimC5Q4D
+4P4J84W+a9XgLpaT
+-----END CERTIFICATE-----`;
 
 describe("Tiger client configuration", () => {
   it("builds the exact pg.Client object from TIGER_DATABASE_URL, with TLS verification on and no connection string", () => {
@@ -108,13 +120,23 @@ describe("Tiger client configuration", () => {
     expect(tigerClientConfig("postgres://dev:dev@localhost/orbitcall?sslmode=disable", CA_PEM).ssl).toBe(false);
   });
 
-  it("ignores an empty CA and rejects one that is not a certificate", () => {
+  it("ignores an empty CA and rejects one that is not a parseable certificate, without echoing it", () => {
     expect(tigerClientConfig(URL_WITH_SECRET, "").ssl).toEqual({ rejectUnauthorized: true });
     expect(tigerClientConfig(URL_WITH_SECRET, "  \n").ssl).toEqual({ rejectUnauthorized: true });
-    for (const bad of ["not a certificate", Buffer.from("not a certificate").toString("base64"), "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"]) {
-      const error = (() => { try { tigerClientConfig(URL_WITH_SECRET, bad); return null; } catch (error) { return error; } })();
+    const wrapped = "-----BEGIN CERTIFICATE-----\nSECRETGARBAGE\n-----END CERTIFICATE-----";
+    const truncated = CA_PEM.replace(/\n[^\n]+\n-----END CERTIFICATE-----$/, "\n-----END CERTIFICATE-----");
+    const bad = [
+      "not a certificate", Buffer.from("not a certificate").toString("base64"),
+      "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+      wrapped, Buffer.from(wrapped).toString("base64"),
+      truncated, Buffer.from(truncated).toString("base64"),
+    ];
+    for (const value of bad) {
+      const error = (() => { try { tigerClientConfig(URL_WITH_SECRET, value); return null; } catch (error) { return error; } })();
       expect(safeTigerFailure(error).code).toBe("HISTORY_NOT_CONFIGURED");
       expect(safeTigerFailure(error).message).toContain("TIGER_DATABASE_CA");
+      expect(safeTigerFailure(error).message).not.toContain("SECRETGARBAGE");
+      expect(safeTigerFailure(error).message).not.toContain("MIIB");
     }
   });
 

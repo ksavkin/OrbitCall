@@ -1,5 +1,6 @@
 "use node";
 
+import { X509Certificate } from "node:crypto";
 import pg from "pg";
 import { AnalystError } from "./analyst";
 
@@ -96,6 +97,12 @@ function pinnedCa(value: string | undefined): string | undefined {
     }
   }
   if (!PEM_CERTIFICATE.test(pem)) throw notConfigured("TIGER_DATABASE_CA must be a PEM certificate or its base64.");
+  // PEM markers around garbage or a truncated certificate would only fail later, at the handshake, as a TLS error.
+  try {
+    new X509Certificate(pem);
+  } catch {
+    throw notConfigured("TIGER_DATABASE_CA is not a parseable X.509 certificate.");
+  }
   return pem;
 }
 
