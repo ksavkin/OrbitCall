@@ -7,7 +7,7 @@ import { CONVEX_ENABLED } from "@/lib/backend/provider";
 import { QueryBoundary, briefError } from "@/lib/backend/QueryBoundary";
 import { sfx } from "@/lib/sound";
 import { toggleDev } from "@/components/ui/Navbar";
-import { CallStage, type FlagOf } from "./CallStage";
+import { CallStage, type FlagOf, type StageMode } from "./CallStage";
 
 // Live mode: the real call. Rooms are not linked to cases in the backend yet (the call module keeps roomId as a
 // string until the team's rooms table exists), and until sign-in exists each person joins with a dev token from
@@ -76,8 +76,12 @@ export function LiveRoom({ target, onLeave, onOpen }: { target: LiveTarget | nul
 }
 
 function Call({ target }: { target: LiveTarget }) {
-  const call = useCoordinationCall({ roomId: target.roomId, devToken: target.devToken });
-  return <CallStage call={call} flagOf={flagOfLang} title={`Coordination room · ${target.roomId}`} subtitle="Live call · translated by the voice worker" />;
+  const [mode, setMode] = useState<StageMode>("voice");
+  // typing never talks: Space-to-talk is on only in Voice mode
+  const call = useCoordinationCall({ roomId: target.roomId, devToken: target.devToken, spaceToTalk: mode === "voice" });
+  return (
+    <CallStage call={call} mode={mode} onMode={setMode} flagOf={flagOfLang} title={`Coordination room · ${target.roomId}`} subtitle="Live call · translated by the voice worker" />
+  );
 }
 
 // Test identities carry a language, not a country. The demo's three dispatchers are US, Russia and China, so the
