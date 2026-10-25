@@ -46,6 +46,8 @@ Both modes live in both Git branches. `main` is a branch, not a runtime switch. 
 
 ## Implemented versus pending
 
+Andrew's Phase 1 stretch now supplies private company policy endpoints, trusted account/assignment provisioning and a bounded two-Advocate evaluation with sanitized shared outcomes. It has immutable candidate revisions and guards against policy/evidence changes during a run. See [Operator Advocate v1](operator-advocate-v1.md) for the implemented contracts. This is a backend integration seam: Auth0/browser login, full fleet APIs, room selection/approval, unilateral debris, frontend rendering and scheduling remain pending. The table below describes the original merged Phase 1 baseline.
+
 | Implemented Phase 1 | Accepted target still pending |
 |---|---|
 | Normalized snapshots, spaceObjects, events and agentRuns | Users, fleet assignments and assignment-authorized subscriptions |

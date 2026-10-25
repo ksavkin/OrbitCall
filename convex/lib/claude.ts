@@ -18,7 +18,7 @@ export async function callClaude(prompt: { system: string; user: string }) {
     messages: [{ role: "user", content: prompt.user }],
   });
   if (result.stop_reason !== "end_turn") {
-    throw new AnalystError("INVALID_OUTPUT", "The model did not finish a complete summary.");
+    throw new AnalystError("INVALID_OUTPUT", "The model did not finish a complete response.");
   }
   const text = result.content.filter(block => block.type === "text").map(block => block.text).join("");
   return { raw: text, model: result.model, usage: {
@@ -35,5 +35,5 @@ export function safeFailure(error: unknown): { code: string; message: string } {
     code: "MODEL_ACCESS_DENIED", message: "The configured API account cannot access the model.",
   };
   // Never persist raw provider errors, request bodies, headers, or credentials.
-  return { code: "UPSTREAM_UNAVAILABLE", message: "The Analyst could not complete this attempt. Check backend connectivity and retry." };
+  return { code: "UPSTREAM_UNAVAILABLE", message: "The agent could not complete this attempt. Check backend connectivity and retry." };
 }
