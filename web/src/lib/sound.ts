@@ -141,6 +141,11 @@ export const sfx = {
       tone(740, 0.16, { gain: 0.12, type: "square", delay: 2.8 + i * 0.42 + 0.15 });
     }
   },
+  /** Calm attention cue: two soft rising notes, for results that need a look. */
+  notice() {
+    tone(659.25, 0.32, { gain: 0.09 });
+    tone(987.77, 0.42, { gain: 0.08, delay: 0.16 });
+  },
   /** Incident closed: a rising major chord. */
   resolved() {
     [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 0.9 - i * 0.12, { gain: 0.1, delay: i * 0.11 }));
