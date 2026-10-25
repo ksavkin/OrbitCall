@@ -15,7 +15,7 @@ Convex deploy separately (§13 Steps 5–6).
 | Service | Image | Network | Persistent state | Health check |
 |---|---|---|---|---|
 | `orbit` | `ghcr.io/ksavkin/orbitcall-orbit:$RELEASE_TAG`, built from `services/orbit/` | Port 3610 on the Compose network only, reached through Caddy. One Uvicorn worker: the catalog lives in memory | `orbit_data` at `/service/data` (writable): pinned snapshots, TLE groups, replay and cached validation in; `jobs/`, `sim/` and `validation/` written at runtime | `GET http://127.0.0.1:3610/health` inside the container, with Python's `urllib` |
-| `voice` | `ghcr.io/ksavkin/orbitcall-voice:$RELEASE_TAG`, built from `services/voice/` | Outbound only, to LiveKit Cloud, xAI, Anthropic, Cartesia and Convex. No published port, no Caddy route | None. Phrase buffers are short-lived; final phrases go to Convex | None yet; add one when `services/voice/` lands (see assumptions) |
+| `voice` | `ghcr.io/ksavkin/orbitcall-voice:$RELEASE_TAG`, built from `services/voice/` | Outbound only, to LiveKit Cloud, xAI, Anthropic, Cartesia and Convex. No published port, no Caddy route | None. Phrase buffers are short-lived; final phrases go to Convex | `GET http://127.0.0.1:8090/health` inside the container, with Python's `urllib`. 200 only when xAI, Anthropic, every configured TTS voice, the Convex settings and the LiveKit registration are ready; 503 while not ready or for 60 s after a runtime failure |
 | `caddy` | `caddy:2.11.7` | Publishes 80 and 443 (TCP, plus UDP for HTTP/3) | `caddy_data` (certificates), `caddy_config` | None; check through the routes below |
 
 All three restart `unless-stopped` and log as JSON files rotated at 10 MB × 5. Compose uses the fixed project name
@@ -70,14 +70,14 @@ receives just the names listed for it, so the voice worker never sees the orbit 
 | `XAI_API_KEY` | `voice` | Yes | xAI key (STT and Russian TTS) |
 | `ANTHROPIC_API_KEY` | `voice` | Yes | Anthropic key (translation) |
 | `CARTESIA_API_KEY` | `voice` | Yes | Cartesia key (English and Mandarin TTS) |
-| `XAI_STT_MODEL` | `voice` | No | Locked: `grok-voice-transcribe-2.0` |
-| `TRANSLATION_MODEL` | `voice` | No | Locked: `claude-sonnet-5-5` |
-| `CARTESIA_MODEL_ID` | `voice` | No | Locked: `sonic-3.6-2026-08-27` |
-| `CARTESIA_VOICE_ID_EN` | `voice` | No | Tested English voice ID, recorded in the demo manifest |
-| `CARTESIA_VOICE_ID_ZH` | `voice` | No | Tested Mandarin voice ID, recorded in the demo manifest |
-| `XAI_TTS_VOICE_ID` | `voice` | No | Tested Russian voice ID, recorded in the demo manifest |
+| `XAI_STT_MODEL` | `voice` | No | Locked: `grok-voice-transcribe-2.0` (the Compose default) |
+| `TRANSLATION_MODEL` | `voice` | No | Locked: `claude-sonnet-5-5` (the Compose default) |
+| `CARTESIA_MODEL_ID` | `voice` | No | Locked: `sonic-3.6-2026-08-27` (the Compose default) |
+| `CARTESIA_VOICE_EN` | `voice` | No | Tested English voice ID, recorded in the demo manifest. Missing: English is text-only |
+| `CARTESIA_VOICE_ZH` | `voice` | No | Tested Mandarin voice ID, recorded in the demo manifest. Missing: Mandarin is text-only |
+| `XAI_TTS_VOICE_ID` | `voice` | No | Tested Russian voice ID, recorded in the demo manifest. Missing: Russian is text-only |
 | `CONVEX_SITE_URL` | `voice` | No | The shared Convex deployment's `.convex.site` URL (HTTP actions) |
-| `VOICE_CALLBACK_TOKEN` | `voice` | Yes | Narrowly scoped credential the worker presents to Convex HTTP actions; Convex holds the same value |
+| `CALL_SERVICE_TOKEN` | `voice` | Yes | Sent as `x-call-service-token` to Convex `POST /call/phrase`; Convex's `CALL_SERVICE_TOKEN` holds the same value |
 
 The orbit image already sets `ORBIT_DATA=/service/data` and `ORBIT_CATALOG_MODE=omm`; the volume is mounted there.
 Its other settings keep their defaults (`ORBIT_SCREEN_DEADLINE_S` 480, `ORBIT_JOB_WORKERS` 2); add them to the
@@ -125,7 +125,9 @@ If the release images are not in the registry, build them on the host with the s
 
 ## Verify
 
-- `docker compose ... ps` shows `orbit` as `healthy` and `voice` and `caddy` as running.
+- `docker compose ... ps` shows `orbit` and `voice` as `healthy` and `caddy` as running. `voice` turns healthy only
+  once every provider it uses and its LiveKit registration answer. If it stays unhealthy, `docker compose ... logs
+  voice` shows which check fails.
 - `curl -fsS https://$ORBITCALL_API_HOST/orbit/health` returns readiness and `gp-20261024T2134Z` (or the configured
   `ORBIT_SNAPSHOT_ID`).
 - `curl -s -o /dev/null -w '%{http_code}' https://$ORBITCALL_API_HOST/orbit/snapshot` without the token is rejected
@@ -139,22 +141,21 @@ through Convex and join one LiveKit room with speech in each language before cal
 ## Assumed names, confirm with the service code
 
 These were chosen here because the roadmap does not name them. Rename them in this folder if the services use
-different ones. The orbit variables (`ORBIT_SERVICE_TOKEN`, `ORBIT_SNAPSHOT_ID`) are the service's own, from
-`services/orbit/README.md`.
+different ones. The service variables are the services' own: orbit's from `services/orbit/README.md`, voice's from
+`services/voice/README.md`.
 
-- `VOICE_CALLBACK_TOKEN`: the voice worker's Convex callback credential.
-- `CARTESIA_VOICE_ID_EN`, `CARTESIA_VOICE_ID_ZH`: the per-language Cartesia voice IDs.
 - `ORBITCALL_API_HOST`: Caddy's site address.
 - `RELEASE_TAG` and the image names `ghcr.io/ksavkin/orbitcall-orbit` and `ghcr.io/ksavkin/orbitcall-voice`. No CI job
   publishes them yet.
 
 Other assumptions about the services:
 
-- The voice service has a `Dockerfile` at its directory root. The orbit service's (`python:3.12-slim`, Uvicorn on
-  3610, one worker) is confirmed: its `/health` needs no token and returns the loaded `snapshotId` and object count,
-  and every other route checks `X-Service-Token`.
-- The voice worker exposes no HTTP route, so it has no health check yet. A process check would always pass while the
-  container runs. If it is built on LiveKit Agents, add a check against its worker health server (port 8081 by default).
+- Both services are confirmed against their code. Orbit (`python:3.12-slim`, Uvicorn on 3610, one worker): `/health`
+  needs no token and returns the loaded `snapshotId` and object count, and every other route checks
+  `X-Service-Token`. Voice (`python:3.12-slim`, user `worker`, LiveKit Agents): its health server listens on
+  `HEALTH_PORT` 8090 inside the container only, and its other settings (`LIVEKIT_AGENT_NAME`, `STT_ENDPOINTING_MS`,
+  `STT_KEYTERMS`, `MAX_ROOMS`, `WORKER_PORT`, `LOG_LEVEL`) keep their defaults; add them to the Compose file only to
+  change them.
 - The orbit service has no backend callback credential; roadmap §13 Step 4 adds one only if that path is implemented.
 
 ## Out of scope
