@@ -1,4 +1,4 @@
-import { internalAction, internalMutation, internalQuery, query, mutation, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, query, mutation, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { makeFunctionReference as ref } from "convex/server";
@@ -342,55 +342,102 @@ const isStale = (error: unknown) => error instanceof ConvexError && error.data?.
 export const publishFromOrbit = internalAction({
   args: { eventId: v.id("events") },
   handler: async (ctx, { eventId }): Promise<PublishOutcome> => {
-    if (!orbitConfigured()) return { status: "skipped", reason: "ORBIT_NOT_CONFIGURED" };
-    const nowMs = Date.now();
-    try {
-      const loaded = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs });
-      if ("skipped" in loaded) return { status: "skipped", reason: loaded.skipped };
-      const { input } = loaded;
-      const response = await getCandidates({
-        snapshotId: input.snapshotId, evidenceVersion: input.evidenceVersion,
-        objectA: input.facts.objectA.objectId, objectB: input.facts.objectB.objectId,
-        tcaUtc: wholeSecondUtc(Date.parse(input.facts.tcaUtc)), allowedMovingObjectIds: input.allowedMovingObjectIds,
-        notBeforeUtc: wholeSecondUtc(nowMs, Math.ceil),
-      });
-      if (!geometryMatches(response, input.facts)) {
-        return { status: "failed", code: "GEOMETRY_MISMATCH", message: "The orbit service computed a different encounter than the stored event." };
-      }
-      const publish = async (current: PublishInput): Promise<PublishOutcome> => {
-        const candidates = cardsFor(response, current, eventId, Date.now());
-        const { version, changed } = await ctx.runMutation(internal.candidates.publish, {
-          eventId, baseVersion: current.baseVersion, candidates,
-          expectedEvidenceKey: input.evidenceKey, expectedSnapshotId: input.eventSnapshotId, expectedOmmSnapshotId: input.snapshotId,
-          expectedDemoRunId: input.demoRunId,
-        });
-        if (changed) {
-          // Candidate publication has committed. A failed follow-up dispatch must not report those committed
-          // cards as missing or roll them back; the retryable internal hook records its own deduplication key.
-          try { await ctx.runMutation(internal.advocates.publicationFollowups, { eventId, version, evidenceKey: input.evidenceKey }); }
-          catch {
-            try { await ctx.runMutation(internal.advocates.publicationFollowupFailed, { eventId, version, demoRunId: input.demoRunId }); }
-            catch { console.warn("Candidate options committed; follow-up dispatch and its diagnostic write were unavailable."); }
-          }
-        }
-        return { status: "published", version, changed, cards: candidates.length, sharedMoverEventIds: sharedMoverEventIds(candidates, current.sharedMovers) };
-      };
-      try {
-        return await publish(input);
-      } catch (error) {
-        if (!isStale(error)) throw error;
-        // One retry, only when a concurrent publication already wrote these same cards on the same evidence.
-        const fresh = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs: Date.now() });
-        if ("skipped" in fresh || fresh.input.evidenceKey !== input.evidenceKey || fresh.input.eventSnapshotId !== input.eventSnapshotId ||
-          fresh.input.snapshotId !== input.snapshotId || fresh.input.demoRunId !== input.demoRunId ||
-          !sameCards(cardsFor(response, fresh.input, eventId, Date.now()), fresh.input.currentCards)) throw error;
-        return await publish(fresh.input);
-      }
-    } catch (error) {
-      return publishFailure(error);
-    }
+    const outcome = await publishOnce(ctx, eventId);
+    await reportStall(ctx, eventId, outcome);
+    return outcome;
   },
 });
+
+// The workflow schedules the publication and nobody reads what it returns, so a skip or failure that leaves the case
+// without options used to leave it "working" forever. Those outcomes are written to the case log and said in its open
+// rooms, once per reason and evidence. Skips that only mean the case moved on stay quiet.
+const QUIET_SKIPS: SkipReason[] = ["NOT_FOUND", "EVENT_INACTIVE", "SET_NOT_OPEN", "DEMO_RUN_CLOSED"];
+const SKIP_TEXT: Partial<Record<SkipReason, string>> = {
+  ORBIT_NOT_CONFIGURED: "The orbit service is not configured on this deployment, so maneuver options cannot be computed.",
+  WORKFLOW_UNSUPPORTED: "Maneuver options are computed only when both satellites have a registered operator company, or for debris with one operator.",
+  OMM_SNAPSHOT_UNKNOWN: "The case's catalog snapshot is not one the orbit service can load.",
+};
+const stalledRef = ref<"mutation", { eventId: Id<"events">; code: string; message: string }, null>("advocates:publicationStalled");
+
+async function reportStall(ctx: ActionCtx, eventId: Id<"events">, outcome: PublishOutcome) {
+  if (outcome.status === "published" || (outcome.status === "skipped" && QUIET_SKIPS.includes(outcome.reason))) return;
+  const code = outcome.status === "skipped" ? outcome.reason : outcome.code;
+  const message = outcome.status === "skipped" ? (SKIP_TEXT[outcome.reason] ?? "The orbit step was skipped.") : outcome.message;
+  try { await ctx.runMutation(stalledRef, { eventId, code, message }); }
+  catch { console.warn("Candidate publication stalled and its diagnostic write was unavailable:", code); }
+}
+
+export const publicationStalled = internalMutation({
+  args: { eventId: v.id("events"), code: v.string(), message: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { eventId, code, message }) => {
+    const event = await ctx.db.get(eventId);
+    if (!event) return null;
+    let evidenceKey = "";
+    try { evidenceKey = inputKey(await loadFacts(ctx, event)); } catch { /* facts that cannot load still get the notice */ }
+    const said = (await followupHistory(ctx, eventId)).some(row =>
+      row.after?.kind === "candidate_publication" && row.after.code === code && row.after.evidenceKey === evidenceKey);
+    if (said) return null;
+    const text = `No maneuver options for this case yet (${code}). ${message}`;
+    await negotiationLog(ctx, event, text, { kind: "candidate_publication", state: "stalled", code, evidenceKey });
+    for (const room of await currentRooms(ctx, event)) await ctx.db.insert("messages", {
+      roomId: room._id, eventId: event._id, author: { kind: "agent", role: "operator_advocate", companyId: null }, kind: "negotiation",
+      originalText: text, originalLang: "en", translations: {}, translationStatus: {}, values: [], refs: { eventId: event._id }, form: null,
+      demoRunId: event.demoRunId ?? null, simulated: event.simulated, createdAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+async function publishOnce(ctx: ActionCtx, eventId: Id<"events">): Promise<PublishOutcome> {
+  if (!orbitConfigured()) return { status: "skipped", reason: "ORBIT_NOT_CONFIGURED" };
+  const nowMs = Date.now();
+  try {
+    const loaded = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs });
+    if ("skipped" in loaded) return { status: "skipped", reason: loaded.skipped };
+    const { input } = loaded;
+    const response = await getCandidates({
+      snapshotId: input.snapshotId, evidenceVersion: input.evidenceVersion,
+      objectA: input.facts.objectA.objectId, objectB: input.facts.objectB.objectId,
+      tcaUtc: wholeSecondUtc(Date.parse(input.facts.tcaUtc)), allowedMovingObjectIds: input.allowedMovingObjectIds,
+      notBeforeUtc: wholeSecondUtc(nowMs, Math.ceil),
+    });
+    if (!geometryMatches(response, input.facts)) {
+      return { status: "failed", code: "GEOMETRY_MISMATCH", message: "The orbit service computed a different encounter than the stored event." };
+    }
+    const publish = async (current: PublishInput): Promise<PublishOutcome> => {
+      const candidates = cardsFor(response, current, eventId, Date.now());
+      const { version, changed } = await ctx.runMutation(internal.candidates.publish, {
+        eventId, baseVersion: current.baseVersion, candidates,
+        expectedEvidenceKey: input.evidenceKey, expectedSnapshotId: input.eventSnapshotId, expectedOmmSnapshotId: input.snapshotId,
+        expectedDemoRunId: input.demoRunId,
+      });
+      if (changed) {
+        // Candidate publication has committed. A failed follow-up dispatch must not report those committed
+        // cards as missing or roll them back; the retryable internal hook records its own deduplication key.
+        try { await ctx.runMutation(internal.advocates.publicationFollowups, { eventId, version, evidenceKey: input.evidenceKey }); }
+        catch {
+          try { await ctx.runMutation(internal.advocates.publicationFollowupFailed, { eventId, version, demoRunId: input.demoRunId }); }
+          catch { console.warn("Candidate options committed; follow-up dispatch and its diagnostic write were unavailable."); }
+        }
+      }
+      return { status: "published", version, changed, cards: candidates.length, sharedMoverEventIds: sharedMoverEventIds(candidates, current.sharedMovers) };
+    };
+    try {
+      return await publish(input);
+    } catch (error) {
+      if (!isStale(error)) throw error;
+      // One retry, only when a concurrent publication already wrote these same cards on the same evidence.
+      const fresh = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs: Date.now() });
+      if ("skipped" in fresh || fresh.input.evidenceKey !== input.evidenceKey || fresh.input.eventSnapshotId !== input.eventSnapshotId ||
+        fresh.input.snapshotId !== input.snapshotId || fresh.input.demoRunId !== input.demoRunId ||
+        !sameCards(cardsFor(response, fresh.input, eventId, Date.now()), fresh.input.currentCards)) throw error;
+      return await publish(fresh.input);
+    }
+  } catch (error) {
+    return publishFailure(error);
+  }
+}
 
 export const list = query({
   args: { eventId: v.id("events") },
