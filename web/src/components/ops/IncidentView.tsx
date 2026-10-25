@@ -296,44 +296,59 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
   const st = room.state;
   return (
     <div className="flex min-h-0 flex-col border-r border-white/[0.06]">
-      {/* the room's state sits on top when it needs the dispatcher; the calls fill the rest */}
-      <AnimatePresence initial={false}>
-        {st && (
-          <motion.div
-            key={st.mode + (e.proposal?.version ?? 0)}
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-            className={`shrink-0 overflow-hidden ${st.mode === "decide" ? "thin-scroll max-h-[70%] overflow-y-auto" : ""}`}
-          >
-            <div className="px-5 pt-4">
-              {st.mode === "decide" ? (
+      {/* a fixed slot for the room's state, so changes crossfade in place instead of moving the calls */}
+      <div className={`shrink-0 px-5 pt-4 ${st?.mode === "decide" ? "thin-scroll max-h-[70%] overflow-y-auto" : ""}`}>
+        <div className="relative min-h-[76px]">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={st ? st.mode + (e.proposal?.version ?? 0) : "working"}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.22 }}
+            >
+              {st?.mode === "decide" ? (
                 <div className="overflow-hidden rounded-[16px] bg-white/[0.02] shadow-[0_0_0_1px_rgba(255,159,64,0.35),0_0_40px_-12px_rgba(255,159,64,0.4)]">
                   <Decide e={e} viewer={room.viewer} now={now} embedded />
                 </div>
-              ) : st.mode === "waiting" ? (
+              ) : st?.mode === "waiting" ? (
                 <Card>
                   <Waiting e={e} other={room.other} mine={st.mine!} now={now} />
                 </Card>
-              ) : st.mode === "reply" ? (
+              ) : st?.mode === "reply" ? (
                 <Card>
                   <TheirReply e={e} r={st.theirs!} />
                 </Card>
-              ) : (
+              ) : st?.mode === "done" ? (
                 <Card>
                   <Done e={e} />
                 </Card>
+              ) : (
+                <WorkingLine e={e} />
               )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </div>
       <div className="flex shrink-0 items-baseline justify-between px-5 pb-2 pt-4">
         <span className="text-[12px] font-semibold text-neutral-200">Agent calls</span>
         <span className="text-[11px] text-neutral-600">newest first · this case only</span>
       </div>
       <CallFeed className="flex-1 [&_.px-3]:px-5" eventId={e.id} />
+    </div>
+  );
+}
+
+/** What the agents are on while nobody needs to answer. */
+function WorkingLine({ e }: { e: ConjunctionEvent }) {
+  const step = STEPS[Math.min(stepOf(e), STEPS.length - 1)];
+  return (
+    <div className="flex h-[76px] items-center gap-3 rounded-[14px] bg-white/[0.025] px-4">
+      {e.agentsWorking ? <Loader2 size={16} className="animate-spin text-blue" /> : <Check size={16} className="text-green" />}
+      <div>
+        <div className="text-[14px] font-semibold text-white">{e.agentsWorking ? "Agents are working" : "Waiting for the next step"}</div>
+        <div className="text-[12.5px] text-neutral-500">{step} · you will be asked when a decision is needed</div>
+      </div>
     </div>
   );
 }
