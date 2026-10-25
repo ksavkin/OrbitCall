@@ -84,8 +84,8 @@ export const recordTables = {
     eventId: v.id("events"), seriesVersion: v.number(),
     points: v.array(v.object({
       atUtc: v.string(), pc: v.union(v.number(), v.null()), missKm: v.union(v.number(), v.null()),
-      source: v.string(), simulated: v.boolean(),
+      source: v.string(), simulated: v.boolean(), evidenceVersion: v.optional(v.string()),
     })),
-    stale: v.boolean(), error: v.union(v.string(), v.null()), fetchedAt: v.number(),
+    stale: v.boolean(), error: v.union(v.string(), v.null()), fetchedAt: v.number(), truncated: v.optional(v.boolean()),
   }).index("by_event", ["eventId"]),
 };
