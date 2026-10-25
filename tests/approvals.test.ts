@@ -180,6 +180,15 @@ describe("approval resets", () => {
       approvals: { A: { status: "pending" } }, lastReset: { reason: "evidence_changed" } });
   });
 
+  it("resets the approvals of an inactive but undecided incident, so a reactivated one starts over", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    await t.run(ctx => ctx.db.patch(eventId, { active: false }));
+    await as(t, "a").mutation(api.policies.update, { satellites: [{ ...policyA, minFuelReserveKg: 7.5 }] });
+    await t.run(ctx => ctx.db.patch(eventId, { active: true }));
+    expect(await read(t, "b", eventId)).toMatchObject({ turn: "A", approvals: { A: { status: "pending" } }, lastReset: { reason: "policy_changed" } });
+  });
+
   it("flags an agreed plan for review instead of undoing it on a policy edit or revocation", async () => {
     const { t, eventId } = await selected();
     await as(t, "a").mutation(fn.approve, await tick(t, eventId));
