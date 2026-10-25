@@ -10,6 +10,8 @@ import { sfx } from "@/lib/sound";
 import { AGENTS, MODELS } from "@/lib/ops/roster";
 import { useOps } from "@/lib/ops/store";
 import type { AgentId, ConjunctionEvent, Reply, Span } from "@/lib/ops/types";
+import { useRealMode } from "@/lib/backend/live";
+import { LiveMeeting } from "@/components/roomChat/LiveMeeting";
 import { Message } from "@/components/roomChat/RoomTimeline";
 import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 import { NodeGlyph } from "./Glyphs";
@@ -80,6 +82,8 @@ export function Meeting({ e, now, room, onRun }: { e: ConjunctionEvent; now: num
   const humans = useOps((s) => s.humans);
   const messages = live?.messages;
   const items = useMemo(() => itemsOf(e, spans, replies, messages ?? []), [e, spans, replies, messages]);
+  // real mode reads the backend room instead of the simulator's record (wiring map §3); see the return below
+  const real = useRealMode();
   const st = room.state;
   const deciding = humans.filter((h) => h.eventId === e.id).map((h) => h.side);
   const open = (e.status === "proposal" || e.status === "communication") && !!e.options?.length;
@@ -111,7 +115,10 @@ export function Meeting({ e, now, room, onRun }: { e: ConjunctionEvent; now: num
       el.removeEventListener("scroll", onScroll);
       ro.disconnect();
     };
-  }, []);
+    // the box exists only in the simulator's view: attach again when the Dev switch brings it back
+  }, [real]);
+
+  if (real) return <LiveMeeting eventId={e.id} />;
 
   const due = open && st?.mode === "decide";
 
