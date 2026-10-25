@@ -146,6 +146,30 @@ describe("messages", () => {
     expect(await counts()).toEqual({ ...before, messages: before.messages + 1 });
   });
 
+  it("lets everyone discuss until a decision opens, then only the side in turn", async () => {
+    const { t, roomId, crossId } = await seed();
+    const ids = await t.run(async ctx => {
+      const users = await ctx.db.query("users").collect();
+      const companies = await ctx.db.query("companies").collect();
+      const u = (n: string) => users.find(x => x.tokenIdentifier === token(n))!;
+      return { ana: u("ana"), north: companies.find(c => c.key === "north")!._id };
+    });
+    await t.run(ctx => ctx.db.patch(crossId, { workflow: "bilateral", requiredApprovalSides: ["A", "B"], approvalRuleVersion: 1 }));
+    await as(t, "bo").mutation(send, { roomId, text: "before" });
+    const proposalId = await proposalFor(t, crossId);
+    await t.run(ctx => ctx.db.insert("selections", { eventId: crossId, proposalId, revision: 1, generation: 1, by: { kind: "agents" }, at: FIXTURE_NOW, lastReset: null }));
+    expect(await code(as(t, "bo").mutation(send, { roomId, text: "my view" }))).toBe("INVALID_STATE");
+    await as(t, "ana").mutation(send, { roomId, text: "A decides" });
+    await t.run(ctx => ctx.db.insert("approvals", {
+      eventId: crossId, side: "A", status: "approved", userId: ids.ana._id, companyId: ids.north, proposalId, revision: 1,
+      selectionGeneration: 1, approvalRuleVersion: 1, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null,
+      demoRunId: null, current: true, at: FIXTURE_NOW,
+    }));
+    expect(await code(as(t, "ana").mutation(send, { roomId, text: "more" }))).toBe("INVALID_STATE");
+    await as(t, "bo").mutation(send, { roomId, text: "B decides" });
+    expect(await texts(t, { roomId })).toEqual(["before", "A decides", "B decides"]);
+  });
+
   it("refuses new lines in a closed room and keeps its history readable", async () => {
     const { t, roomId, crossId } = await seed();
     await as(t, "ana").mutation(send, { roomId, text: "agreed" });

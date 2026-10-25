@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
-import { requireActiveMember, requireMember } from "./rooms";
+import { requireActiveMember, requireMember, roomTurns } from "./rooms";
 import { lang, languageStatus, protectedValue } from "./schema/call";
 import { messageAuthor, messageKind, summaryForm } from "./schema/rooms";
 
@@ -49,7 +49,13 @@ export const send = mutation({
   },
   returns: v.object({ messageId: v.id("messages") }),
   handler: async (ctx, { roomId, eventId, text, refs }) => {
-    const { scope: { user, company }, room, pairs } = await requireActiveMember(ctx, roomId);
+    const { scope, room, pairs } = await requireActiveMember(ctx, roomId);
+    const { user, company } = scope;
+    // Decision turns: everyone discusses before a decision opens; while one is open, only the side in turn writes.
+    const deciding = (await roomTurns(ctx, scope, pairs, true)).filter(e => e.deciding);
+    if (deciding.length && !deciding.some(e => e.myTurn)) {
+      throw new ConvexError({ code: "INVALID_STATE", message: `Side ${deciding[0].turn} is deciding; wait for your turn.` });
+    }
     const original = text.trim();
     if (!original || original.length > MAX_TEXT) throw new ConvexError({ code: "VALIDATION", message: "A message must be 1 to 2000 characters." });
     // A line is filed only under an incident of this room; the room is the privacy boundary (ROOM-15).
