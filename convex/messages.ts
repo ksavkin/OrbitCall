@@ -5,6 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMember, requireMember, roomTurns } from "./rooms";
 import { lang, languageStatus, protectedValue } from "./schema/call";
 import { messageAuthor, messageKind, summaryForm } from "./schema/rooms";
+import { LINE_LANGS, translationConfigured } from "./lib/lineTranslation";
 
 // Room text lines (spec §3.4 messages.send / messages.list, ROOM-6, LANG-7) on the round 1.5 `messages` table. send
 // stores the original at once and arms a trailing debounce (roadmap §6: a final human message triggers the host).
@@ -17,6 +18,9 @@ export const MAX_TEXT = 2000;
 export const HOST_DEBOUNCE_MS = 5000;
 export const DEFAULT_LIMIT = 100;
 export const MAX_LIMIT = 200;
+// A typed line's translation that has not landed by then reads the original: a stuck or crashed translation action
+// never leaves a viewer on "pending" (send schedules the expiry; toMessage also checks the age).
+export const TRANSLATION_DEADLINE_MS = 30_000;
 
 type Lang = Doc<"messages">["originalLang"];
 
@@ -36,7 +40,8 @@ export const messageView = v.object({
  */
 export function toMessage(row: Doc<"messages">, viewerLang: Lang) {
   const own = viewerLang === row.originalLang;
-  const status = own ? "ok" as const : row.translationStatus[viewerLang] ?? "original_only" as const;
+  const stored = own ? "ok" as const : row.translationStatus[viewerLang] ?? "original_only" as const;
+  const status = stored === "pending" && Date.now() - row.createdAt > TRANSLATION_DEADLINE_MS ? "original_only" as const : stored;
   return {
     messageId: row._id, roomId: row.roomId, eventId: row.eventId, at: new Date(row.createdAt).toISOString(),
     author: row.author, kind: row.kind,
@@ -72,12 +77,16 @@ export const send = mutation({
       const proposal = await ctx.db.get(refs.proposalId);
       if (!proposal || !linked.has(proposal.eventId)) throw new ConvexError({ code: "VALIDATION", message: "That proposal is not part of this room." });
     }
+    const originalLang = user.language ?? company.language ?? "en";
+    // The other languages read "pending" until messageTranslation.translate stores them; without a Claude key the
+    // line is not queued and every other language reads the original (toMessage's "original_only").
+    const targets = translationConfigured() ? LINE_LANGS.filter(l => l !== originalLang) : [];
     const messageId = await ctx.db.insert("messages", {
       roomId: room._id, eventId: eventId ?? null,
       // The provisioned name, else the company's; the stored author needs a display name (schema/rooms.ts).
       author: { kind: "human", userId: user._id, companyId: company._id, name: user.name ?? company.name },
-      kind: "text", originalText: original, originalLang: user.language ?? company.language ?? "en",
-      translations: {}, translationStatus: {}, values: [],
+      kind: "text", originalText: original, originalLang,
+      translations: {}, translationStatus: Object.fromEntries(targets.map(l => [l, "pending" as const])), values: [],
       refs: { ...(eventId === undefined ? {} : { eventId }), ...(refs ?? {}) }, form: null,
       demoRunId: room.demoRunId, simulated: room.simulated || company.simulated, createdAt: Date.now(),
     });
@@ -85,7 +94,37 @@ export const send = mutation({
     // human text in the room. request then reads the input version itself, dedupes by room, input version and
     // trigger, and returns null for a closed room or a reset demo run (hostTriggers.ts).
     await ctx.scheduler.runAfter(HOST_DEBOUNCE_MS, internal.messages.hostDebounce, { roomId: room._id, messageId });
+    if (targets.length) {
+      await ctx.scheduler.runAfter(0, internal.messageTranslation.translate, { messageId, text: original, from: originalLang, to: targets });
+      await ctx.scheduler.runAfter(TRANSLATION_DEADLINE_MS, internal.messages.storeTranslations, {
+        messageId, results: targets.map(l => ({ lang: l, text: null })),
+      });
+    }
     return { messageId };
+  },
+});
+
+/**
+ * Stores what messageTranslation.translate produced: a checked text reads "ok", a null text reads the original
+ * ("original_only"). Only languages still pending change; a deleted line (demo reset) is ignored.
+ */
+export const storeTranslations = internalMutation({
+  args: { messageId: v.id("messages"), results: v.array(v.object({ lang, text: v.union(v.string(), v.null()) })) },
+  returns: v.null(),
+  handler: async (ctx, { messageId, results }) => {
+    const row = await ctx.db.get(messageId);
+    if (!row) return null;
+    const translations = { ...row.translations };
+    const translationStatus = { ...row.translationStatus };
+    let changed = false;
+    for (const r of results) {
+      if (translationStatus[r.lang] !== "pending") continue;
+      if (r.text !== null) translations[r.lang] = r.text;
+      translationStatus[r.lang] = r.text !== null ? "ok" : "original_only";
+      changed = true;
+    }
+    if (changed) await ctx.db.patch(messageId, { translations, translationStatus });
+    return null;
   },
 });
 
