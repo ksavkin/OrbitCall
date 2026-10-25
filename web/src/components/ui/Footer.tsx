@@ -68,7 +68,7 @@ export function Footer() {
 
       {/* center: simulation clock */}
       <div className="flex items-center gap-1">
-        <Tooltip label={paused ? "Resume" : "Pause"} hint="Space" side="top">
+        <Tooltip label={paused ? "Resume" : "Pause"} side="top">
           <button
             className="icon-btn h-[24px] w-[26px] rounded-[7px]"
             onClick={() => {

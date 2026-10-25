@@ -209,10 +209,6 @@ function useShortcuts() {
       } else if (k === "e" && useOps.getState().incident) {
         const ops = useOps.getState();
         setIncidentView(ops.tab === "decision" ? "collapsed" : "expanded");
-      } else if (k === " ") {
-        e.preventDefault();
-        sfx.toggle(s.paused);
-        s.set({ paused: !s.paused });
       } else if (k === "f" && s.selected !== null) {
         sfx.whoosh();
         s.set({ following: !s.following });
