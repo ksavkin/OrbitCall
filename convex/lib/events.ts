@@ -14,7 +14,7 @@ export const TCA_MATCH_MS = 60_000;
 export const isSimulatedId = (objectId: string) => objectId.startsWith("SIM-");
 export const isoUtc = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
 
-function spaceObject({ objectId, name, country, launchDate }: ObjectInput): EventFacts["objectA"] {
+export function toSpaceObject({ objectId, name, country, launchDate }: ObjectInput): EventFacts["objectA"] {
   const simulated = isSimulatedId(objectId);
   return {
     objectId, name, ownerName: null, ownerCompanyId: null, country, purpose: null, launchDate, simulated,
@@ -28,7 +28,7 @@ export function buildFacts(m: Measurements, a: ObjectInput, b: ObjectInput, sour
   const source = m.simulated ? "simulated" as const : "socrates" as const;
   const evidence = sources.find(s => s.name === source);
   return {
-    objectA: spaceObject(a), objectB: spaceObject(b),
+    objectA: toSpaceObject(a), objectB: toSpaceObject(b),
     tcaUtc: isoUtc(m.tcaMs), missKm: m.missKm, relSpeedKmS: m.relSpeedKmS,
     pc: {
       value: m.pcValue, metric: m.simulated ? "pc" : "max_prob", source,
