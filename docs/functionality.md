@@ -316,7 +316,7 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 - **LANG-3** Delivers each phrase to the listener as voice and text in their language; the speaker sees their original in the transcript.
 - **LANG-4** Feeds transcribed voice and posted text messages into the agents' conversation context, retaining the speaker, original wording and translations. Relevant facts, hard constraints, preferences and corrections can trigger a revised proposal (AGT-11..AGT-13).
 - **LANG-5** Writes both language versions of every phrase to the log.
-- **LANG-6** Gives the Coordination Host a voice, including reading the end-of-call summary (ROOM-13). Speech, translation or a casual acknowledgement never creates an approval; only the checkmark does (ROOM-7).
+- **LANG-6** Gives the Coordination Host a voice, including reading the end-of-call summary (ROOM-13). Speech, translation or a casual acknowledgement never creates an approval; only the checkmark does (ROOM-7). The host speaks its checked English text in each listener's language, with the same value protection as human phrases, and is not held by decision turns.
 - **LANG-7** Works in text only when voice is unavailable, with the same translation.
 
 **User**
