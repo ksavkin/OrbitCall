@@ -26,6 +26,7 @@ import { Director } from "@/components/ops/Director";
 import { ScanResults, UrgencyOverlay } from "@/components/ops/DemoFlow";
 import { DecisionDock } from "@/components/ops/DecisionDock";
 import { ResolutionOverlay } from "@/components/ops/Resolution";
+import { IncidentView, setIncidentView } from "@/components/ops/IncidentView";
 import { ScenarioBar } from "@/components/ops/ScenarioBar";
 import { useOps } from "@/lib/ops/store";
 import { sceneRef } from "@/lib/sceneRef";
@@ -74,6 +75,7 @@ export function OrbitApp() {
       <AnimatePresence>{conj && <AgentsPanel key="agents" />}</AnimatePresence>
       <AnimatePresence>{conj && dev && <ScenarioBar key="scenario" />}</AnimatePresence>
       <DecisionDock />
+      <IncidentView />
       <UrgencyOverlay />
       <ScanResults />
       <ResolutionOverlay />
@@ -158,11 +160,15 @@ function useShortcuts() {
       if (k === "escape") {
         const ops = useOps.getState();
         if (ops.agentsExpanded) ops.set({ agentsExpanded: false });
+        else if (ops.incident && ops.incidentView === "expanded" && ops.tab === "conjunctions") setIncidentView("collapsed");
         else if (s.following) s.set({ following: false });
         else if (ops.tab === "conjunctions" && ops.focusEvent) ops.set({ focusEvent: null });
         else s.set({ selected: null });
       } else if (k === "d") {
         toggleDev();
+      } else if (k === "e" && useOps.getState().incident) {
+        const ops = useOps.getState();
+        setIncidentView(ops.incidentView === "expanded" ? "collapsed" : "expanded");
       } else if (k === " ") {
         e.preventDefault();
         sfx.toggle(s.paused);

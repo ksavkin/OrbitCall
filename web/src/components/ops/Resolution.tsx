@@ -47,7 +47,8 @@ export function ResolutionOverlay() {
 
   const close = () => {
     sfx.close();
-    useOps.setState({ resolved: null });
+    // the case is closed: free the board for the next scan
+    useOps.setState({ resolved: null, incident: null, incidentView: "expanded" });
   };
 
   return (

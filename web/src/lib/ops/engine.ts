@@ -127,6 +127,7 @@ export class Engine {
       replies: [],
       alert: null,
       resolved: null,
+      incident: null,
       scan: { phase: "idle", ids: [], stats: null },
     });
   }

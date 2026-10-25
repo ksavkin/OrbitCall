@@ -33,6 +33,10 @@ interface OpsState {
   replies: Reply[];
   /** Demo flow: Run scan, pick a case from the results, watch the run. */
   scan: { phase: "idle" | "scanning" | "results"; ids: string[]; stats: { objects: number; pairs: number; ms: number } | null };
+  /** The case the dispatcher is working on (picked from scan results). */
+  incident: string | null;
+  /** The incident command view: full view, or collapsed to a bar so the globe is visible. */
+  incidentView: "expanded" | "collapsed";
   /** An incident just closed: green edge glow and the resolution summary. */
   resolved: { eventId: string; at: number } | null;
   /** High-priority alert: red edge glow, banner and alarm. */
@@ -78,6 +82,8 @@ export const useOps = create<OpsState>((set) => ({
   scan: { phase: "idle", ids: [], stats: null },
   alert: null,
   resolved: null,
+  incident: null,
+  incidentView: "expanded",
   humans: [],
   scanning: false,
   lastScan: null,

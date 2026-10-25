@@ -172,12 +172,13 @@ async function analyze(eng: Engine, gen: number, e: ConjunctionEvent, crossDeg: 
     1150,
     gen,
   );
+  // short sentences; names are turned into object links by the UI, numbers set in mono
   const summary = [
-    `${e.a.name} (${e.a.operator}) and ${e.b.name} (${e.b.operator}) pass ${fmtMiss(e.missM)} apart at ${fmtWhen(e.tca)}.`,
-    `Pc ${fmtPc(e.pc)} from ${e.pcSource}; rising over the last 24 h. Relative speed ${e.relVelKms.toFixed(1)} km/s, crossing at ${crossDeg}°.`,
-    `US data says ${fmtMiss(e.missM)}, operator data says ${fmtMiss(e.missM + e.uncertaintyM)}: ±${fmtMiss(e.uncertaintyM)} uncertainty.`,
-    `Over ${Math.abs(Math.round(e.where.lat))}°${e.where.lat >= 0 ? "N" : "S"}, ${Math.abs(Math.round(e.where.lon))}°${e.where.lon >= 0 ? "E" : "W"} at ${Math.round(e.where.altKm)} km altitude.`,
-    e.b.kind === "debris" ? "A raises, A lowers, or wait for the next CDM. Debris cannot move." : "A raises, B lowers, or wait for the next CDM.",
+    `${e.a.name} and ${e.b.name} pass ${fmtMiss(e.missM)} apart on ${fmtWhen(e.tca)}.`,
+    `Pc ${fmtPc(e.pc)} (${e.pcSource}), rising for 24 h. They cross at ${crossDeg}° and ${e.relVelKms.toFixed(1)} km/s.`,
+    `US orbit data says ${fmtMiss(e.missM)}, the operator's says ${fmtMiss(e.missM + e.uncertaintyM)}. Uncertainty ±${fmtMiss(e.uncertaintyM)}.`,
+    `${Math.abs(Math.round(e.where.lat))}°${e.where.lat >= 0 ? "N" : "S"} ${Math.abs(Math.round(e.where.lon))}°${e.where.lon >= 0 ? "E" : "W"}, ${Math.round(e.where.altKm)} km up.`,
+    e.b.kind === "debris" ? `${e.a.name} raises, lowers, or waits for the next CDM. Debris can't move.` : `${e.a.name} raises, ${e.b.name} lowers, or both wait for the next CDM.`,
   ];
   await eng.span(
     {
@@ -896,8 +897,10 @@ export function runIncident(eventId: string) {
     actAs: "a",
     focusEvent: eventId,
     agentView: "graph",
-    // the banner follows the case being worked; a yellow pick needs no alarm
-    alert: ev.risk === "red" ? { eventId, at: useOps.getState().alert?.at ?? Date.now() } : null,
+    // the alarm did its job; the case view takes over from here
+    alert: null,
+    incident: eventId,
+    incidentView: "expanded",
   });
   engine.runOn(s.id, async (eng, gen) => {
     try {

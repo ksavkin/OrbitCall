@@ -220,7 +220,13 @@ function EventRow({ e, now }: { e: ConjunctionEvent; now: number }) {
         className="relative block w-full px-2.5 py-2 text-left transition-colors hover:bg-white/[0.035]"
         onClick={() => {
           sfx.select();
-          useOps.getState().set({ focusEvent: focused ? null : e.id });
+          const st = useOps.getState();
+          // the case being worked opens its command view instead of the inline details
+          if (st.incident === e.id) {
+            st.set({ focusEvent: e.id, incidentView: "expanded" });
+            return;
+          }
+          st.set({ focusEvent: focused ? null : e.id });
         }}
         onPointerEnter={() => sfx.hover()}
       >
@@ -403,7 +409,7 @@ function Cell({ label, value, hint, border, top, tone }: { label: string; value:
 }
 
 /** Pc over time on a log axis with the red line at 1e-4 (ROOM-10). */
-function PcChart({ e }: { e: ConjunctionEvent }) {
+export function PcChart({ e }: { e: ConjunctionEvent }) {
   const W = 262;
   const H = 54;
   // decades around the action line, so the climb through 1e-4 reads clearly
@@ -439,7 +445,7 @@ function PcChart({ e }: { e: ConjunctionEvent }) {
   );
 }
 
-function ProposalCard({ e, p }: { e: ConjunctionEvent; p: Proposal }) {
+export function ProposalCard({ e, p }: { e: ConjunctionEvent; p: Proposal }) {
   const who = p.mover === "a" ? e.a.name : p.mover === "b" ? e.b.name : "Nobody";
   const verb = p.action === "raise" ? "raises" : p.action === "lower" ? "lowers" : "waits";
   return (

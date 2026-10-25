@@ -11,7 +11,7 @@ import { sfx } from "@/lib/sound";
 import { useNow } from "@/lib/useNow";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { SummaryCard } from "./ConjunctionQueue";
+import { Brief, ObjectChip } from "./Entity";
 
 // The dispatcher's decision, in the middle of the screen (ROOM-5, ROOM-7): the summary,
 // four options with the agents' pick marked, and a free answer by text or voice.
@@ -19,30 +19,30 @@ import { SummaryCard } from "./ConjunctionQueue";
 
 type Mode = "decide" | "waiting" | "reply" | "done";
 
-const optionTitle = (e: ConjunctionEvent, o: Pick<DecisionOption, "mover" | "action" | "dvMs">) => {
-  if (o.action === "wait") return "Wait for the next CDM";
-  const who = o.mover === "a" ? e.a.name : e.b.name;
-  return `${who} ${o.action === "raise" ? "raises" : "lowers"} ${o.dvMs} m/s`;
-};
+/** "Raise STARLINK-3741" plus the burn details on a second line, so similar options never read the same. */
+export function optionText(e: ConjunctionEvent, o: Pick<DecisionOption, "mover" | "action" | "dvMs" | "burnAt">) {
+  if (o.action === "wait") return { verb: "Wait", who: null as "a" | "b" | null, sub: "No burn · next CDM decides" };
+  const lead = o.burnAt ? Math.round((e.tca - o.burnAt) / 3600_000) : null;
+  return {
+    verb: o.action === "raise" ? "Raise" : "Lower",
+    who: o.mover === "none" ? null : o.mover,
+    sub: `${o.dvMs} m/s${o.burnAt ? ` · burn ${fmtWhen(o.burnAt)}` : ""}${lead !== null ? ` · ${lead} h before TCA` : ""}`,
+  };
+}
 
 function partyOf(e: ConjunctionEvent, side: "a" | "b"): Party | undefined {
   return e.parties?.find((p) => p.role === side);
 }
 
-export function DecisionDock() {
-  const tab = useOps((s) => s.tab);
+/** Where the room stands for the person at this screen: deciding, waiting, reading a reply, or done. */
+export function useRoomState(e: ConjunctionEvent | undefined, now: number) {
   const actAs = useOps((s) => s.actAs);
-  const e = useOps((s) => s.events.find((x) => x.id === s.focusEvent));
   const humans = useOps((s) => s.humans);
   const replies = useOps((s) => s.replies);
-  const now = useNow(500);
   const viewer: "a" | "b" = actAs ?? "a";
   const other: "a" | "b" = viewer === "a" ? "b" : "a";
-
-  const resolvedId = useOps((s) => s.resolved?.eventId);
   const state = useMemo(() => {
-    // the resolution card takes over once the incident closes
-    if (!e || tab !== "conjunctions" || resolvedId === e.id) return null;
+    if (!e) return null;
     const prompt = humans.find((h) => h.eventId === e.id && h.side === viewer);
     const mine = [...replies].reverse().find((r) => r.eventId === e.id && r.side === viewer);
     const theirs = [...replies].reverse().find((r) => r.eventId === e.id && r.side === other);
@@ -54,7 +54,20 @@ export function DecisionDock() {
       mode = "waiting";
     else if (mine && ["approved", "scheduled"].includes(e.status) && now - Math.max(mine.t, theirs?.t ?? 0) < 9000) mode = "done";
     return mode ? { mode, mine, theirs } : null;
-  }, [e, tab, humans, replies, viewer, other, now, resolvedId]);
+  }, [e, humans, replies, viewer, other, now]);
+  return { state, viewer, other };
+}
+
+export function DecisionDock() {
+  const tab = useOps((s) => s.tab);
+  const e = useOps((s) => s.events.find((x) => x.id === s.focusEvent));
+  const now = useNow(500);
+  const resolvedId = useOps((s) => s.resolved?.eventId);
+  const incident = useOps((s) => s.incident);
+  const room = useRoomState(e, now);
+  const { viewer, other } = room;
+  // the incident view owns its case; the resolution card takes over once it closes
+  const state = !e || tab !== "conjunctions" || resolvedId === e.id || incident === e.id ? null : room.state;
 
   return (
     <AnimatePresence>
@@ -90,7 +103,7 @@ export function DecisionDock() {
 
 /* ---------------------------------------------------------------- decide */
 
-function Decide({ e, viewer, now }: { e: ConjunctionEvent; viewer: "a" | "b"; now: number }) {
+export function Decide({ e, viewer, now, embedded = false }: { e: ConjunctionEvent; viewer: "a" | "b"; now: number; embedded?: boolean }) {
   const autopilot = useOps((s) => s.autopilot && s.actAs !== viewer);
   const options = e.options ?? [];
   const rec = options.find((o) => o.recommended) ?? options[0];
@@ -137,8 +150,11 @@ function Decide({ e, viewer, now }: { e: ConjunctionEvent; viewer: "a" | "b"; no
         </div>
       </div>
 
-      {/* the options line is the cards below */}
-      <div className="px-4">{e.summary && <SummaryCard lines={e.summary.slice(0, 4)} compact />}</div>
+      {!embedded && e.summary && (
+        <div className="mx-4 rounded-[10px] bg-white/[0.035] p-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)]">
+          <Brief e={e} lines={e.summary} skipOptions />
+        </div>
+      )}
 
       <div className="mt-2.5 grid grid-cols-2 gap-1.5 px-4">
         {options.map((o, i) => (
@@ -199,7 +215,14 @@ function OptionCard({ e, o, active, index, onPick }: { e: ConjunctionEvent; o: D
         >
           {active && <span className="h-1.5 w-1.5 rounded-full bg-black" />}
         </span>
-        <span className="min-w-0 flex-1 text-[12px] font-semibold leading-tight tracking-[-0.005em]">{optionTitle(e, o)}</span>
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-1 text-[12.5px] font-semibold leading-tight tracking-[-0.005em]">
+            {optionText(e, o).verb}
+            {optionText(e, o).who && <ObjectChip e={e} side={optionText(e, o).who!} size="sm" />}
+            {!optionText(e, o).who && <span className="text-fg-2">for the next CDM</span>}
+          </span>
+          <span className="mono mt-0.5 block text-[10px] text-muted">{optionText(e, o).sub}</span>
+        </span>
         {o.recommended && (
           <span className="shrink-0 rounded-full bg-[rgba(61,220,151,0.14)] px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.08em] text-green">
             Recommended
@@ -210,7 +233,7 @@ function OptionCard({ e, o, active, index, onPick }: { e: ConjunctionEvent; o: D
         <span className="mono tnum text-red">{fmtMiss(e.missM)}</span>
         <ArrowRight size={10} className="text-muted" />
         <span className={`mono tnum font-medium ${o.action === "wait" ? "text-red" : "text-green"}`}>{fmtMiss(o.missAfterM)}</span>
-        {o.burnAt && <span className="ml-auto text-[10px] text-muted">{fmtWhen(o.burnAt)}</span>}
+        <span className="ml-auto text-[10px] text-muted">miss at TCA</span>
       </div>
       <div className="mt-1 line-clamp-2 pl-5 text-[10.5px] leading-[1.4] text-muted">{o.why}</div>
     </motion.button>
@@ -307,7 +330,7 @@ function VoiceInput({ value, onChange, onEnter, lang }: { value: string; onChang
 
 /* --------------------------------------------------------------- waiting */
 
-function Waiting({ e, other, mine, now }: { e: ConjunctionEvent; other: "a" | "b"; mine: Reply; now: number }) {
+export function Waiting({ e, other, mine, now }: { e: ConjunctionEvent; other: "a" | "b"; mine: Reply; now: number }) {
   const them = partyOf(e, other);
   const verb = mine.decision === "approved" ? "You approved" : mine.decision === "vetoed" ? "You rejected" : "You sent a counter";
   return (
@@ -352,7 +375,7 @@ function WaitingDots() {
   );
 }
 
-function TheirReply({ e, r }: { e: ConjunctionEvent; r: Reply }) {
+export function TheirReply({ e, r }: { e: ConjunctionEvent; r: Reply }) {
   const them = partyOf(e, r.side);
   const ok = r.decision === "approved";
   const color = ok ? "var(--green)" : r.decision === "vetoed" ? "var(--red)" : "var(--orange)";
@@ -385,7 +408,7 @@ function TheirReply({ e, r }: { e: ConjunctionEvent; r: Reply }) {
   );
 }
 
-function Done({ e }: { e: ConjunctionEvent }) {
+export function Done({ e }: { e: ConjunctionEvent }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3.5">
       <motion.span

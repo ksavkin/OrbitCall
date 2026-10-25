@@ -38,20 +38,26 @@ export function ScanButton() {
   const phase = useOps((s) => s.scan.phase);
   const ready = useOrbit((s) => !!s.catalog);
   const scanning = phase === "scanning";
+  // one case at a time: scanning again would pull the dispatcher away from it
+  const busy = useOps((s) => {
+    const ev = s.incident ? s.events.find((x) => x.id === s.incident) : undefined;
+    return ev && !RESOLVED.includes(ev.status) ? ev.id : null;
+  });
   const btn = (
     <button
       className="btn btn-primary h-8 w-full gap-1.5 text-[12px]"
-      disabled={!dev || !ready || scanning}
+      disabled={!dev || !ready || scanning || !!busy}
       onClick={() => {
         sfx.ping();
         runScan();
       }}
     >
-      {scanning ? <Loader2 size={13} className="animate-spin" /> : <Radar size={13} />}
-      {scanning ? "Scanning 18k objects…" : "Run scan"}
+      {scanning || busy ? <Loader2 size={13} className="animate-spin" /> : <Radar size={13} />}
+      {scanning ? "Scanning 18k objects…" : busy ? `Case in progress · ${busy}` : "Run scan"}
     </button>
   );
   if (!dev) return <Tooltip label="Triggers the Risk Monitor once the backend is connected">{btn}</Tooltip>;
+  if (busy) return <Tooltip label="Finish or close the current case before scanning again">{btn}</Tooltip>;
   return btn;
 }
 
@@ -262,7 +268,8 @@ export function UrgencyOverlay() {
   const now = useNow(200);
   const redCount = useOps((s) => s.events.filter((e) => s.scan.ids.includes(e.id) && e.risk === "red").length);
   const sounded = useRef<string | null>(null);
-  const active = !!alert && !!ev && tab === "conjunctions" && !RESOLVED.includes(ev.status) && ev.status !== "scheduled";
+  // the glow is the alarm: it shows until a case is picked, not while the case runs
+  const active = !!alert && !!ev && tab === "conjunctions" && phase === "results" && !RESOLVED.includes(ev.status);
   // alarm first (center warning), strong while the dispatcher picks a case, calm once the agents are on it
   const warning = active && phase === "results" && now > 0 && now - alert!.at < WARN_MS;
   const strong = phase === "results";
