@@ -1,0 +1,4 @@
+url=https://nasa-public-data.s3.amazonaws.com/iss-coords/current/ISS_OEM/ISS.OEM_J2K_EPH.txt
+fetchedAt=2026-10-24T18:02:03Z
+sha256=7c4f78b7f3e4bb5fafc210ab29f4e80bdae6dd66c84e27e8f47cd8f9e7976eb7
+bytes=717276

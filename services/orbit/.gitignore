@@ -1,0 +1,11 @@
+# The data folder (ORBIT_DATA) is built by setup-data.sh. Only the small files this package ships are committed:
+# the labeled ISS replay and the cached /validation result.
+data/*
+!data/replay/
+!data/validation/
+# The service's own CelesTrak OMM fetch (~8 MB, data/omm/) is not committed: real mode reads the team snapshot from
+# data/snapshots/, and the tests that need the fetch skip without it.
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
