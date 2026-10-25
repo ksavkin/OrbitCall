@@ -72,7 +72,7 @@ export function WeatherCard() {
   const tornado = useOrbit((s) => s.tornado);
   const kp = useOrbit((s) => s.kp);
   const status = useOrbit((s) => s.wxStatus);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   // 0 on the server: Date.now() during prerender would make the page non-deterministic
   const [now, setNow] = useState(0);
   useEffect(() => {
