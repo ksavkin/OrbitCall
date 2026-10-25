@@ -27,6 +27,6 @@ Check text padding, line spacing, connector crossings, and logo rendering after 
 ## Sources and attribution
 
 - Monochrome technology marks come from [Simple Icons 16.35.0](https://github.com/simple-icons/simple-icons/tree/16.35.0), distributed under [CC0-1.0](https://github.com/simple-icons/simple-icons/blob/16.35.0/LICENSE.md). The manifest records the package and each icon path.
-- Factory, Cartesia, Grok, Gemini, Backboard, CelesTrak, and Tiger Data artwork comes from their vendor-hosted assets. Exact download URLs are in the manifest. Gemini uses the Gemini sparkle, and Factory and Cartesia use their own symbols.
+- Claude, DigitalOcean, Convex, Factory, Cartesia, Grok, Gemini, Backboard, CelesTrak, and Tiger Data artwork comes from their vendor-hosted assets. Exact download URLs are in the manifest. Claude uses its original orange symbol, DigitalOcean uses its official blue icon, and Convex uses the original multicolor symbol from its brand kit. These files retain their vendor colors. Gemini uses the Gemini sparkle, and Factory and Cartesia use their own symbols.
 - Role icons come from the repository's installed [Lucide](https://lucide.dev/) package. Its ISC and applicable MIT notices are included in [icons/roles/LICENSE.txt](icons/roles/LICENSE.txt). These symbols describe service functions and are separate from company logos.
 - Brand names and marks belong to their respective owners. Their inclusion identifies the project's technologies and integrations.
