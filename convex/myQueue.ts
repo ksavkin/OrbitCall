@@ -2,9 +2,9 @@ import { ConvexError, v } from "convex/values";
 import { query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { fleetEvents, fleetIds, requireFleetScope, resolveFleet } from "./fleetQuery";
-import { isoUtc } from "./lib/events";
 import { catalogRow, eventRow } from "./lib/queue";
 import { runFlags } from "./lib/runs";
+import { priorityReason, sectionOf, viewerSides, type Ranked, type Section } from "./lib/incident";
 
 // The personal queue (spec §3.2 events.myQueue, Q-1, Q-5) on the tables Round 1 already has. Issue #6 places it
 // in this file, so the client calls api.myQueue.myQueue. Assigned-fleet events only, resolved on the server
@@ -17,7 +17,6 @@ import { runFlags } from "./lib/runs";
 
 const side = v.union(v.literal("A"), v.literal("B"));
 const queueSection = v.union(v.literal("active"), v.literal("data_review"), v.literal("history"));
-type Section = "active" | "data_review" | "history";
 
 // The Phase 1 row plus the viewer-dependent fields of spec §2.2 EventRow.
 export const myQueueRow = v.object({
@@ -32,14 +31,8 @@ export const myQueueRow = v.object({
   priorityReason: v.string(),
 });
 
-type Ranked = Pick<Doc<"events">, "_id" | "color" | "pcValue" | "tcaMs" | "missKm" | "active">;
 const severity = (e: Ranked) => e.color === "red" ? 0 : e.color === "yellow" ? 1 : 2;
 const byId = (a: Ranked, b: Ranked) => a._id < b._id ? -1 : a._id > b._id ? 1 : 0;
-
-export function sectionOf(e: Ranked): Section {
-  if (!e.active) return "history";
-  return e.pcValue === null ? "data_review" : "active";
-}
 
 // Active order (spec §3.2): red, yellow, other usable Pc; within a severity the earliest TCA, then the emergency
 // flag, then descending Pc, then event id. The CDM emergency flag is not stored in Phase 1 (always null), so it
@@ -58,15 +51,6 @@ export function compareHistory(a: Ranked, b: Ranked): number {
 const comparators: Record<Section, (a: Ranked, b: Ranked) => number> = {
   active: compareActive, data_review: compareDataReview, history: compareHistory,
 };
-
-// A factual line with the numbers the rank came from. English in this phase, like the Analyst summary.
-function priorityReason(section: Section, e: Doc<"events">): string {
-  const tca = isoUtc(e.tcaMs), miss = `${e.missKm} km`;
-  if (section === "history") return `Closest approach passed at ${tca}.`;
-  if (section === "data_review") return `Probability unavailable; closest approach ${tca}, miss ${miss}.`;
-  const label = e.color === "red" ? "Red" : e.color === "yellow" ? "Yellow" : "Low probability";
-  return `${label}: Pc ${e.pcValue!.toExponential(1)}, closest approach ${tca}, miss ${miss}.`;
-}
 
 // Each returned row costs up to three reads (its run flags and two objects), as in events.catalogPairs.
 const MAX_ROWS = 1200;
@@ -113,17 +97,12 @@ export const myQueue = query({
     const rows = await Promise.all(top.map(async ({ event, section, rank }) => {
       const [snapshot, a, b] = [snapshotById.get(event.snapshotId), objectById.get(event.objectAId), objectById.get(event.objectBId)];
       if (!snapshot || !a || !b) return null;
-      // Sides are canonical (spec §1): the viewer's side is whichever object is theirs. Both objects the
-      // company's, whoever in it is assigned to them: an internal review with both ids, no side, no approval
-      // sides and no action until an internal approval rule exists.
-      const ours = (id: typeof event.objectAId) => company.get(id) ?? ids.get(id);
-      const ownA = ours(event.objectAId), ownB = ours(event.objectBId);
-      const internal = ownA !== undefined && ownB !== undefined;
-      const mySide = internal ? null : ownA !== undefined ? "A" as const : "B" as const;
+      // Sides are canonical (spec §1); lib/incident.ts holds the rule, including internal review.
+      const { mySide, myObjectIds, internal } = viewerSides(event, ids, company);
       return {
         ...catalogRow(event, a, b, snapshot, await runFlags(ctx, event._id)),
         mySide,
-        myObjectIds: unique([ownA, ownB].filter((id): id is string => id !== undefined)).sort(),
+        myObjectIds,
         workflow: internal ? "internal_review" as const : "bilateral" as const,
         requiredApprovalSides: internal ? [] : ["A" as const, "B" as const],
         // The active flag is the recolor cron's (every 5 minutes, riskMonitor.recolor), as for catalogPairs:
