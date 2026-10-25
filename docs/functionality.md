@@ -101,7 +101,7 @@ The verification branches apply after the maneuver time.
 
 - **new** — the pair is in the queue.
 - **agents** — the event turned red; Incident Analyst and Operator Advocates are working ("agents working").
-- **proposal** — computed candidate proposals are ready; the room, created when the event turned red (Q-3), is ready and both owners see it in their queue and inbox. If only one feasible candidate exists, or none, the room explains that instead of inventing alternatives.
+- **proposal** — computed candidate proposals are ready; both owners see them in their queue and inbox, and the room is ready once an operator has started the workflow (DSP-1). If only one feasible candidate exists, or none, the room explains that instead of inventing alternatives.
 - **communication** — the human operators compare proposals, select one for joint review, and discuss it by voice or text with translation. Agents follow both the voice transcripts and text messages, using relevant facts, constraints, preferences and corrections to revise the proposals. Each person can access the incident from their inbox even if the other person has not joined. They approve by ticking the checkmark, veto with a button, or counter in conversation; there is no structured counter form. In the bilateral path, one approval leaves the event in **communication**, identifying the candidate and revision awaiting the other side. In unilateral debris avoidance, the single required approval completes human authorization (ROOM-14).
 - **approved** — all required sides for this workflow approved the same selection generation, proposal ID and revision for this incident (ROOM-14).
 - **scheduled** — Maneuver Scheduler wrote the maneuver and the re-screen found no new conjunction.
@@ -196,7 +196,7 @@ Inbox access does not depend on reaching agreement. Reading an entry or receivin
 
 - **Q-1** Ranks only incidents involving the caller's assigned fleet. Known-current-evidence groups: red, yellow, then other usable-Pc events; within a group sort by earliest TCA, emergency flag, descending Pc and stable event ID. No Pc/time score or private-policy score. Missing/stale evidence appears in a separate always-visible Data needs review section, ordered by TCA then miss distance. Preserve last-known severity marked stale; unknown Pc is never zero risk. Follow-up cases stay visible separately (user-flow.md section 4).
 - **Q-2** Colors events: **red** when Pc > 1e-4 and TCA < 72 h; **yellow** when Pc is between 1e-5 and 1e-4, or when Pc > 1e-4 and TCA ≥ 72 h.
-- **Q-3** On red, starts the agents and creates a room. On yellow, stays in the feed and inbox with no prepared options in this build (section 20 Q9).
+- **Q-3** On red, starts the agents. The room is created when an operator starts the workflow (DSP-1). On yellow, stays in the feed and inbox with no prepared options in this build (section 20 Q9).
 - **Q-4** Agents run only for the top of the queue, not for every pair.
 
 **User**
@@ -213,7 +213,7 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 
 **System**
 
-- **INBOX-1** Creates an inbox entry for each relevant person when a conjunction event concerns their satellites or they receive an affected-operator notice. The entry is available before a proposal or successful call.
+- **INBOX-1** Creates an inbox entry for each relevant person when a conjunction event concerns their satellites, another operator adds them to a coordination room, or they receive an affected-operator notice. The entry is available before a proposal or successful call.
 - **INBOX-2** Updates the same entry when orbit data, risk, proposals, responses, decisions or verification results change. Keeps unread status per person while the underlying event state is shared.
 - **INBOX-3** Includes the available incident information: satellite names and identifiers, owners, orbit data and source timestamps, TCA, miss distance, supplied probability and provenance, labeled source spread, relevant satellite metadata, candidate proposals and selection/revision, summaries, and the current decision or unresolved issue. Missing information is identified as unavailable.
 - **INBOX-4** Includes the available contact details of the responsible operators and people the user needs to reach: names, organizations, roles, phone numbers, email addresses, supported in-app contact options, and language or availability information where known. Each contact method shows how to use it; missing contacts are identified explicitly.
@@ -271,15 +271,15 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 
 **System**
 
-- **DSP-1** Opens a room for a red event.
-- **DSP-2** Later, not in the base build (question 6): finds and calls the two owners. For now both operators see the event in their queue and inbox and open the room themselves.
+- **DSP-1** Starts the workflow on an incident (in the UI, Run agents on this case): creates the coordination room and joins every operator currently assigned to an involved object, including the other companies' operators, to the room and its call. Operators joined by someone else get an inbox notice and are not taken to the room screen; the room is an optional channel and deciding never requires opening it.
+- **DSP-2** Later, not in the base build (question 6): finds and calls the two owners. For now starting the workflow joins both operators to the room (DSP-1), and each sees the notice in their inbox.
 - **DSP-3** Later, not in the base build (question 7): finds operators whose satellites the proposed maneuver affects, and notifies them before the maneuver.
 - **DSP-4** Gemini hosts the shared conversation, asks relevant clarification questions, requests checked revisions when discussion changes a plan, and produces source-linked per-event summaries. Convex records validated outputs in the log. Gemini receives only shareable room context and cannot create approval or alter schedule state directly.
 - **DSP-7** Makes the incident and available operator contact methods accessible in each relevant person's inbox regardless of whether they answer the call or join the room.
 
 **User**
 
-- **DSP-5** Sees in the queue and inbox when a proposal is ready, sees whether the other operator has joined, and can join or return to the incident through the inbox. Calls and invitations come later (DSP-2).
+- **DSP-5** Sees in the queue and inbox when a proposal is ready, sees whether the other operator is in the room (joined automatically, possibly left since), and can join or return to the incident through the inbox. Calls and invitations come later (DSP-2).
 - **DSP-6** Later (question 7): as an affected third operator, receives a notice about the new path before the maneuver.
 
 ---
@@ -288,7 +288,7 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 
 **System**
 
-- **ROOM-1** Holds group-room state: 2-4 participating operators, linked pair events, shareable summaries, negotiation, conversation, and call. Each event keeps its own proposals, selection generation, approvals, scheduling, and verification.
+- **ROOM-1** Holds group-room state: 2-4 participating operators, linked pair events, shareable summaries, negotiation, conversation, and call. Each event keeps its own proposals, selection generation, approvals, scheduling, and verification. The room closes when every linked incident is resolved (approved or later, or no longer active); a closed room stays readable.
 - **ROOM-2** Schedules only when all required sides (ROOM-14) have current approvals for the same incident, selected proposal ID, revision and selection generation. Approving different alternatives does not reach agreement. If both approve a wait candidate, records it and moves to monitoring without a maneuver. A veto or conversational counter returns to negotiation.
 - **ROOM-3** Shows each side only its own controls and private policy panel, with a visible privacy indicator, and translates shared lines into that side's language. The opposing policy is inaccessible, not merely hidden in the browser.
 - **ROOM-11** Tracks approvals by incident, proposal ID, revision and selection generation. Selection changes and new revisions reset required approvals visibly, with bilateral or unilateral wording. The backend rejects stale approvals and rechecks current selection, revision, evidence, policy and fleet authorization before reserving the idempotent schedule write. Earlier approvals remain historical and cannot be revived by switching back. Changes to an already scheduled maneuver remain proposed changes until explicitly approved.
@@ -373,7 +373,7 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 - **ACC-1** Each person signs in as an operator of their company with explicit server-managed responsibility assignments for individual spacecraft. Assignments do not confer ownership and country/language confer no permissions. Accounts are pre-created test users, three required for the main demo and an optional fourth operator, with four assigned objects per enabled demo dispatcher. There is no registration. Login goes through Auth0 with sign-ups disabled, and Convex verifies the identity. An identity-provider change requires a recorded stack revision and another authorization check.
 - **ACC-2** An approval is tied to the authenticated person, company, current fleet authorization, incident, proposal ID, revision and selection generation. Every approval and schedule commit rechecks the assignment. Revocation invalidates affected approvals. The server authorizes each read and write, including live subscriptions and report exports; changing a browser role label cannot expose another company's policy or approve for it.
 - **ACC-3** The same screens serve both companies; content and controls depend on whose side the viewer is on.
-- **ACC-4** Roles: an operator sees their company's policy, inbox and the rooms of their events, and approves; a head of operations reads their company's log and reports and cannot approve; an affected third operator sees only the notice in their inbox. The main demo has three dispatcher accounts with assigned fleets and a separate read-only observer. Group rooms support 2-4 operators linked through pair events. A group member can discuss shared context but approves only their own incident side. This is distinct from deferred outreach to unrelated affected parties.
+- **ACC-4** Roles: an operator sees their company's policy, inbox and the rooms of their events, and approves; a head of operations reads their company's log, reports and the rooms of company incidents, and cannot approve, start a workflow, join or post; an affected third operator sees only the notice in their inbox. The main demo has three dispatcher accounts with assigned fleets and a separate read-only observer. Group rooms support 2-4 operators linked through pair events. A group member can discuss shared context but approves only their own incident side. This is distinct from deferred outreach to unrelated affected parties.
 
 ---
 

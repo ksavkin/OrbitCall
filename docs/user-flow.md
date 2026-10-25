@@ -93,10 +93,14 @@ Explain priorities in words: "High supplied probability, closest approach in 2 h
 
 A room can contain several linked pair incidents. The main demo contains US/RU and US/CN, with three active dispatchers. Call/chat are room-scoped. Selection, approvals, scheduling, and verification stay event-scoped. The fourth screen is an authenticated read-only observer projection. No participant approves every event merely by joining the room.
 
+### Starting the workflow and the coordination channel
+
+The coordination room is an optional channel of the case that connects automatically (see "App navigation and the decision flow" above). **Run agents on this case** starts the case's workflow (`rooms.startWorkflow`): it creates the coordination channel for the encounter and joins every dispatcher currently assigned to an involved spacecraft, from every involved company, to it and its call. The other dispatchers get an Inbox notice ("You were added to the coordination…") and stay on the screen they are on; nobody else is redirected. When they open the case in the Decision Center, they are already inside, see who is present, and can talk the details through before their turn to decide. A head of operations reads the channel and cannot start, join or post. The channel closes when every linked incident is resolved, approved or no longer needing action; it stays readable as history, and starting the workflow again on a still-active case opens a new one.
+
 
 ### Two active spacecraft with participating operators
 
-1. Open the incident from My Incidents or Inbox. Review the five-line summary, both objects, sources and missing evidence.
+1. Open the incident from My Incidents or Inbox, and run the agents on it, which starts its workflow and brings the other operator into the case. Review the five-line summary, both objects, sources and missing evidence.
 2. Show **up to four** computed candidate cards, including wait when justified. Show fewer if fewer exist. Feasibility and the source of recommendations are explicit. Do not manufacture alternatives or force agreement between the two advocates.
 3. Selecting a card publishes the shared selected proposal ID and immutable revision. Selection does not approve it. Choosing an existing alternative is not automatically a counter or a request to recompute it.
 4. Each authorized dispatcher independently presses Approve for the same selection. Veto is explicit. A counter is ordinary text or transcribed speech that agents interpret, not an approval status or structured counter form. Speech never approves.

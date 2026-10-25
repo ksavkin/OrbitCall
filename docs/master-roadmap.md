@@ -65,7 +65,7 @@ Use headsets for the three laptops. Keep the large monitor muted. Country is a d
 1. The large monitor rotates the globe while the judge sits at the US laptop.
 2. The judge sees their four assigned spacecraft and presses Run Scan.
 3. The backend identifies two linked demo incidents, US/Russia and US/China.
-4. The other operators receive incident notifications in their Inbox and join the same case in the Decision Center.
+4. The judge runs the agents on the case, which starts its workflow. The other operators are joined to the case's coordination channel automatically, receive a notice in their Inbox, and join the same case in the Decision Center.
 5. Agents present evidence and up to four calculated options per incident. The selected maneuver has a checked schedule preview before approval.
 6. The operators speak in three languages and see original and translated text.
 7. A meaningful counter changes one proposal. Its required approvals visibly reset.
@@ -399,7 +399,7 @@ Names below are the implementation target, not a claim that all functions exist 
 | Catalog | `catalog.snapshot`, `events.orbits` | Versioned OMM manifest and authorized event orbits |
 | Scan | `scans.startMine`, `scans.getMine` | Full assigned-fleet scan, deduplication, progress, coverage |
 | Queue | `events.myQueue`, `inbox.list`, `inbox.markRead` | Personal work and unread updates |
-| Group room | `rooms.get`, `rooms.byId`, `rooms.join`, `rooms.leave` | Event-scoped entry plus room context for every linked event and operator |
+| Group room | `rooms.startWorkflow`, `rooms.get`, `rooms.byId`, `rooms.listMine`, `rooms.join`, `rooms.leave` | Event-scoped entry plus room context for every linked event and operator |
 | Discussion | `messages.list`, `messages.send`, `summary.request` | Persistent original/translated conversation with event references |
 | Proposals | `proposals.list`, `proposals.revisions`, `rooms.select` | Up to four cards and a shared event-specific selection |
 | Approval | `approvals.approve`, `approvals.veto` | Explicit current event-specific authorization |
