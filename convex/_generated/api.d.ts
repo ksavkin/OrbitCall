@@ -57,7 +57,6 @@ import type * as lib_tigerExport from "../lib/tigerExport.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as myQueue from "../myQueue.js";
 import type * as operators from "../operators.js";
-import type * as ops from "../ops.js";
 import type * as policies from "../policies.js";
 import type * as rationaleCheck from "../rationaleCheck.js";
 import type * as riskMonitor from "../riskMonitor.js";
@@ -127,7 +126,6 @@ declare const fullApi: ApiFromModules<{
   "lib/validators": typeof lib_validators;
   myQueue: typeof myQueue;
   operators: typeof operators;
-  ops: typeof ops;
   policies: typeof policies;
   rationaleCheck: typeof rationaleCheck;
   riskMonitor: typeof riskMonitor;
