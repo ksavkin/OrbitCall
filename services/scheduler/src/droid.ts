@@ -19,7 +19,7 @@ export async function runDroid(input: Parameters<Provider>[0], sessionFactory = 
   const session = await sessionFactory({ cwd: input.cwd, execPath: process.env.DROID_EXEC_PATH, apiKey: process.env.FACTORY_API_KEY,
     modelId: process.env.FACTORY_MODEL_ID, interactionMode: DroidInteractionMode.Auto, autonomyLevel: AutonomyLevel.Off,
     disableBuiltinSkills: true, mcpServers: [mcp], abortSignal: AbortSignal.timeout(90_000),
-    systemPrompt: "You are an artifact writer. Call only write_schedule with the exact supplied bytes. Never choose a plan, change any value, use another tool or claim a write without calling the tool.",
+    systemPrompt: "You are an artifact writer. You may use ToolSearch only to load orbitcall_schedule___write_schedule. Call write_schedule with the exact supplied bytes. Never choose a plan, change any value, use another tool or claim a write without calling write_schedule.",
     askUserHandler: () => ({ cancelled: true, answers: [] }),
     permissionHandler: ({ toolUses, options }) => {
       const safe = toolUses.length > 0 && toolUses.every(({ details }) => details.type === ToolConfirmationType.McpTool &&
@@ -37,12 +37,19 @@ export async function runDroid(input: Parameters<Provider>[0], sessionFactory = 
     const allowed = tools.filter(t => t.id === expectedToolId && (t.source === undefined || t.source === "mcp"));
     if (allowed.length !== 1) return fail("FACTORY_TOOL_CONTRACT", "Factory tool discovery is ambiguous.");
     await session.updateSettings({ disabledToolIds: tools.filter(t => t.id !== allowed[0].id).map(t => t.id) });
-    const checked = await session.listTools();
-    if (!checked.some(t => t.id === allowed[0].id && t.allowed) || checked.some(t => t.allowed && t.id !== allowed[0].id)) return fail("FACTORY_TOOL_CONTRACT", "Factory could not restrict its tool set.");
+    // The pinned CLI retains its schema-discovery helper even when disabled.
+    // It may load the sole registered MCP tool; it is not a writer or a receipt.
+    const checkTools = async () => {
+      const checked = await session.listTools();
+      if (!checked.some(t => t.id === expectedToolId && t.allowed) || checked.some(t => t.allowed && t.id !== expectedToolId &&
+        !(t.id === "ToolSearch" && (t.source === undefined || t.source === "native")))) return fail("FACTORY_TOOL_CONTRACT", "Factory could not restrict its tool set.");
+    };
+    await checkTools();
     let succeeded = false;
     for await (const message of session.stream(`Write these exact UTF-8 bytes using write_schedule once:\n${input.expected}`, { abortSignal: AbortSignal.timeout(90_000) })) {
       if (message.type === DroidMessageType.Result) succeeded = message.success && message.subtype === "success";
     }
+    await checkTools();
     if (!succeeded || writes !== 1) return fail("FACTORY_FAILED", "Factory did not complete a checked artifact write.");
     return { sessionId: session.id, modelId: process.env.FACTORY_MODEL_ID, toolWrites: writes };
   } finally { await session.close(); }

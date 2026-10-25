@@ -18,8 +18,9 @@ async function setup(mode = "write") {
         ...(mode === "with-source" ? { source: "mcp" } : mode === "wrong-source" ? { source: "native" } : {}), allowed: true },
       ...(mode === "duplicate" ? [{ id: "orbitcall_schedule___write_schedule", allowed: true }] : []),
       { id: "Execute", allowed: mode === "unsafe" || !disabled },
+      { id: "ToolSearch", ...(mode === "foreign-search" ? { source: "mcp" } : {}), allowed: true },
     ],
-    updateSettings: async (settings: any) => { expect(settings.disabledToolIds).toEqual(["Execute"]); disabled = true; },
+    updateSettings: async (settings: any) => { expect(settings.disabledToolIds).toEqual(["Execute", "ToolSearch"]); disabled = true; },
     async *stream() { expect(disabled).toBe(true); if (["write", "with-source", "bad"].includes(mode)) await opts.mcpServers[0].tools[0].handler({ content: mode === "bad" ? "invented" : input.expected });
       yield { type: "result", success: true, subtype: "success" }; },
   }; });
@@ -33,7 +34,7 @@ it.each(["write", "with-source"])("binds the exact SDK tool identity, disables o
   expect(options.permissionHandler({ toolUses: [{ details: { type: "exec" } }], options: [{ value: "proceed_once" }] })).toBe("cancel");
   expect(options.permissionHandler({ toolUses: [{ details: { type: "mcp_tool", serverName: "orbitcall_schedule", actualToolName: "write_schedule" } }], options: [{ value: "proceed_once" }] })).toBe("proceed_once");
 });
-it.each(["claim", "bad", "unsafe", "wrong-tool", "wrong-source", "duplicate"])("rejects provider mode %s without success evidence", async mode => {
+it.each(["claim", "bad", "unsafe", "wrong-tool", "wrong-source", "duplicate", "foreign-search"])("rejects provider mode %s without success evidence", async mode => {
   const t = await setup(mode); await expect(runDroid(t.input, t.factory as any)).rejects.toThrow(); expect(t.close).toHaveBeenCalledOnce();
 });
 it("does not create a session when Factory is not configured", async () => {
