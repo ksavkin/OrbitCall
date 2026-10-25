@@ -580,9 +580,10 @@ Counter uses `messages.send`, optionally referencing the selected proposal/revis
 | `rooms.setInCall` | mutation | `{ roomId, inCall: boolean }` → `null` | Called on LiveKit connect/disconnect |
 | `proposals.list` | query | `{ eventId }` → `ProposalCard[]` | Up to four computed candidate cards total, including wait when justified. Fewer/zero options are explicit; do not require exactly one shared recommendation [ROOM-5] |
 | `proposals.revisions` | query | `{ proposalId }` → `Revision[]` | History, oldest first |
-| `rooms.select` | mutation | `{ eventId, proposalId, revision, expectedGeneration }` → `null` | Selects an existing card for shared review, not a counter; checks expectedGeneration and increments generation on change; resets required approvals [ROOM-11]. `INVALID_STATE`, `STALE_REVISION` |
+| `rooms.select` | mutation | `{ eventId, proposalId, revision, expectedGeneration }` → `null` | Selects an existing card for shared review, not a counter; checks expectedGeneration and increments generation on change; resets required approvals [ROOM-11]. While a decision is open only the side in turn may change it. Served as `api.proposals.select` (issue #6). `INVALID_STATE`, `STALE_REVISION` |
 | `approvals.approve` | mutation | `{ eventId, proposalId, revision, selectionGeneration, approvalRuleVersion }` → `{ allRequiredApproved: boolean, requiredApprovalSides: Side[] }` | Approve the selected revision [ROOM-7]. Rules in section 4.1 |
-| `approvals.veto` | mutation | `{ eventId, proposalId, revision, selectionGeneration, approvalRuleVersion, reason?: string }` → `null` | Resets required approvals, agents revise [§20 Q16] |
+| `approvals.veto` | mutation | `{ eventId, proposalId, revision, selectionGeneration, approvalRuleVersion, reason?: string }` → `null` | Resets required approvals, agents revise [§20 Q16]. Only the side in turn |
+| `approvals.status` | query | `{ eventId }` → `{ workflow, requiredApprovalSides, approvalRuleVersion, selectionGeneration, selected, approvals: Partial<Record<Side, SideApproval>>, allRequiredApproved, deciding, turn, lastReset, mySide, canAct, myTurn, simulated }` | The event's decision state for the Decision Center ("P2 · R2 · A approved · waiting for B"). Parties and the observer read; the observer has no side and no control [ROOM-8] |
 | `messages.list` | query | `{ roomId, eventId?: Id<"events">, before?: ISODate, limit?: number }` (default 100) → `Message[]` | Oldest first within the page; text in the viewer's language |
 | `messages.send` | mutation | `{ roomId, eventId?: Id<"events">, text, refs?: { proposalId, revision } }` → `{ messageId }` | Up to 2,000 characters. While a decision is open on a linked incident, only the side in turn may post (`INVALID_STATE` otherwise). Returns at once; translation and agent reactions arrive through `messages.list` [LANG-4, AGT-11] |
 | `summary.request` | mutation | `{ roomId }` → `null` | Asks the Coordination Host for the summary form now [ROOM-13] |
@@ -617,14 +618,14 @@ Counter uses `messages.send`, optionally referencing the selected proposal/revis
 
 ### 4.1 Approvals [M1, ROOM-2, ROOM-7, ROOM-11, EXE-1]
 
-UI contract: shared card selection, independent **Approve** and explicit **Veto**. Counters use normal text/voice messages. Selecting an alternative is not a counter. Speech and casual acknowledgements never approve.
+UI contract: shared card selection, **Approve** and explicit **Veto**, in turns. The decision belongs to the event and is made in the Decision Center; the room is only its channel. Required sides decide in order, side A then side B (user-flow "App navigation and the decision flow", point 6): while a card is selected and approvals are outstanding, only the side in turn may approve, veto or change the selection, and an off-turn call returns `INVALID_STATE`. Re-approving the same selection is idempotent. Counters use normal text/voice messages. Selecting an alternative is not a counter. Speech and casual acknowledgements never approve.
 
 Bilateral workflow requires A and B. Confirmed debris requires only the assigned active-object side; debris has no approval record or advocate. The proposed mover must be that active object. Missing active operators never trigger unilateral authorization. `internal_review` disables scheduling until a separate approval rule is defined.
 
 `approvals.approve` runs in one Convex transaction and checks, in order:
 
 1. The caller is an `operator` with a current assignment to the required active-object side in that company → else `FORBIDDEN`. The workflow must allow scheduling.
-2. The event status is `proposal` or `communication` → else `INVALID_STATE`.
+2. The event status is `proposal` or `communication` → else `INVALID_STATE` (`ALREADY_DECIDED` once it is `approved` or `scheduled`). Publishing candidates moves `new`/`agents` to `proposal`; starting the workflow sets `communication`.
 3. `(proposalId, revision, selectionGeneration, approvalRuleVersion)` identifies the current selection and workflow → else `NOT_SELECTED` or `STALE_REVISION`. Material evidence/policy/assignment changes have already invalidated affected approvals and advanced the authorization generation. If the revision belongs to a trajectory plan, the server stores the plan's current `planVersion` with the approval.
 4. `revision` is the latest revision of that proposal → else `STALE_REVISION`.
 5. It stores the caller's real required side as `approved`, with user identity, time and selection generation. Only if every required side has valid current authorization does the event move to `approved`, returning `{ allRequiredApproved: true, requiredApprovalSides }`. Empty required-side lists never authorize scheduling. Confirmed debris never fabricates an approval for its missing side.

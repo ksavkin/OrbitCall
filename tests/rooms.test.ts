@@ -98,7 +98,7 @@ const select = (t: Backend, eventId: Id<"events">) => t.run(async ctx => {
 const approve = (t: Backend, eventId: Id<"events">, proposalId: Id<"proposals">, side: "A" | "B", userId: Id<"users">, companyId: Id<"companies">) =>
   t.run(ctx => ctx.db.insert("approvals", {
     eventId, side, status: "approved", userId, companyId, proposalId, revision: 1, selectionGeneration: 1, approvalRuleVersion: 1,
-    trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, current: true, at: FIXTURE_NOW,
+    trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, current: true, at: FIXTURE_NOW, assignmentVersion: 1,
   }));
 
 type Projection = {

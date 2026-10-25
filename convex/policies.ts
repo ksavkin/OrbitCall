@@ -4,6 +4,7 @@ import { requireOperator } from "./lib/operatorAccess";
 import { satellitePolicy } from "./lib/policyValidators";
 import { changedCategories, validatePolicies } from "./lib/policies";
 import { supersede } from "./lib/runs";
+import { resetApprovals } from "./lib/approvals";
 import { internal } from "./_generated/api";
 
 export const getMine = query({
@@ -47,6 +48,9 @@ export const update = mutation({
         .eq("role", "operator_advocate")).collect();
       for (const run of runs) if (run.status === "running" || run.status === "succeeded") await supersede(ctx, run._id);
       await ctx.db.insert("negotiationMessages", { eventId: set.eventId, side, kind: "policy_changed", categories, entries: [] });
+      // A policy edit is material: approvals signed on the old policy stop counting (spec §4.1 Resets).
+      const event = await ctx.db.get(set.eventId);
+      if (set.state === "open" && event) await resetApprovals(ctx, event, "policy_changed");
       if (set.state === "scheduled") await ctx.db.patch(set._id, { reviewRequired: true });
       else await ctx.scheduler.runAfter(0, internal.agents.advocate.negotiate, { eventId: set.eventId });
     }

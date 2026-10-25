@@ -7,6 +7,8 @@ import { loadFacts } from "./lib/events";
 import { inputKey } from "./lib/analyst";
 import { supersede } from "./lib/runs";
 import { ommSnapshotId } from "./lib/publishCandidates";
+import { syncProposals } from "./lib/proposals";
+import { RESOLVED_STATUSES } from "./lib/decision";
 import type { Id } from "./_generated/dataModel";
 
 export const publish = internalMutation({
@@ -63,6 +65,8 @@ export const publish = internalMutation({
     const previous = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     if ((previous?.version ?? null) !== baseVersion) throw new ConvexError({ code: "STALE_REVISION", message: "Candidate set changed; reload it before publishing." });
     if (previous && previous.state !== "open") throw new ConvexError({ code: "INVALID_STATE", message: "Scheduled or closed plans cannot be rewritten by candidate publication." });
+    // After consensus a change flags the plan for review; publication never silently replaces it (spec §4.1).
+    if (RESOLVED_STATUSES.has(event.status ?? "new")) throw new ConvexError({ code: "INVALID_STATE", message: "This incident is decided; its candidates can no longer change." });
     const candidateRevisionIds: Id<"candidateRevisions">[] = [];
     for (const c of candidates) {
       const latest = await ctx.db.query("candidateRevisions").withIndex("by_event_candidate_revision", q =>
@@ -84,6 +88,7 @@ export const publish = internalMutation({
       version: (previous?.version ?? 0) + 1, evidenceKey, candidateRevisionIds, state: "open" as const, reviewRequired: false };
     if (previous) await ctx.db.replace(previous._id, value);
     else await ctx.db.insert("candidateSets", value);
+    await syncProposals(ctx, event, candidateRevisionIds, previous !== null && previous.evidenceKey !== evidenceKey);
     const runs = await ctx.db.query("agentRuns").withIndex("by_event_role_company", q => q.eq("eventId", eventId).eq("role", "operator_advocate")).collect();
     for (const run of runs) if (run.status === "running" || run.status === "succeeded") await supersede(ctx, run._id);
     if (start) await ctx.scheduler.runAfter(0, internal.agents.advocate.negotiate, { eventId });
