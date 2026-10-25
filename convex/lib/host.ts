@@ -221,32 +221,141 @@ function parseJson(raw: string): unknown {
   try { return JSON.parse(raw); } catch { throw invalid("The model returned invalid JSON."); }
 }
 
-const NUMBER = /[0-9]+(?:\.[0-9]+)?/g;
-const canonical = (token: string) => String(Number(token));
+// NFKC folds fullwidth digits; other decimal scripts are mapped from their zero code point.
+const DIGIT_ZEROS = [0x0660, 0x06f0, 0x07c0, 0x0966, 0x09e6, 0x0a66, 0x0ae6, 0x0b66, 0x0be6, 0x0c66, 0x0ce6, 0x0d66,
+  0x0de6, 0x0e50, 0x0ed0, 0x0f20, 0x1040, 0x17e0, 0x1810, 0xff10];
 
-// Every number the host may write must already appear in an event, candidate, or message value.
-function evidenceNumbers(context: HostContext): Set<string> {
-  const allowed = new Set<string>();
-  const visit = (value: unknown): void => {
-    if (typeof value === "number") {
-      allowed.add(String(Math.abs(value)));
-      visit(String(Math.abs(value)));
-    } else if (typeof value === "string") {
-      for (const [token] of value.matchAll(NUMBER)) allowed.add(canonical(token));
-    } else if (Array.isArray(value)) {
-      value.forEach(visit);
-    } else if (value && typeof value === "object") {
-      Object.values(value).forEach(visit);
-    }
-  };
-  visit(context.events);
-  visit(context.messages);
-  return allowed;
+function normalize(value: string): string | null {
+  let unknown = false;
+  const result = value.normalize("NFKC").replace(/\u2212/g, "-").replace(/\p{Nd}/gu, digit => {
+    const code = digit.codePointAt(0)!;
+    if (code <= 0x39) return digit;
+    const zero = DIGIT_ZEROS.find(z => code >= z && code < z + 10);
+    if (zero === undefined) unknown = true;
+    return zero === undefined ? digit : String(code - zero);
+  });
+  return unknown ? null : result;
 }
 
-// Approval verbs aimed at people. The nouns "approval" and "authorization" stay allowed so the
-// host can report server-recorded state ("approval pending").
-const APPROVAL = /\b(?:approv(?:e|ed|es|ing)|authori[sz](?:e|ed|es|ing)|grant(?:s|ed|ing)?|sign(?:s|ed)?[- ]off|green[- ]?light(?:s|ed)?|cleared to)\b|одобр|утвержд|санкционир|разрешаю|批准|授权/iu;
+// Latin words with Cyrillic or Greek lookalike letters ("aрproved") evade word filters.
+const mixesScripts = (value: string) => [...value.matchAll(/\p{L}+/gu)].some(([word]) =>
+  /\p{Script=Latin}/u.test(word) && /[\p{Script=Cyrillic}\p{Script=Greek}]/u.test(word));
+
+// Approval nouns are allowed only inside these fixed state phrases; everything else that claims
+// or grants approval is rejected.
+const APPROVAL_STATE = /\bapprovals? (?:is |are )?(?:still )?pending\b|\bno approvals? yet\b|\bawaiting approvals?\b|\bnot yet approved\b|\bsign[- ]?off (?:is )?(?:still )?pending\b/g;
+const APPROVAL_RECORDED = /\bapprovals? (?:is |are )?recorded\b/g;
+const APPROVAL_CLAIM = /\b(?:approv\w*|authori[sz]\w*|accept(?:s|ed|ing|ance)?|cleared (?:for|to)|go[- ]?ahead|ok['’]?d|okayed|green[- ]?(?:lit|light\w*)|endors\w*|sign(?:s|ed)?[- ]?off|ratif\w*)\b|одобр|утвер(?:ж)?д|согласов|разреш|санкцион|批准|授权|同意|通过|核准/u;
+
+function claimsApproval(value: string, recorded: boolean): boolean {
+  let rest = value.toLowerCase().replace(APPROVAL_STATE, " ");
+  if (recorded) rest = rest.replace(APPROVAL_RECORDED, " ");
+  return APPROVAL_CLAIM.test(rest);
+}
+
+const ISO_TIME = /(?<!\d)\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z?)?(?!\d)/g;
+const CLOCK = /(?<![\d:])\d{1,2}:\d{2}(?::\d{2})?(?![\d:])/g;
+const TOKEN = /(?<![\p{L}\p{N}])(?<!\p{N}[.,])[\p{L}\p{N}]+(?:[-_:][\p{L}\p{N}]+)*(?![\p{L}\p{N}])(?![.,]\p{N})/gu;
+const UNIT_OR_ORDINAL = /^\d+(?:st|nd|rd|th|km|m|s|h|hr|hrs|min|mins|kg)$/i;
+const NUMBER = /(?:(?<![\p{L}\p{N}])-)?\d+(?:[.,]\d+)*(?:e[+-]?\d+)?/giu;
+
+interface Evidence {
+  ids: Set<string>;
+  idPrefixes: Set<string>;
+  instants: Set<number>;
+  dates: Set<string>;
+  clocks: Set<string>;
+  numbers: number[];
+}
+
+const instant = (value: string) => Date.parse(value.replace(" ", "T").replace(/Z?$/, "Z"));
+const clock = (value: string) => (value.indexOf(":") === 1 ? "0" : "") + value;
+
+// Pulls times and ID-like tokens out of prose so the remaining text holds only free numbers.
+function scan(value: string, evidence: Pick<Evidence, "ids" | "idPrefixes">) {
+  const times: string[] = [];
+  const clocks: string[] = [];
+  const unknownIds: string[] = [];
+  let rest = value.replace(ISO_TIME, match => { times.push(match); return " "; });
+  rest = rest.replace(CLOCK, match => { clocks.push(clock(match)); return " "; });
+  rest = rest.replace(TOKEN, token => {
+    if (evidence.ids.has(token)) return " ";
+    const joint = token.search(/[-_:]/);
+    const idShaped = !UNIT_OR_ORDINAL.test(token) && ((/\p{L}/u.test(token) && /\p{N}/u.test(token)) ||
+      (joint > 0 && evidence.idPrefixes.has(token.slice(0, joint).toLowerCase())));
+    if (idShaped) unknownIds.push(token);
+    return token;
+  });
+  return { times, clocks, unknownIds, numbers: [...rest.matchAll(NUMBER)].map(([n]) => n) };
+}
+
+// "1,000" is a thousands separator; any other comma is a decimal comma.
+function parseNumber(token: string): { value: number; decimals: number; exponent: boolean } | null {
+  const [, sign, digits, exponent = ""] = /^(-?)([\d.,]+)(e[+-]?\d+)?$/i.exec(token) ?? [];
+  if (digits === undefined) return null;
+  const parts = digits.split(/([.,])/);
+  let body = parts[0];
+  for (let i = 1; i < parts.length; i += 2) body += parts[i] === "," && parts[i + 1].length === 3 ? parts[i + 1] : `.${parts[i + 1]}`;
+  if (body.split(".").length > 2) return null;
+  const value = Number(sign + body + exponent);
+  return Number.isFinite(value) ? { value, decimals: body.split(".")[1]?.length ?? 0, exponent: Boolean(exponent) } : null;
+}
+
+const same = (a: number, b: number) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+const rounded = (value: number, decimals: number) => Math.round(value * 10 ** decimals) / 10 ** decimals;
+
+// A stated number is grounded when it equals an evidence value, or rounds one to the stated
+// decimals without rounding it away to zero.
+function grounded(token: string, numbers: number[]): boolean {
+  const n = parseNumber(token);
+  if (!n) return false;
+  return numbers.some(e => same(e, n.value) || (!n.exponent && n.value !== 0 && same(rounded(e, n.decimals), n.value)));
+}
+
+function gatherEvidence(context: HostContext): Evidence {
+  const ids = new Set<string>([
+    ...context.members.map(m => m.companyId),
+    ...context.messages.flatMap(m => [m.messageId, m.companyId]),
+    ...context.events.flatMap(e => [
+      e.eventId, e.objectAId, e.objectBId,
+      ...e.candidates.flatMap(c => [c.candidateId, ...(c.movingObjectId === null ? [] : [c.movingObjectId])]),
+      ...e.feasibility.map(f => f.companyId), ...e.approvals.map(a => a.companyId),
+    ]),
+  ]);
+  const idPrefixes = new Set([...ids].map(id => /^(.+?)[-_:]/.exec(id)?.[1].toLowerCase()).filter((p): p is string => Boolean(p)));
+  const timestamps = [
+    ...context.events.flatMap(e => [e.tcaUtc, ...e.candidates.flatMap(c => c.burnTimeUtc === null ? [] : [c.burnTimeUtc])]),
+    ...context.messages.map(m => m.createdAt),
+  ].map(t => new Date(Date.parse(t))).filter(d => Number.isFinite(d.getTime()));
+  const numbers: number[] = [];
+  const free = (value: string) => {
+    const normal = normalize(value);
+    if (normal === null) return;
+    for (const token of scan(normal, { ids, idPrefixes }).numbers) {
+      const n = parseNumber(token);
+      if (n) numbers.push(n.value);
+    }
+  };
+  for (const e of context.events) {
+    numbers.push(e.missKm);
+    const tca = Date.parse(e.tcaUtc);
+    for (const c of e.candidates) {
+      numbers.push(c.revision, ...[c.deltaVMs, c.missAfterKm].filter((n): n is number => n !== null));
+      free(c.label);
+      const lead = c.burnTimeUtc === null ? NaN : Math.abs(tca - Date.parse(c.burnTimeUtc));
+      if (Number.isFinite(lead) && lead > 0) numbers.push(Math.round(lead / 3_600_000), Math.round(lead / 60_000));
+    }
+    for (const f of e.feasibility) { numbers.push(f.revision); f.categories.forEach(free); }
+    for (const a of e.approvals) numbers.push(a.revision);
+  }
+  context.messages.forEach(m => free(m.text));
+  return {
+    ids, idPrefixes, numbers,
+    instants: new Set(timestamps.map(d => d.getTime())),
+    dates: new Set(timestamps.map(d => d.toISOString().slice(0, 10))),
+    clocks: new Set(timestamps.flatMap(d => [d.toISOString().slice(11, 16), d.toISOString().slice(11, 19)])),
+  };
+}
 
 export function checkHostOutput(raw: string, context: HostContext): HostOutput {
   const top = exact(parseJson(raw), ["inputVersion", "clarifications", "requestedRevisions", "summaries"]);
@@ -274,11 +383,22 @@ export function checkHostOutput(raw: string, context: HostContext): HostOutput {
     if (!found) throw violation("The host referenced an event that is not in this room.");
     return found;
   };
-  const allowed = evidenceNumbers(context);
-  const prose = (value: string) => {
-    if (APPROVAL.test(value)) throw violation("Host text cannot contain approval language.");
-    for (const [token] of value.matchAll(NUMBER)) {
-      if (!allowed.has(canonical(token))) throw violation("Host text contains a number that is not in the shared evidence.");
+  const evidence = gatherEvidence(context);
+  const anyApproval = context.events.some(e => e.approvals.length > 0);
+  const prose = (value: string, recorded: boolean) => {
+    const normal = normalize(value);
+    if (normal === null) throw violation("Host text contains digits from an unsupported script.");
+    if (mixesScripts(normal)) throw violation("Host text mixes Latin letters with lookalike letters from another script.");
+    if (claimsApproval(normal, recorded)) throw violation("Host text cannot claim or grant an approval.");
+    const found = scan(normal, evidence);
+    for (const time of found.times) {
+      const known = time.length === 10 ? evidence.dates.has(time) : evidence.instants.has(instant(time));
+      if (!known) throw violation("Host text contains a time that is not in the shared evidence.");
+    }
+    if (found.clocks.some(c => !evidence.clocks.has(c))) throw violation("Host text contains a time that is not in the shared evidence.");
+    if (found.unknownIds.length) throw violation("Host text names an ID that is not in this room.");
+    if (found.numbers.some(n => !grounded(n, evidence.numbers))) {
+      throw violation("Host text contains a number that is not in the shared evidence.");
     }
   };
   const cited = (messageIds: string[]) => {
@@ -287,20 +407,20 @@ export function checkHostOutput(raw: string, context: HostContext): HostOutput {
 
   for (const c of output.clarifications) {
     if (c.eventId !== null) event(c.eventId);
-    cited(c.messageIds); prose(c.question);
+    cited(c.messageIds); prose(c.question, anyApproval);
   }
   for (const r of output.requestedRevisions) {
     if (!event(r.eventId).candidates.some(c => c.candidateId === r.candidateId)) {
       throw violation("A requested revision must name an existing candidate of the same event.");
     }
-    cited(r.messageIds); prose(r.reason);
+    cited(r.messageIds); prose(r.reason, anyApproval);
   }
   const summarized = new Set<string>();
   for (const s of output.summaries) {
-    event(s.eventId);
+    const summarizedEvent = event(s.eventId);
     if (summarized.has(s.eventId)) throw violation("The host wrote two summaries for one event.");
     summarized.add(s.eventId);
-    cited(s.messageIds); prose(s.text);
+    cited(s.messageIds); prose(s.text, summarizedEvent.approvals.length > 0);
   }
   return output;
 }

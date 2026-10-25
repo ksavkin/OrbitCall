@@ -139,6 +139,107 @@ describe("Coordination Host output check", () => {
   });
 });
 
+const summary = (text: string, eventId = "evt-1") => raw({ ...output, summaries: [{ eventId, text, messageIds: [] }] });
+const question = (text: string) => raw({ ...output, clarifications: [{ question: text, eventId: null, messageIds: [] }] });
+const withApprovals = (eventIndex: number): HostContext => ({
+  ...hostContext,
+  events: hostContext.events.map((e, i) => i === eventIndex
+    ? { ...e, approvals: [{ companyId: "co-a", candidateId: e.candidates[0].candidateId, revision: e.candidates[0].revision }] } : e),
+});
+const silentMember: HostContext = { ...hostContext, members: [...hostContext.members, { companyId: "jh77xq", language: "zh" }] };
+
+describe("Coordination Host approval language", () => {
+  it.each([
+    "co-a's approval of cand-1 is recorded; all approvals are complete.",
+    "Both operators accepted cand-1; it is cleared for scheduling.",
+    "co-b OK'd cand-1 and gave the go-ahead.",
+    "cand-1 was green-lit.",
+    "cand-1 was greenlit by co-b.",
+    "cand-1 is \u0430pproved.",
+    "co-b endorsed cand-1.",
+    "The plan for cand-1 was ratified.",
+    "Authorization for cand-1 is complete.",
+    "co-b sign-off is complete.",
+    "Манёвр cand-1 согласован.",
+    "co-b 已批准 cand-1.",
+  ])("rejects %j", text => {
+    expect(codeOf(() => checkHostOutput(summary(text), hostContext))).toBe("CONSTRAINT_CHECK_FAILED");
+  });
+
+  it.each([
+    "cand-1 is not yet approved by co-b.",
+    "co-b sign-off is still pending.",
+    "Approval is pending.",
+    "Approvals are still pending for cand-1.",
+    "There are no approvals yet.",
+    "Awaiting approval from co-b.",
+    "Time granted for review.",
+  ])("allows the state phrase %j", text => {
+    expect(codeOf(() => checkHostOutput(summary(text), hostContext))).toBe("NO_ERROR");
+  });
+
+  it("allows 'approval is recorded' only when the server reports an approval", () => {
+    const text = "co-a's approval is recorded.";
+    expect(codeOf(() => checkHostOutput(summary(text), hostContext))).toBe("CONSTRAINT_CHECK_FAILED");
+    expect(codeOf(() => checkHostOutput(summary(text), withApprovals(0)))).toBe("NO_ERROR");
+    expect(codeOf(() => checkHostOutput(summary(text), withApprovals(1)))).toBe("CONSTRAINT_CHECK_FAILED");
+    expect(codeOf(() => checkHostOutput(question("Is co-a's approval recorded?"), hostContext))).toBe("CONSTRAINT_CHECK_FAILED");
+    expect(codeOf(() => checkHostOutput(question("Is co-a's approval recorded?"), withApprovals(1)))).toBe("NO_ERROR");
+  });
+});
+
+describe("Coordination Host ID references", () => {
+  it.each([
+    "cand-7 and evt-5 look better.",
+    "msg-77 asked for a delay.",
+    "co-z has not spoken.",
+    "Object x9q is nearby.",
+  ])("rejects the unknown ID in %j", text => {
+    expect(codeOf(() => checkHostOutput(summary(text), hostContext))).toBe("CONSTRAINT_CHECK_FAILED");
+  });
+
+  it("accepts a silent member's company ID and object IDs", () => {
+    expect(codeOf(() => checkHostOutput(question("Can jh77xq confirm the fuel check?"), silentMember))).toBe("NO_ERROR");
+    expect(codeOf(() => checkHostOutput(question("Can jh77xq confirm the fuel check?"), hostContext))).toBe("CONSTRAINT_CHECK_FAILED");
+    expect(codeOf(() => checkHostOutput(summary("44713 and SIM-9 are not in this event.", "evt-2"), hostContext))).toBe("NO_ERROR");
+  });
+
+  it("does not treat digits inside IDs or message times as evidence", () => {
+    expect(codeOf(() => checkHostOutput(summary("Miss distance is 77 km."), silentMember))).toBe("CONSTRAINT_CHECK_FAILED");
+    expect(codeOf(() => checkHostOutput(summary("Miss distance is 713 km."), hostContext))).toBe("CONSTRAINT_CHECK_FAILED");
+    expect(codeOf(() => checkHostOutput(summary("Miss distance is 24 km."), hostContext))).toBe("CONSTRAINT_CHECK_FAILED");
+  });
+});
+
+describe("Coordination Host numbers and times", () => {
+  it.each([
+    "Miss distance is 1,000 km.",
+    "Miss distance is 0,3 km.",
+    "Miss distance is 2e3 km.",
+    "cand-1 changes velocity by -0.8 m/s.",
+    "cand-1 changes velocity by \u22120.8 m/s.",
+    "Miss distance is \uff10.\uff15 km.",
+    "Miss distance is \u0664\u0660 km.",
+    "Miss distance is 0 km.",
+    "Closest approach is at 2026-10-26T15:03:00Z.",
+    "Closest approach is on 2026-10-29.",
+    "The burn is at 01:45 UTC.",
+  ])("rejects %j", text => {
+    expect(codeOf(() => checkHostOutput(summary(text), hostContext))).toBe("CONSTRAINT_CHECK_FAILED");
+  });
+
+  it.each([
+    "Miss distance is about 0.4 km.",
+    "cand-1 changes velocity by 0.80 m/s.",
+    "The burn is 12 hours before closest approach.",
+    "co-a asked to move the burn \u0663\u0660 minutes earlier.",
+    "Closest approach is at 14:03 UTC on 2026-10-26.",
+    "The cand-1 burn is at 2026-10-26T02:00:00Z.",
+  ])("accepts %j", text => {
+    expect(codeOf(() => checkHostOutput(summary(text), hostContext))).toBe("NO_ERROR");
+  });
+});
+
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/test-gemini:generateContent";
 function geminiResponse(text: string, finishReason = "STOP") {
   return new Response(JSON.stringify({
@@ -253,4 +354,5 @@ describe("Coordination Host action", () => {
     await expect(run({ ...hostContext, policy: {} } as HostContext)).rejects.toThrow();
     expect(fetch).not.toHaveBeenCalled();
   });
+
 });
