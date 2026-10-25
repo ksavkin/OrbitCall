@@ -1,6 +1,8 @@
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { roomOfEvent } from "../rooms";
+import { inputKey } from "./analyst";
+import { loadFacts } from "./events";
 
 // Approval rules shared by proposals.ts, approvals.ts and candidates.publish (spec §4.1, ROOM-7, ROOM-11, ROOM-14).
 // Main's write-time model: a reset marks approval rows not current and advances the selection generation; old rows
@@ -29,7 +31,7 @@ export async function classifyIfUnset(ctx: MutationCtx, event: Doc<"events">): P
   return { ...event, ...patch };
 }
 
-export type ResetReason = "selection_changed" | "revision_changed" | "proposal_withdrawn" | "vetoed";
+export type ResetReason = "selection_changed" | "revision_changed" | "proposal_withdrawn" | "vetoed" | "policy_changed" | "assignment_revoked";
 type Next = { proposalId: Id<"proposals">; revision: number } | null;
 type By = Doc<"selections">["by"];
 
@@ -93,3 +95,43 @@ export async function countingApprovals(ctx: QueryCtx, event: Doc<"events">, sel
 
 export const allApproved = (event: Doc<"events">, counted: Map<Side, unknown>) =>
   !!event.requiredApprovalSides?.length && event.requiredApprovalSides.every(s => counted.has(s));
+
+/** The decision turn from the approvals that count: the first required side, A before B, without one. */
+export const turnOf = (event: Doc<"events">, counted: Map<Side, unknown>): Side | null =>
+  [...(event.requiredApprovalSides ?? [])].sort().find(s => !counted.has(s)) ?? null;
+
+/** A material change (policy, authorization) resets the event's approvals and keeps its selected card (spec §4.1). */
+export async function resetApprovals(ctx: MutationCtx, event: Doc<"events">, reason: ResetReason) {
+  const row = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
+  // Approvals need a selection, so an event without one has nothing to reset.
+  if (!row) return;
+  const next = row.proposalId && row.revision !== null ? { proposalId: row.proposalId, revision: row.revision } : null;
+  await advanceSelection(ctx, event, next, row.by, reason);
+}
+
+/**
+ * Called after provisioning changes a user's role or assignments: every current approval the user signed for an
+ * object they no longer hold as an operator is reset at once, so restoring the assignment never revives it (ACC-2).
+ */
+export async function revalidateApprover(ctx: MutationCtx, userId: Id<"users">) {
+  const user = await ctx.db.get(userId);
+  // No index by user: approvals are few per deployment, and a missed row would keep a revoked approval alive.
+  const rows: Doc<"approvals">[] = [];
+  for await (const row of ctx.db.query("approvals")) if (row.userId === userId && row.current) rows.push(row);
+  for (const eventId of new Set(rows.map(r => r.eventId))) {
+    const event = await ctx.db.get(eventId);
+    if (!event) continue;
+    const stale = await Promise.all(rows.filter(r => r.eventId === eventId).map(async r => {
+      const object = await ctx.db.get(r.side === "A" ? event.objectAId : event.objectBId);
+      const assignment = object && await ctx.db.query("fleetAssignments").withIndex("by_user_object", q =>
+        q.eq("userId", userId).eq("objectId", object.objectId)).unique();
+      return user?.role !== "operator" || user.companyId !== r.companyId || !assignment?.active;
+    }));
+    if (stale.some(Boolean)) await resetApprovals(ctx, event, "assignment_revoked");
+  }
+}
+
+/** Whether the candidate set was computed on the event's current evidence. */
+export async function currentEvidence(ctx: QueryCtx, event: Doc<"events">, set: Doc<"candidateSets">) {
+  return set.evidenceKey === inputKey(await loadFacts(ctx, event));
+}

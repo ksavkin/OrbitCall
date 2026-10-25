@@ -1,6 +1,7 @@
 import { internalMutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { contactPatch, lang, LEGACY_ASSIGNMENT_VERSION, profileText, setActiveAssignments, userRole } from "./lib/accounts";
+import { revalidateApprover } from "./lib/approvals";
 
 // Trusted account/ownership setup, not registration. No browser may claim a company or satellite.
 // Optional profile and settings fields: omitted keeps the stored value; provided overwrites it.
@@ -49,6 +50,8 @@ export const provision = internalMutation({
       if (user) await ctx.db.patch(user._id, profile);
       const userId = user?._id ?? await ctx.db.insert("users", { tokenIdentifier: member.tokenIdentifier, companyId, ...profile });
       await setActiveAssignments(ctx, (await ctx.db.get(userId))!, member.assignedObjectIds, { created: !user });
+      // A revoked assignment or role resets the approvals it signed (ACC-2, spec §4.1).
+      if (user) await revalidateApprover(ctx, userId);
     }
     return { companyId };
   },
