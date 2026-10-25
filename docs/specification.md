@@ -50,7 +50,7 @@ type Side = "A" | "B";
 |---|---|
 | `operator` | Everything in section 3, limited to events involving at least one currently assigned object of their company, plus their own company's policy and settings |
 | `head_of_ops` | `users.me`, `fleet.listMine`, `events.myQueue`, `log.list`, `reports.*` for their own company; company scope, read-only |
-| `demo_observer` | `users.me`, `catalog.snapshot`, `demo.publicView` for its assigned demo run; no approval, policy, private trace, or raw memory access |
+| `demo_observer` | `users.me`, `catalog.snapshot`, `demo.myRun`, `demo.publicView` for its assigned demo run; no approval, policy, private trace, or raw memory access |
 
 A **party company** operates `objectA` or `objectB`. A **fleet assignment** grants an authenticated user responsibility for an object within that company. Event actions (select, approve, veto) require company membership and a current assignment to the corresponding active object; otherwise `FORBIDDEN`. Room chat/call/read requires explicit group-room membership derived from involvement in a linked event. Shared room access never grants approval rights on unrelated sides or access to private records. Side is resolved on the server, never accepted from the browser. Public catalog browsing grants no room access. Demo assignments are seeded, not editable by clients. Revocation invalidates affected approvals. Every additional group member (third, fourth or later) is an ordinary fleet operator involved in a linked event, distinct from deferred unsolicited affected-party notices.
 
@@ -533,6 +533,7 @@ Each entry: kind · arguments → result · who · errors beyond `UNAUTHENTICATE
 | Function | Kind | Arguments → result | Notes |
 |---|---|---|---|
 | `users.me` | query | `{}` → `{ userId, name, role, language, dispatcherCountry, company: { companyId, name, country, simulated }, assignedObjectIds, assignmentVersion }` | Any user |
+| `demo.myRun` | query | `{}` → `{ demoRunId, scenario } \| null` | Observer only: the newest open run whose manifest grants this observer, or null while none does. Reactive, so a reset and a new grant move the large display to the new run |
 | `demo.publicView` | query | `{ demoRunId }` → observer projection | Dedicated run-authorized observer. Shared globe/scan/proposal/job/results only; no private policy/memory or controls |
 | `config.flags` | query | `{}` → `{ demoLaunch, voice, droid, secondModel }` (booleans) | Hide what is off: no launch form, no call button [LANG-7] |
 
