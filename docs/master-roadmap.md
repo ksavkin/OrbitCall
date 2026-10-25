@@ -78,12 +78,15 @@ This is a rehearsal sequence, not measured timing. Keep the main presentation un
 ### Flexible participation
 
 - A conjunction event always represents two objects and one encounter time.
-- A coordination room groups related events and supports 2-4 operator companies for this build.
-- The rehearsed room has three operators. A fourth is supported, not required on stage.
+- A situation with more satellites is several linked pair events. A coordination room groups all of them and every operator company they involve. There is no fixed company cap.
+- The rehearsed room has three operators. Another operator joins when a linked event concerns their fleet. A fourth is supported, not required on stage.
 - A debris incident has one active operator. It can use its own incident workspace or appear in a relevant group room.
-- The room limit is a demo design choice, not a limit from orbital mechanics.
+- Room size is limited by usability and the host's context size, not by orbital mechanics. Section 6 sets the host limit.
 - Keep approvals per event. Attendance in the group never approves every event.
 - Shared spacecraft or a shared maneuver version can link decisions. A material trajectory change invalidates approvals only where their inputs are affected.
+- A maneuver of one spacecraft has one trajectory plan. The plan lists every pair event the moved trajectory affects.
+- The moved trajectory is re-screened once against the full catalog. Its schedule needs every affected pair's required approvals on the same plan version.
+- A new plan version invalidates approvals in every affected pair event. Linked events that do not use the moved trajectory keep their approvals.
 
 NASA defines conjunctions between two trajectories and requires mitigation trajectories to be screened for new risk. Our room grouping is the product design around those pair events. [NASA process definitions](https://www.nasa.gov/cara/training-materials-and-documentation/), [NASA mitigation guidance](https://nodis3.gsfc.nasa.gov/displayDir.cfm?Internal_ID=N_PR_8079_0001_&page_name=Chapter4).
 
@@ -321,6 +324,7 @@ Three companies produce three advocate instances. The number of advocates follow
 
 - Trigger the host when a relevant final human message arrives, checked candidate results change, a summary is requested, or a call ends. Deduplicate by room, input version, and trigger. Its own messages do not trigger another host run.
 - Send only shared messages with source IDs, linked event facts, current candidate revisions, shareable feasibility outcomes, and server-reported approval state. Private policies and Backboard memory stay with the authorized advocate.
+- Send every linked event in the room, so the host sees all pairs and shared movers. The host context accepts up to 24 linked events. A larger room fails the host run with a visible reason. It never drops an event silently.
 - Call `models.generateContent` through `@google/genai` in a Convex Node action. Use a JSON Schema for an allowlisted result: referenced event/message IDs, clarification questions, requested revisions, and per-event summary text.
 - Check referenced IDs, numerical values, room membership, and input freshness before publishing through a mutation. A requested revision returns to the existing calculation and validation flow.
 - Generate canonical host text, then use Claude translation and the selected Cartesia/Grok TTS routes for each listener. Host speech cannot create an approval.
@@ -361,11 +365,11 @@ Do not store the full orbital catalog as a live stream of one Convex write per m
 | Snapshot | Snapshot ID, source URLs, epochs, fetch times, object count, content hash |
 | Scan run | Caller, assigned primary IDs/version, snapshot, start/end window, phase, counters, coverage, errors |
 | Event | Canonical pair, closest-approach time, geometry, supplied probability/provenance, current evidence version, workflow |
-| Coordination room | Room ID, linked event IDs, membership, shared messages, call state, demo run |
+| Coordination room | Room ID, linked event IDs, membership with no fixed company cap, shared messages, call state, demo run |
 | Proposal revision | Event, stable proposal ID, immutable revision, calculated maneuver or wait, assumptions, feasibility |
 | Selection | Event, proposal ID, revision, monotonic selection generation |
 | Approval | Event, selection generation, revision, real approver, side, time, current authorization context |
-| Trajectory plan | Object ID, current scheduled trajectory version, affected events, schedule-artifact reference |
+| Trajectory plan | Object ID, current scheduled trajectory version, affected events, the proposal revision used in each affected event, schedule-artifact reference |
 | Job or provider run | Job ID, input version, attempt, running/finished state, public progress, sanitized result/error |
 | Demo manifest | Run ID, scenario, object assignments, model/voice versions, provider readiness, observation provenance |
 
@@ -393,7 +397,7 @@ Names below are the implementation target, not a claim that all functions exist 
 | Catalog | `catalog.snapshot`, `events.orbits` | Versioned OMM manifest and authorized event orbits |
 | Scan | `scans.startMine`, `scans.getMine` | Full assigned-fleet scan, deduplication, progress, coverage |
 | Queue | `events.myQueue`, `inbox.list`, `inbox.markRead` | Personal work and unread updates |
-| Group room | `rooms.get`, `rooms.byId`, `rooms.join`, `rooms.leave` | Event-scoped entry plus 2-4 operator room context |
+| Group room | `rooms.get`, `rooms.byId`, `rooms.join`, `rooms.leave` | Event-scoped entry plus room context for every linked event and operator |
 | Discussion | `messages.list`, `messages.send`, `summary.request` | Persistent original/translated conversation with event references |
 | Proposals | `proposals.list`, `proposals.revisions`, `rooms.select` | Up to four cards and a shared event-specific selection |
 | Approval | `approvals.approve`, `approvals.veto` | Explicit current event-specific authorization |
@@ -484,6 +488,7 @@ The initial candidate grid keeps the existing demo bounds: lead times of 12, 6, 
 
 - A room links events that require the same coordination discussion. Do not merge the entire global encounter graph automatically.
 - At least one linked event must concern each participating operator. The main demo contains US/RU and US/CN.
+- Membership has no fixed company count. A room grows when a new linked event concerns another operator.
 - A member can read that room's intentionally shared event cards and conversation. This does not grant full fleet, private policy, private memory, or unrelated incident access.
 - My Incidents remains assignment-scoped. A linked room card can have `canAct: false` for a member who is not an approval side of that event.
 - The large display gets a dedicated observer projection. It cannot read raw policies, private traces, memory contents, or approval controls.
@@ -531,7 +536,7 @@ Convex and SpaceXAI are the main sponsor targets. Factory, Backboard, and Tiger 
 7. The worker executes that intent once, serializing writes to a given schedule workspace. It verifies the file hash and expected previous version, then records the Git commit/diff.
 8. Convex stores the result and artifact reference. A retry returns the existing result rather than adding another maneuver.
 
-The external filesystem operation is not part of a Convex transaction. Material changes after write reservation mark the intent/scheduled plan for review and stop silent replacement. A proposed revision requires fresh authorization. If two events depend on the same moved spacecraft, its trajectory-plan version is part of both authorization checks.
+The external filesystem operation is not part of a Convex transaction. Material changes after write reservation mark the intent/scheduled plan for review and stop silent replacement. A proposed revision requires fresh authorization. If several events depend on the same moved spacecraft, its trajectory-plan version is part of every affected event's authorization check. The scheduler re-screens that trajectory once and writes one schedule entry for it.
 
 Droid can edit the schedule workspace through allowlisted tools. It receives no spacecraft command interface, broad repository write access, cloud administrator key, or authority to change the approved numbers. SDK output is checked by code. A successful SDK call alone does not prove the artifact is valid.
 
@@ -774,7 +779,8 @@ For this two-package repo, deploy the root Convex package in the release workflo
 - Judge account sees exactly its assigned fleet. Other accounts see their own fleets.
 - Run Scan checks the full labeled fleet scope, even when one row is selected.
 - Both shared incidents use one canonical ID each across the relevant laptops.
-- Three people can join one room. A fourth account can join a separate test without changing pair approvals.
+- Three people can join one room. A fourth account can join through a linked event without changing other pair approvals.
+- A spacecraft that moves in two linked events uses one trajectory plan. A plan change resets approvals in both events.
 - English, Russian, and Mandarin values and object identifiers survive recognition, translation, and speech checks.
 - One operator introduces a new constraint. The relevant candidate changes and only affected approvals reset.
 - Gemini asks a relevant clarification and summarizes the current pair-specific plans. Claude's analysis/advocates and Grok's rationale check each show their own real call and result.
@@ -878,5 +884,6 @@ The old automatic Auth0 replacement, automatic non-Factory schedule writer and u
 |---|---|---|
 | October 24, 2026, v1.1 | Coordination Host moves from Claude to Gemini. Claude keeps analysis, advocates, and translation. Grok keeps independent checking and audio | User requested three meaningful agent providers and Best Use of Gemini API coverage. Adds the Google SDK, server-only key/model configuration, checked host output, and sponsor evidence. No extra duplicate review agent. Integration owners follow the work areas above. Documentation is aligned. The Gemini runtime and live checks remain to build |
 | October 24, 2026, baseline refresh | Include the OMM snapshot and renderer merged in `ec5ea34` | Update implementation status and the static asset-delivery path. The remaining fleet-screening and shared-deployment work stays explicit |
+| October 24, 2026, room size | Old: 2-4 operator companies per room. New: no fixed cap. A room groups all linked pair events. A maneuver of one spacecraft links its affected events through one trajectory plan | The user requires coordination for any number of involved satellites. Events stay pairs and approvals stay per pair event. Impact: `rooms` and `roomMembers` are uncapped, a `trajectoryPlans` table links each plan version to its affected events and proposal revisions, the host context limit rises from 10 to 24 linked events, and the UI renders N pair events in one room. Owners: schema task (round 1.5), Kostya (rooms, approvals, scheduler), Andrew (host, candidate publishing), Adil (room UI). Verification: the shared-mover rehearsal check in section 14. No sponsor impact |
 
 Future changes need a short record: date, old choice, new choice, reason, affected functions/services, verification, and sponsor impact. Keep `main` and `adil` synchronized when sharing a new agreed baseline. A push does not deploy the cloud services by itself.
