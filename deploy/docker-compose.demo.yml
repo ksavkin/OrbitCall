@@ -61,6 +61,13 @@ services:
       CARTESIA_VOICE_EN: ${CARTESIA_VOICE_EN}
       CARTESIA_VOICE_ZH: ${CARTESIA_VOICE_ZH}
       XAI_TTS_VOICE_ID: ${XAI_TTS_VOICE_ID}
+      # one voice per language and speaker gender; the three ids above are the fallback for both genders
+      CARTESIA_VOICE_EN_MALE: ${CARTESIA_VOICE_EN_MALE}
+      CARTESIA_VOICE_EN_FEMALE: ${CARTESIA_VOICE_EN_FEMALE}
+      CARTESIA_VOICE_ZH_MALE: ${CARTESIA_VOICE_ZH_MALE}
+      CARTESIA_VOICE_ZH_FEMALE: ${CARTESIA_VOICE_ZH_FEMALE}
+      XAI_TTS_VOICE_RU_MALE: ${XAI_TTS_VOICE_RU_MALE}
+      XAI_TTS_VOICE_RU_FEMALE: ${XAI_TTS_VOICE_RU_FEMALE}
       CONVEX_SITE_URL: ${CONVEX_SITE_URL}
       CALL_SERVICE_TOKEN: ${CALL_SERVICE_TOKEN:?set CALL_SERVICE_TOKEN}
     # 200 only when the providers, Convex settings and LiveKit registration are ready; 503 while degraded.

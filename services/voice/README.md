@@ -21,9 +21,12 @@ first member creates the room). One worker job per room.
 7. Rows to Convex `POST {CONVEX_SITE_URL}/call/phrase` (header `x-call-service-token`): rev 1 pending, rev 2 final,
    rev 3 only when a voice failed (`TTS_FAILED`, text stays `ok`). 4xx is logged and not retried; 5xx / network: one
    retry. `startedAtMs` is milliseconds from the call (LiveKit room) start.
-8. Voice on track `tr:<lang>:<speakerIdentity>`, 24 kHz mono: Cartesia (`CARTESIA_MODEL_ID`, `CARTESIA_VOICE_EN`,
-   `CARTESIA_VOICE_ZH`) for en/zh, Grok TTS (`XAI_TTS_VOICE_ID`) for ru. A language without a voice id is text-only;
-   there is no provider substitution.
+8. Voice on track `tr:<lang>:<speakerIdentity>`, 24 kHz mono, in the speaker's voice gender: the participant
+   attribute `voice` (`male` | `female`, signed into the join token by Convex; `TTS_DEFAULT_VOICE` otherwise). Cartesia
+   (`CARTESIA_MODEL_ID`) with the ids `CARTESIA_VOICE_{EN,ZH}_{MALE,FEMALE}` for en/zh, Grok TTS with
+   `XAI_TTS_VOICE_RU_{MALE,FEMALE}` for ru; `CARTESIA_VOICE_EN`, `CARTESIA_VOICE_ZH` and `XAI_TTS_VOICE_ID` are the
+   fallback for both genders of their language. A language and gender without an id is text-only for that gender;
+   there is no provider substitution and no cross-gender substitution.
 
 ## Run
 ```bash
@@ -35,8 +38,9 @@ python -m orbit_voice.roomcheck <roomId> clip.wav en ru    # in-room check again
 ```
 `GET :8090/health` (`HEALTH_PORT`): `ready` = xAI (STT, Grok TTS) + Anthropic + every TTS provider a configured voice
 uses + Convex settings + the worker registered in LiveKit (the agents worker's own endpoint on `WORKER_PORT`, default
-8081); `degraded` for 60 s after a run-time failure reported by a room job (`recentErrors`, last 5 min); `ok` = ready
-and not degraded (else 503). No keys in the answer. The Docker image runs as the unprivileged user `worker`. Docker: `docker build -t orbit-voice-worker .`.
+8081); `voice` lists per language which genders are voiced (provider name or `text-only`); `degraded` for 60 s after a
+run-time failure reported by a room job (`recentErrors`, last 5 min); `ok` = ready and not degraded (else 503). No keys
+or voice ids in the answer. The Docker image runs as the unprivileged user `worker`. Docker: `docker build -t orbit-voice-worker .`.
 
 ## Environment
 | Name | Default | Notes |
@@ -49,13 +53,16 @@ and not degraded (else 503). No keys in the answer. The Docker image runs as the
 | `STT_KEYTERMS` | glossary terms | comma list, up to 100 |
 | `ANTHROPIC_API_KEY`, `TRANSLATION_MODEL` | `claude-sonnet-5-5` | |
 | `CARTESIA_API_KEY`, `CARTESIA_MODEL_ID` | `sonic-3.6-2026-08-27` | |
-| `CARTESIA_VOICE_EN`, `CARTESIA_VOICE_ZH`, `XAI_TTS_VOICE_ID` | | missing id → that language text-only |
+| `CARTESIA_VOICE_EN_MALE`, `CARTESIA_VOICE_EN_FEMALE`, `CARTESIA_VOICE_ZH_MALE`, `CARTESIA_VOICE_ZH_FEMALE` | | Cartesia voice id per gender for en/zh; missing id → that language and gender text-only |
+| `XAI_TTS_VOICE_RU_MALE`, `XAI_TTS_VOICE_RU_FEMALE` | | Grok voice id per gender for ru; missing id → that language and gender text-only |
+| `CARTESIA_VOICE_EN`, `CARTESIA_VOICE_ZH`, `XAI_TTS_VOICE_ID` | | legacy ids: fallback for both genders of the language |
+| `TTS_DEFAULT_VOICE` | `female` | voice for a speaker with no `voice` attribute (`male` or `female`) |
 | `CONVEX_SITE_URL`, `CALL_SERVICE_TOKEN` | | phrase ingest |
 | `HEALTH_PORT`, `WORKER_PORT`, `LOG_LEVEL` | `8090`, `8081`, `INFO` | |
 | `MAX_ROOMS` | `20` | load = active rooms / MAX_ROOMS (threshold 0.95) |
 
 ## Tests
-`pip install -r requirements-dev.txt && python -m pytest -q` (125 cases, providers faked; no keys needed).
+`pip install -r requirements-dev.txt && python -m pytest -q` (129 cases, providers faked; no keys needed).
 
 ## Measured (2026-10-24, recorded clips, local LiveKit)
 STT final 1.2–2.2 s after speech end; translation into two languages 2.4–4.2 s; voice first byte 0.8–1.5 s after the
@@ -80,5 +87,5 @@ translation; translated audio at a listener 5.8–6.6 s after the speaker stoppe
 The stored `original` is the recognizer's text; zh normalization is used only for protection and translation.
 `errors[lang].code`: `VALUE_CHECK_FAILED` (placeholders / digits / number words), `TOO_LONG` (translation over 2000
 characters), `TOO_MANY_VALUES` (over 64 values: no translation), `UPSTREAM_UNAVAILABLE` (translation provider),
-`PIPELINE_FAILED` (unexpected), all with `original_only`; `VOICE_UNAVAILABLE` (no voice id) and `TTS_FAILED` keep the
-text `ok`. Playback is queued per track and never delays the next translation; a voice failure posts a later rev.
+`PIPELINE_FAILED` (unexpected), all with `original_only`; `VOICE_UNAVAILABLE` (no voice id for that language and
+gender) and `TTS_FAILED` keep the text `ok`. Playback is queued per track and never delays the next translation; a voice failure posts a later rev.

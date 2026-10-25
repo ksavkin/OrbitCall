@@ -73,9 +73,15 @@ receives just the names listed for it, so the voice worker never sees the orbit 
 | `XAI_STT_MODEL` | `voice` | No | Locked: `grok-voice-transcribe-2.0` (the Compose default) |
 | `TRANSLATION_MODEL` | `voice` | No | Locked: `claude-sonnet-5-5` (the Compose default) |
 | `CARTESIA_MODEL_ID` | `voice` | No | Locked: `sonic-3.6-2026-08-27` (the Compose default) |
-| `CARTESIA_VOICE_EN` | `voice` | No | Tested English voice ID, recorded in the demo manifest. Missing: English is text-only |
-| `CARTESIA_VOICE_ZH` | `voice` | No | Tested Mandarin voice ID, recorded in the demo manifest. Missing: Mandarin is text-only |
-| `XAI_TTS_VOICE_ID` | `voice` | No | Tested Russian voice ID, recorded in the demo manifest. Missing: Russian is text-only |
+| `CARTESIA_VOICE_EN` | `voice` | No | Fallback voice ID for both genders of English (Cartesia), recorded in the demo manifest. Missing, with no gendered id: English is text-only |
+| `CARTESIA_VOICE_ZH` | `voice` | No | Fallback voice ID for both genders of Mandarin (Cartesia), recorded in the demo manifest. Missing, with no gendered id: Mandarin is text-only |
+| `XAI_TTS_VOICE_ID` | `voice` | No | Fallback voice ID for both genders of Russian (Grok), recorded in the demo manifest. Missing, with no gendered id: Russian is text-only |
+| `CARTESIA_VOICE_EN_MALE` | `voice` | No | Male English voice ID (Cartesia). Missing: that gender falls back to the legacy id, else text-only |
+| `CARTESIA_VOICE_EN_FEMALE` | `voice` | No | Female English voice ID (Cartesia). Missing: that gender falls back to the legacy id, else text-only |
+| `CARTESIA_VOICE_ZH_MALE` | `voice` | No | Male Mandarin voice ID (Cartesia). Missing: that gender falls back to the legacy id, else text-only |
+| `CARTESIA_VOICE_ZH_FEMALE` | `voice` | No | Female Mandarin voice ID (Cartesia). Missing: that gender falls back to the legacy id, else text-only |
+| `XAI_TTS_VOICE_RU_MALE` | `voice` | No | Male Russian voice ID (Grok). Missing: that gender falls back to the legacy id, else text-only |
+| `XAI_TTS_VOICE_RU_FEMALE` | `voice` | No | Female Russian voice ID (Grok). Missing: that gender falls back to the legacy id, else text-only |
 | `CONVEX_SITE_URL` | `voice` | No | The shared Convex deployment's `.convex.site` URL (HTTP actions) |
 | `CALL_SERVICE_TOKEN` | `voice` | Yes | Sent as `x-call-service-token` to Convex `POST /call/phrase`; Convex's `CALL_SERVICE_TOKEN` holds the same value |
 
