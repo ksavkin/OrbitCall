@@ -1,8 +1,8 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Languages, Loader2, LogOut, Mic, MicOff, PhoneCall, Send, Volume2 } from "lucide-react";
-import { useState, type PointerEvent, type ReactNode } from "react";
+import { Languages, Loader2, LogOut, Mic, MicOff, PhoneCall, Send, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useState, type PointerEvent, type ReactNode } from "react";
 import type { Lang } from "@/call/api";
 import type { CallParticipant, UseCoordinationCall } from "@/call/useCoordinationCall";
 import { sfx } from "@/lib/sound";
@@ -176,6 +176,39 @@ function Captions({ c, cards }: { c: StageCall; cards?: RoomCard[] }) {
   );
 }
 
+/**
+ * Mutes the translated voices this tab plays. The call module plays them through <audio data-publication> elements
+ * it adds to the page (src/call/audio.ts, not edited here); muting those, and any added later, silences the room for
+ * this listener only. Speaking is unaffected.
+ */
+function SoundToggle() {
+  const [muted, setMuted] = useState(false);
+  useEffect(() => {
+    const apply = () => document.querySelectorAll<HTMLAudioElement>("audio[data-publication]").forEach((a) => (a.muted = muted));
+    apply();
+    const mo = new MutationObserver(apply);
+    mo.observe(document.body, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [muted]);
+  useEffect(() => () => document.querySelectorAll<HTMLAudioElement>("audio[data-publication]").forEach((a) => (a.muted = false)), []);
+  return (
+    <Tooltip label={muted ? "Turn the translated voices back on" : "Mute the translated voices for you"}>
+      <button
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/[0.05] text-neutral-300 transition-colors hover:bg-white/[0.09] hover:text-white"
+        style={muted ? { background: "rgba(255,90,79,0.14)", color: "#ff8a80" } : undefined}
+        aria-pressed={muted}
+        aria-label={muted ? "Unmute translated voices" : "Mute translated voices"}
+        onClick={() => {
+          sfx.toggle(!muted);
+          setMuted((m) => !m);
+        }}
+      >
+        {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+      </button>
+    </Tooltip>
+  );
+}
+
 function Controls({ c, joined }: { c: StageCall; joined: boolean }) {
   const [text, setText] = useState("");
   // primary button only: a right click opens the context menu and may never deliver pointerup (a stuck microphone)
@@ -257,10 +290,13 @@ function Controls({ c, joined }: { c: StageCall; joined: boolean }) {
         </>
       )}
 
-      {/* the text path (LANG-7): same translation, for noisy rooms */}
-      {c.sendText && c.role !== "observer" && (
+      {c.role !== "observer" && <SoundToggle />}
+
+      {/* the text path (LANG-7): same translation, for noisy rooms. Live calls get it with the room-messages backend */}
+      {c.role !== "observer" && (
         <form
-          className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full bg-white/[0.05] pl-4 pr-1 focus-within:bg-white/[0.08]"
+          className={`flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full bg-white/[0.05] pl-4 pr-1 focus-within:bg-white/[0.08] ${c.sendText ? "" : "opacity-60"}`}
+          title={c.sendText ? undefined : "Typed messages in live calls need room messages on the backend (messages.send) and a worker that voices text"}
           onSubmit={(ev) => {
             ev.preventDefault();
             c.sendText?.(text);
@@ -269,17 +305,17 @@ function Controls({ c, joined }: { c: StageCall; joined: boolean }) {
         >
           <input
             value={text}
+            disabled={!c.sendText}
             onChange={(ev) => setText(ev.target.value)}
             onKeyDown={(ev) => ev.stopPropagation()}
-            placeholder="Or type a message, the room translates it"
+            placeholder={c.sendText ? "Or type a message, the room translates it" : "Typing in live calls is coming: speak for now"}
             className="min-w-0 flex-1 bg-transparent text-[13.5px] text-white outline-none placeholder:text-neutral-600"
           />
-          <button className="grid h-8 w-8 place-items-center rounded-full bg-white text-black disabled:opacity-30" disabled={!text.trim()} aria-label="Send">
+          <button className="grid h-8 w-8 place-items-center rounded-full bg-white text-black disabled:opacity-30" disabled={!c.sendText || !text.trim()} aria-label="Send">
             <Send size={13} />
           </button>
         </form>
       )}
-      {!c.sendText && <span className="flex-1" />}
 
       {c.soundBlocked && (
         <button className="btn h-10 gap-1.5 px-3 text-[13px] text-amber" data-testid="call-sound" onClick={() => void c.enableSound()}>
