@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
+import { invalidateObjectApprovals } from "./approvalState";
 
 // Account vocabulary shared by the schema, provisioning and session functions.
 export const lang = v.union(v.literal("en"), v.literal("ru"), v.literal("zh"));
@@ -54,6 +55,8 @@ export async function setActiveAssignments(ctx: MutationCtx, user: Doc<"users">,
   const changed = before.size !== wanted.size || [...wanted].some(id => !before.has(id));
   const version = created ? 1 : (user.assignmentVersion ?? LEGACY_ASSIGNMENT_VERSION) + (changed ? 1 : 0);
   if (version !== user.assignmentVersion) await ctx.db.patch(user._id, { assignmentVersion: version });
+  // The version pins the entire assignment set, so every held incident gets a visible permanent reset.
+  if (changed) await invalidateObjectApprovals(ctx, [...new Set([...before, ...wanted])], "assignment_changed");
   return version;
 }
 

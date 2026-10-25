@@ -63,8 +63,11 @@ async function seedRoom(t: Backend, { companies = 2, events = 1 } = {}): Promise
 async function publishSet(t: Backend, eventId: Id<"events">, companyAId: Id<"companies">, companyBId: Id<"companies">, ids = ["P1", "P3"]) {
   return t.run(async ctx => {
     const candidateRevisionIds: Id<"candidateRevisions">[] = [];
+    const event = (await ctx.db.get(eventId))!;
+    const a = (await ctx.db.get(event.objectAId))!;
+    const b = (await ctx.db.get(event.objectBId))!;
     for (const c of advocateCandidates.filter(c => ids.includes(c.candidateId))) {
-      candidateRevisionIds.push(await ctx.db.insert("candidateRevisions", { eventId, ...c, assumptions: [...c.assumptions] }));
+      candidateRevisionIds.push(await ctx.db.insert("candidateRevisions", { eventId, ...c, movingObjectId: c.movingSide === "A" ? a.objectId : c.movingSide === "B" ? b.objectId : null, assumptions: [...c.assumptions] }));
     }
     const evidenceKey = inputKey(await loadFacts(ctx, (await ctx.db.get(eventId))!));
     await ctx.db.insert("candidateSets", { eventId, companyAId, companyBId, version: 1, evidenceKey, candidateRevisionIds, state: "open", reviewRequired: false });
@@ -245,7 +248,7 @@ describe("Coordination Host context", () => {
     const c = await context(t, room.roomId);
     expect(c.events.map(e => e.eventId)).toEqual([sooner, later]);
     expect(c.events[0].candidates.map(x => [x.candidateId, x.label, x.revision])).toEqual([[p1, "P1", 1], [p3, "P3", 1]]);
-    expect(c.events[0].candidates[0]).toEqual({ candidateId: p1, revision: 1, label: "P1", kind: "maneuver", movingObjectId: "SIM-1001",
+    expect(c.events[0].candidates[0]).toEqual({ candidateId: p1, revision: 1, label: "P1", kind: "maneuver", movingObjectId: "SIM-2001",
       burnTimeUtc: "2026-10-24T21:14:07Z", deltaVMs: 0.2, missAfterKm: 3.2 });
     expect(c.events[1].candidates.map(x => x.candidateId)).toContain(laterWait);
     expect(c.events[0].feasibility).toEqual([{ companyId: a, candidateId: p1, revision: 1, outcome: "preferred", categories: ["fuel"] }]);

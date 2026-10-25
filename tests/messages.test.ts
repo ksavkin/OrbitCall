@@ -1,3 +1,4 @@
+import { currentProposal } from "./currentDecision";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFunctionReference } from "convex/server";
 import { internal } from "../convex/_generated/api";
@@ -59,7 +60,7 @@ async function seed() {
 }
 const texts = async (t: Backend, args: Record<string, unknown>) => ((await as(t, "bo").query(list, args)) as View[]).map(m => m.text);
 const proposalFor = (t: Backend, eventId: Id<"events">) =>
-  t.run(ctx => ctx.db.insert("proposals", { eventId, candidateId: "P1", label: "P1", latestRevision: 1, demoRunId: null, createdAt: FIXTURE_NOW }));
+  t.run(ctx => currentProposal(ctx, eventId));
 
 describe("messages", () => {
   it("lets a room operator post a line every member reads back", async () => {
@@ -163,7 +164,7 @@ describe("messages", () => {
     await t.run(ctx => ctx.db.insert("approvals", {
       eventId: crossId, side: "A", status: "approved", userId: ids.ana._id, companyId: ids.north, proposalId, revision: 1,
       selectionGeneration: 1, approvalRuleVersion: 1, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null,
-      demoRunId: null, current: true, at: FIXTURE_NOW, assignmentVersion: 1,
+      demoRunId: null, current: true, at: Date.now(), assignmentVersion: 1,
     }));
     expect(await code(as(t, "ana").mutation(send, { roomId, text: "more" }))).toBe("INVALID_STATE");
     await as(t, "bo").mutation(send, { roomId, text: "B decides" });

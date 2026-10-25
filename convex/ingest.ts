@@ -2,9 +2,10 @@ import type { Id } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { AnalystError } from "./lib/analyst";
-import { ingestEncounter, TCA_MATCH_MS } from "./lib/events";
+import { ingestEncounter, sameSources, TCA_MATCH_MS } from "./lib/events";
 import { supersede } from "./lib/runs";
 import { objectInput, sourceRef } from "./lib/validators";
+import { invalidateEventApprovals } from "./lib/approvalState";
 
 // Bulk loading of a pinned catalog snapshot (scripts/load_snapshot.mjs). Rows are real, never simulated,
 // and never start the Analyst: the recolor step does.
@@ -24,8 +25,17 @@ export const register = internalMutation({
     }
     const stored = await ctx.db.query("snapshots").withIndex("by_snapshot_id", q => q.eq("snapshotId", snapshotId)).unique();
     if (!stored) return ctx.db.insert("snapshots", { snapshotId, sources, ommUrl });
-    if (JSON.stringify(stored.sources) !== JSON.stringify(sources)) await ctx.db.patch(stored._id, { sources });
-    if (stored.ommUrl !== ommUrl) await ctx.db.patch(stored._id, { ommUrl });
+    const sourcesChanged = !sameSources(stored.sources, sources);
+    const orbitChanged = stored.ommUrl !== ommUrl;
+    if (sourcesChanged) await ctx.db.patch(stored._id, { sources });
+    if (orbitChanged) await ctx.db.patch(stored._id, { ommUrl });
+    // The Analyst ignores a URL-only change; approval authorization still pins the orbital catalog it identifies.
+    if (sourcesChanged || orbitChanged) {
+      for await (const set of ctx.db.query("candidateSets")) {
+        const event = await ctx.db.get(set.eventId);
+        if (event?.snapshotId === stored._id) await invalidateEventApprovals(ctx, event, "evidence_changed");
+      }
+    }
     return stored._id;
   },
 });
@@ -90,6 +100,7 @@ export const retireMissing = internalMutation({
       const times = listed.get(unordered(await objectId(event.objectAId), await objectId(event.objectBId)));
       if (times?.some(t => Math.abs(t - event.tcaMs) <= TCA_MATCH_MS)) continue;
       await ctx.db.patch(event._id, { active: false });
+      await invalidateEventApprovals(ctx, event, "evidence_changed");
       const running = await ctx.db.query("agentRuns").withIndex("by_event_status", q =>
         q.eq("eventId", event._id).eq("status", "running")).collect();
       for (const run of running) await supersede(ctx, run._id);

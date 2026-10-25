@@ -2,7 +2,7 @@ import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { requireParty, requireReader } from "./lib/operatorAccess";
-import { advanceSelection, allApproved, assignmentVersionOf, classifyIfUnset, countingApprovals, currentEvidence, turnOf } from "./lib/approvals";
+import { advanceSelection, allApproved, assignmentVersionOf, classifyIfUnset, countingApprovals, decisionInputs, turnOf } from "./lib/approvals";
 import { isResolved } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
@@ -42,8 +42,11 @@ async function checkDecision(ctx: MutationCtx, args: Args) {
   const stored = await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
     q.eq("proposalId", args.proposalId).eq("revision", args.revision)).unique();
   if (proposal?.latestRevision !== args.revision || !stored || !set.candidateRevisionIds.includes(stored.candidateRevisionId)) throw stale();
-  // Candidates computed on older orbital evidence are not decidable until they are recomputed (spec §4.1 step 3).
-  if (!await currentEvidence(ctx, event, set)) throw error("STALE_REVISION", "The incident's evidence changed; wait for recomputed candidates.");
+  const inputs = await decisionInputs(ctx, event, selection);
+  if (!inputs) throw stale();
+  if (event.tcaMs <= Date.now() || (inputs.card.kind === "maneuver" && Date.parse(inputs.card.burnTimeUtc!) <= Date.now())) {
+    throw error("INVALID_STATE", "The encounter or selected burn is no longer in the future.");
+  }
   return { user, side, event, selection };
 }
 
@@ -120,13 +123,13 @@ export const approvalStatus = v.object({
   selected: nullable(v.object({ proposalId: v.id("proposals"), label: v.string(), revision: v.number(), generation: v.number() })),
   // Required sides only: never a debris or internal entry.
   approvals: v.object({ A: v.optional(sideApproval), B: v.optional(sideApproval) }),
-  allRequiredApproved: v.boolean(),
+  allRequiredApproved: v.boolean(), reviewRequired: v.boolean(),
   deciding: v.boolean(), turn: nullable(side),
   lastReset: nullable(v.object({ at: v.string(), reason: v.string() })),
   mySide: nullable(side), canAct: v.boolean(), myTurn: v.boolean(), simulated: v.boolean(),
 });
 
-/** "P2 · R2 · A approved · waiting for B" for one event. Parties and the observer read; the observer has no control. */
+/** "P2 · R2 · A approved · waiting for B" for one event. Assigned operators and heads of operations read. */
 export const status = query({
   args: { eventId: v.id("events") },
   returns: approvalStatus,
@@ -152,12 +155,13 @@ export const status = query({
         approvalRuleVersion: ruleVersion ?? 0 };
     }
     const proposal = selection?.proposalId ? await ctx.db.get(selection.proposalId) : null;
+    const inputs = await decisionInputs(ctx, event, selection);
     const internal = event.workflow === "internal_review" || (!!owners[0] && owners[0].companyId === owners[1]?.companyId);
     const mySide = user.role === "demo_observer" || internal ? null
       : owners[0]?.companyId === user.companyId ? "A" as const : owners[1]?.companyId === user.companyId ? "B" as const : null;
     let canAct = false;
     const status = event.status ?? "new";
-    if (user.role === "operator" && mySide && required.includes(mySide) && proposal && set?.state === "open" && event.active
+    if (inputs && event.tcaMs > Date.now() && user.role === "operator" && mySide && required.includes(mySide) && proposal && set?.state === "open" && event.active
       && (event.workflow === "bilateral" || event.workflow === "unilateral_debris") && (status === "proposal" || status === "communication")) {
       const object = await ctx.db.get(mySide === "A" ? event.objectAId : event.objectBId);
       const assignment = object && await ctx.db.query("fleetAssignments").withIndex("by_user_object", q =>
@@ -169,7 +173,7 @@ export const status = query({
       selectionGeneration: selection?.generation ?? 0,
       selected: proposal && selection?.revision != null
         ? { proposalId: proposal._id, label: proposal.label, revision: selection.revision, generation: selection.generation } : null,
-      approvals, allRequiredApproved: allApproved(event, counted), deciding, turn,
+      approvals, allRequiredApproved: allApproved(event, counted), reviewRequired: set?.reviewRequired ?? false, deciding, turn,
       lastReset: selection?.lastReset ? { at: isoUtc(selection.lastReset.at), reason: selection.lastReset.reason } : null,
       mySide, canAct, myTurn: canAct && deciding && turn === mySide, simulated: event.simulated,
     };

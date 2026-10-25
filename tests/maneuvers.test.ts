@@ -76,7 +76,7 @@ async function approve(s: Setup, sides: ("A" | "B")[] = ["A", "B"]) {
   await s.t.run(async ctx => {
     for (const side of sides) await ctx.db.insert("approvals", { eventId: s.eventId, side, status: "approved", userId: s.users[side.toLowerCase()],
       companyId: side === "A" ? s.a : s.b, proposalId: s.selection.proposalId, revision: s.selection.revision, selectionGeneration: 1, approvalRuleVersion: 1,
-      trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: s.demoRunId, current: true, at: Date.now() });
+      trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: s.demoRunId, current: true, at: Date.now(), assignmentVersion: 1 });
     await ctx.db.patch(s.eventId, { status: "approved" });
   });
 }
@@ -190,7 +190,7 @@ describe("human authorization", () => {
     expect((await s.t.run(ctx => ctx.db.get(s.eventId)))!.status).toBe("approved");
     expect(await rows(s, "maneuvers")).toEqual([]);
   });
-  it.each(["revision", "generation", "rule", "role", "assignment"])("rejects stale approval %s", async field => {
+  it.each(["revision", "generation", "rule", "role", "assignment", "assignment_version", "legacy_version"])("rejects stale approval %s", async field => {
     const s = await setup(), p = await prepare(s); await approve(s);
     await s.t.run(async ctx => {
       const approval = (await ctx.db.query("approvals").collect())[0];
@@ -199,6 +199,8 @@ describe("human authorization", () => {
       if (field === "rule") await ctx.db.patch(approval._id, { approvalRuleVersion: 999 });
       if (field === "role") await ctx.db.patch(s.users.a, { role: "head_of_ops" });
       if (field === "assignment") await ctx.db.patch(s.assignments.A, { active: false });
+      if (field === "assignment_version") await ctx.db.patch(approval._id, { assignmentVersion: 99 });
+      if (field === "legacy_version") await ctx.db.patch(approval._id, { assignmentVersion: undefined });
     });
     await expect(start(s, p)).rejects.toMatchObject({ data: { code: "APPROVAL_REQUIRED" } });
   });
@@ -315,4 +317,14 @@ describe("re-screen and artifact intent", () => {
     });
     await expect(next.t.query(call.preview, { ref: next.selection })).rejects.toMatchObject({ data: { code: "SHARED_TRAJECTORY_REQUIRED" } });
   });
+});
+
+it("cannot authorize a wait from an old assignment version before reserving any artifact", async () => {
+  const s = await setup({ wait: true });
+  await approve(s);
+  await s.t.run(ctx => ctx.db.patch(s.users.a, { assignmentVersion: 2 }));
+  const preview = await s.t.query(call.preview, { ref: s.selection });
+  await expect(s.t.mutation(call.start, { ref: s.selection, expectedPinned: preview.pinned }))
+    .rejects.toMatchObject({ data: { code: "APPROVAL_REQUIRED" } });
+  expect(await rows(s, "maneuvers")).toEqual([]);
 });

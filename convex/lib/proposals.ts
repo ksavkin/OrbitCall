@@ -10,7 +10,8 @@ import { advanceSelection, classifyIfUnset, resetApprovals } from "./approvals";
 /** Statuses before people decide: publishing options moves these to "proposal" (functionality §3). */
 const BEFORE_PROPOSAL = new Set(["new", "agents"]);
 
-export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, candidateRevisionIds: Id<"candidateRevisions">[], evidenceChanged: boolean) {
+export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, candidateRevisionIds: Id<"candidateRevisions">[],
+  options: { candidateSetChanged?: boolean; preserveDecision?: boolean; evidenceChanged?: boolean } = {}) {
   const now = Date.now();
   const offered = new Set<Id<"proposals">>();
   for (const id of candidateRevisionIds) {
@@ -27,10 +28,12 @@ export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, cand
     if (!stored) await ctx.db.insert("proposalRevisions", {
       proposalId, eventId: event._id, revision: card.revision, candidateRevisionId: id,
       changeSummary: null, sourceMessageIds: [], rationale: null, schedulePreviewDiff: null, schedulePreviewHash: null,
-      simulated: card.simulated, createdAt: now,
+      // A repair preserves the immutable candidate's time; repair time is not a new human decision input.
+      simulated: card.simulated, createdAt: options.preserveDecision ? Math.floor(card._creationTime) : now,
     });
     offered.add(proposalId);
   }
+  if (options.preserveDecision) return;
   const classified = await classifyIfUnset(ctx, event);
   if (BEFORE_PROPOSAL.has(classified.status ?? "new")) await ctx.db.patch(event._id, { status: "proposal" });
   // A new revision of the selected card, or its withdrawal, is a reset (spec §4.1); the selection follows the card.
@@ -40,8 +43,9 @@ export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, cand
   if (!selected || !offered.has(selected._id)) await advanceSelection(ctx, classified, null, { kind: "agents" }, "proposal_withdrawn");
   else if (selected.latestRevision !== selection.revision) {
     await advanceSelection(ctx, classified, { proposalId: selected._id, revision: selected.latestRevision }, { kind: "agents" }, "revision_changed");
-  } else if (evidenceChanged) {
-    // Same cards recomputed on new orbital evidence: approvals signed on the old evidence stop counting.
-    await resetApprovals(ctx, classified, "evidence_changed");
+  } else if (options.candidateSetChanged !== false) {
+    // The agreed comparison includes every offered option and its source evidence.
+    await advanceSelection(ctx, classified, { proposalId: selected._id, revision: selected.latestRevision }, { kind: "agents" },
+      options.evidenceChanged ? "evidence_changed" : "candidate_set_changed");
   }
 }

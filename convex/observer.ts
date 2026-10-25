@@ -48,7 +48,8 @@ export const publicView=query({args:{demoRunId:v.id("demoRuns")},handler:async(c
    if(approval.status!=="approved"||approval.demoRunId!==demoRunId||approval.proposalId!==selection?.proposalId||approval.revision!==selection.revision||
     approval.selectionGeneration!==selection.generation||approval.approvalRuleVersion!==e.approvalRuleVersion||!required.includes(approval.side)) continue;
    const approver=await ctx.db.get(approval.userId), object=approval.side==="A"?a:b;
-   if(!approver||approver.role!=="operator"||approver.companyId!==approval.companyId||!object)continue;
+   if(!approver||approver.role!=="operator"||approver.companyId!==approval.companyId||!object||
+    approval.assignmentVersion!==(approver.assignmentVersion??1))continue;
    const owner=await ctx.db.query("satelliteOwners").withIndex("by_object",q=>q.eq("objectId",object.objectId)).unique();
    const assignment=await ctx.db.query("fleetAssignments").withIndex("by_user_object",q=>q.eq("userId",approver._id).eq("objectId",object.objectId)).unique();
    const company=approval.side==="A"?currentSet.companyAId:currentSet.companyBId;

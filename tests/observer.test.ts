@@ -55,7 +55,7 @@ async function approved() {
   const proposalId=await ctx.db.insert("proposals",{eventId,candidateId:c.candidateId,label:c.label,latestRevision:c.revision,demoRunId:run,createdAt:Date.now()});
   await ctx.db.insert("proposalRevisions",{eventId,proposalId,revision:c.revision,candidateRevisionId:candidateId,changeSummary:null,sourceMessageIds:[],rationale:null,schedulePreviewDiff:null,schedulePreviewHash:null,simulated:true,createdAt:Date.now()});
   await ctx.db.insert("selections",{eventId,proposalId,revision:c.revision,generation:1,by:{kind:"human",userId:op._id},at:Date.now(),lastReset:null});
-  const approvalId=await ctx.db.insert("approvals",{eventId,side:"A",status:"approved",userId:op._id,companyId:op.companyId,proposalId,revision:c.revision,selectionGeneration:1,approvalRuleVersion:1,trajectoryPlanId:null,trajectoryPlanVersion:null,reason:null,demoRunId:run,current:true,at:Date.now()});
+  const approvalId=await ctx.db.insert("approvals",{eventId,side:"A",status:"approved",userId:op._id,companyId:op.companyId,proposalId,revision:c.revision,selectionGeneration:1,approvalRuleVersion:1,trajectoryPlanId:null,trajectoryPlanVersion:null,reason:null,demoRunId:run,current:true,at:Date.now(),assignmentVersion:op.assignmentVersion??1});
   return {setId,approvalId,proposalId,revision:c.revision};
  });
  return {...s,...ids};
@@ -102,4 +102,15 @@ it("shows only evidence bound to the newest committed schedule, not an older pla
  expect((await s.as().query(view,{demoRunId:s.run})).events[0].verification).toMatchObject({result:"consistent"});
  await s.t.run(ctx=>ctx.db.patch(ids.current,{reviewRequired:true}));
  expect((await s.as().query(view,{demoRunId:s.run})).events[0].verification).toBeNull();
+});
+
+it.each(["changed", "missing"])("hides %s approval assignment-version pins", async kind => {
+ const s=await approved();
+ expect((await s.as().query(view,{demoRunId:s.run})).events[0].approval.allRequiredApproved).toBe(true);
+ await s.t.run(async ctx=>{
+  const approval=(await ctx.db.get(s.approvalId))!;
+  if(kind==="missing")await ctx.db.patch(approval._id,{assignmentVersion:undefined});
+  else await ctx.db.patch(approval.userId,{assignmentVersion:99});
+ });
+ expect((await s.as().query(view,{demoRunId:s.run})).events[0].approval).toMatchObject({approved:0,allRequiredApproved:false});
 });

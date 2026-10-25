@@ -5,6 +5,7 @@ import { inputKey } from "./lib/analyst";
 import { colorOf, loadFacts } from "./lib/events";
 import { compareQueue } from "./lib/queue";
 import { latestRun } from "./lib/runs";
+import { expireUndecidedApprovals } from "./lib/approvalState";
 
 export const ANALYST_TOP_K = 3;
 
@@ -26,6 +27,7 @@ export const recolor = internalMutation({
       if (next.color !== event.color || next.active !== event.active) {
         await ctx.db.patch(event._id, { color: next.color, active: next.active });
       }
+      if (!next.active && event.active) await expireUndecidedApprovals(ctx, next);
       events.push(next);
     }
 

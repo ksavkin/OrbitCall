@@ -1,0 +1,296 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeFunctionReference } from "convex/server";
+import { api, internal } from "../convex/_generated/api";
+import { FIXTURE_NOW } from "../fixtures/events";
+import { advocateCandidates, advocateEvent, policyA } from "../fixtures/policies";
+import { catalogObject, ingestArgs } from "./helpers";
+import { as, companyA, fn, pick, seed, selection, tick } from "./decision";
+import { putFixture, upsertObject } from "../convex/lib/events";
+
+beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(FIXTURE_NOW); });
+afterEach(() => vi.useRealTimers());
+async function approvedA() {
+  const result = await seed();
+  await pick(result.t, "a", result.eventId, "P2");
+  await as(result.t, "a").mutation(fn.approve, await tick(result.t, result.eventId));
+  return result;
+}
+type Test = Awaited<ReturnType<typeof approvedA>>;
+const status = ({ t, eventId }: Test) => as(t, "b").query(fn.status, { eventId });
+const event = ({ t, eventId }: Test) => t.run(ctx => ctx.db.get(eventId));
+const approvals = ({ t, eventId }: Test) => t.run(ctx => ctx.db.query("approvals").withIndex("by_event_current", q => q.eq("eventId", eventId)).collect());
+const set = ({ t, eventId }: Test) => t.run(ctx => ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique());
+const policyChange = ({ t }: Test) => as(t, "a").mutation(api.policies.update, { satellites: [{ ...policyA, minFuelReserveKg: 8 }] });
+async function expectReset(test: Test, reason: string) {
+  expect(await status(test)).toMatchObject({ allRequiredApproved: false, turn: "A", approvals: { A: { status: "pending" } }, lastReset: { reason } });
+  expect((await selection(test.t, test.eventId))!.generation).toBeGreaterThan(1);
+  expect((await approvals(test)).every(a => !a.current)).toBe(true);
+}
+
+describe("material approval invalidation", () => {
+  it("retires approval in the policy transaction, including a change in the same clock tick", async () => {
+    const test = await approvedA();
+    const old = await tick(test.t, test.eventId);
+    await policyChange(test);
+    await expectReset(test, "policy_changed");
+    await expect(as(test.t, "b").mutation(fn.approve, old)).rejects.toMatchObject({ data: { code: "STALE_REVISION" } });
+    await as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId));
+    expect(await as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId))).toMatchObject({ allRequiredApproved: true });
+    expect(await approvals(test)).toHaveLength(3);
+  });
+
+  it("keeps idempotent policy updates and unchanged ingestion from resetting an approval", async () => {
+    const test = await approvedA();
+    const before = await selection(test.t, test.eventId);
+    vi.setSystemTime(FIXTURE_NOW + 1000);
+    await as(test.t, "a").mutation(api.policies.update, { satellites: [policyA] });
+    await test.t.mutation(internal.events.ingest, ingestArgs((await event(test))!.snapshotId, advocateEvent));
+    expect(await selection(test.t, test.eventId)).toEqual(before);
+    expect(await status(test)).toMatchObject({ approvals: { A: { status: "approved" } }, turn: "B", lastReset: null });
+  });
+
+  it("flags an approved but unscheduled plan for review without silently reopening it", async () => {
+    const test = await approvedA();
+    await as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId));
+    const signed = await tick(test.t, test.eventId);
+    await policyChange(test);
+    expect(await status(test)).toMatchObject({ allRequiredApproved: false, reviewRequired: true, deciding: false,
+      turn: null, canAct: false, lastReset: { reason: "policy_changed" }, approvals: { A: { status: "pending" }, B: { status: "pending" } } });
+    expect((await selection(test.t, test.eventId))!.generation).toBeGreaterThan(signed.selectionGeneration);
+    expect((await approvals(test)).every(a => !a.current)).toBe(true);
+    expect((await event(test))!.status).toBe("approved");
+    expect(await set(test)).toMatchObject({ reviewRequired: true });
+    await expect(as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId))).rejects.toMatchObject({ data: { code: "ALREADY_DECIDED" } });
+  });
+
+  it("permanently invalidates changed evidence until new candidates are published", async () => {
+    const test = await approvedA();
+    await test.t.mutation(internal.events.ingest, ingestArgs((await event(test))!.snapshotId, { ...advocateEvent, missKm: 0.28 }));
+    await expectReset(test, "evidence_changed");
+    expect(await set(test)).toMatchObject({ reviewRequired: true });
+    expect((await event(test))!.status).toBe("agents");
+    await expect(as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId))).rejects.toMatchObject({ data: { code: "INVALID_STATE" } });
+    await test.t.mutation(internal.candidates.publish, { eventId: test.eventId, baseVersion: 1, start: false,
+      candidates: advocateCandidates.map(c => ({ ...c, revision: 2, missBeforeKm: 0.28 })) });
+    expect(await set(test)).toMatchObject({ reviewRequired: false });
+    expect((await event(test))!.status).toBe("proposal");
+    await as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId));
+    expect(await as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId))).toMatchObject({ allRequiredApproved: true });
+  });
+
+  it("rejects stale evidence even if an administrative patch bypassed the normal writer", async () => {
+    const test = await approvedA();
+    await test.t.run(ctx => ctx.db.patch(test.eventId, { missKm: 0.28 }));
+    expect(await status(test)).toMatchObject({ approvals: { A: { status: "pending" } }, canAct: false, turn: "A" });
+    await expect(as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId))).rejects.toMatchObject({ data: { code: "STALE_REVISION" } });
+    expect((await event(test))!.status).toBe("proposal");
+  });
+
+  it("rejects a candidate set marked for review without taking another approval", async () => {
+    const test = await approvedA();
+    const current = (await set(test))!;
+    await test.t.run(ctx => ctx.db.patch(current._id, { reviewRequired: true }));
+    expect(await status(test)).toMatchObject({ allRequiredApproved: false, canAct: false, approvals: { A: { status: "pending" } } });
+    await expect(as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId))).rejects.toMatchObject({ data: { code: "STALE_REVISION" } });
+  });
+
+  it("resets a snapshot identity change even with identical measured facts", async () => {
+    const test = await approvedA();
+    const e = (await event(test))!;
+    const snapshotId = await test.t.run(async ctx => ctx.db.insert("snapshots", { snapshotId: "new-orbit-pin", sources: (await ctx.db.get(e.snapshotId))!.sources }));
+    await test.t.mutation(internal.events.ingest, ingestArgs(snapshotId, advocateEvent));
+    await expectReset(test, "evidence_changed");
+    expect(await set(test)).toMatchObject({ reviewRequired: true });
+  });
+
+  it.each(["sources", "ommUrl"] as const)("resets a shared snapshot %s change before a pair reload", async field => {
+    const test = await approvedA();
+    const e = (await event(test))!;
+    const snapshot = await test.t.run(async ctx => {
+      await ctx.db.patch(e.snapshotId, { snapshotId: "test-catalog" });
+      return (await ctx.db.get(e.snapshotId))!;
+    });
+    await test.t.mutation(internal.ingest.register, { snapshotId: "test-catalog",
+      sources: field === "sources" ? snapshot.sources.map(s => ({ ...s, fetchedAt: "2026-10-24T13:00:00Z" })) : snapshot.sources,
+      ...(field === "ommUrl" ? { ommUrl: "/catalog/new-pin.json" } : {}) });
+    await expectReset(test, "evidence_changed");
+    expect(await set(test)).toMatchObject({ reviewRequired: true });
+  });
+
+  it("invalidates dev fixture evidence permanently while preserving identical fixture reloads", async () => {
+    const test = await approvedA();
+    const before = await selection(test.t, test.eventId);
+    await test.t.run(ctx => putFixture(ctx, "fixture:test", advocateEvent, "red"));
+    expect(await selection(test.t, test.eventId)).toEqual(before);
+    await test.t.run(ctx => putFixture(ctx, "fixture:test", { ...advocateEvent, missKm: 0.28 }, "red"));
+    await expectReset(test, "evidence_changed");
+    await test.t.run(ctx => putFixture(ctx, "fixture:test", advocateEvent, "red"));
+    expect((await approvals(test)).every(a => !a.current)).toBe(true);
+  });
+
+  it("resets other encounters when shared object evidence changes", async () => {
+    const test = await approvedA();
+    await test.t.run(ctx => upsertObject(ctx, { objectId: "SIM-1001", name: "Renamed evidence", country: null, launchDate: null }, false));
+    await expectReset(test, "evidence_changed");
+  });
+
+  it.each(["monitor", "ingestion"] as const)("retires undecided approvals on ordinary %s expiry", async writer => {
+    const test = await approvedA();
+    vi.setSystemTime((await event(test))!.tcaMs + 1);
+    if (writer === "monitor") await test.t.mutation(internal.riskMonitor.recolor, {});
+    else await test.t.mutation(internal.events.ingest, ingestArgs((await event(test))!.snapshotId, advocateEvent));
+    expect((await approvals(test)).every(a => !a.current)).toBe(true);
+    expect((await selection(test.t, test.eventId))!.lastReset?.reason).toBe("event_expired");
+    expect(await set(test)).toMatchObject({ reviewRequired: false });
+  });
+
+  it.each([
+    ["monitor", "scheduled"], ["monitor", "awaiting_verification_data"],
+    ["ingestion", "scheduled"], ["ingestion", "awaiting_verification_data"],
+  ] as const)("keeps %s expiry from blocking verification of a %s maneuver", async (writer, state) => {
+    const test = await approvedA();
+    await as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId));
+    const ref = await tick(test.t, test.eventId);
+    const artifactId = await test.t.run(async ctx => {
+      const { approvalRuleVersion: _rule, ...signed } = ref;
+      await ctx.db.patch(test.eventId, { status: state });
+      const current = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", test.eventId)).unique();
+      await ctx.db.patch(current!._id, { state: "scheduled" });
+      const id = await ctx.db.insert("maneuvers", { refs: [signed], trajectoryPlanId: null, trajectoryPlanVersion: null,
+        pinned: { snapshotId: "catalog", evidenceKeys: [], policyRevisions: [], assignmentVersions: [] }, intentKey: "expiry-test",
+        status: "committed", filePath: "schedule.json", diff: "immutable diff", commitSha: "immutable-sha", writtenBy: "droid",
+        rescreenJobId: null, rescreen: null, error: null, reviewRequired: false, demoRunId: null, updatedAt: Date.now() });
+      await ctx.db.insert("maneuverEvents", { maneuverId: id, eventId: test.eventId });
+      return id;
+    });
+    const reserve = makeFunctionReference<"mutation">("verifications:reserve");
+    const store = makeFunctionReference<"mutation">("verifications:storeResult");
+    const before = await as(test.t, "a").mutation(reserve, { eventId: test.eventId, requestId: "in-flight" });
+    const signed = await selection(test.t, test.eventId);
+    const artifact = await test.t.run(ctx => ctx.db.get(artifactId));
+    const e = (await event(test))!;
+    vi.setSystemTime(e.tcaMs + 1);
+    if (writer === "monitor") await test.t.mutation(internal.riskMonitor.recolor, {});
+    else await test.t.mutation(internal.events.ingest, ingestArgs(e.snapshotId, advocateEvent));
+    expect(await event(test)).toMatchObject({ active: false, status: state });
+    expect(await test.t.run(ctx => ctx.db.get(artifactId))).toEqual(artifact);
+    expect(await set(test)).toMatchObject({ state: "scheduled", reviewRequired: false });
+    expect(await selection(test.t, test.eventId)).toEqual(signed);
+    const result = { kind: "live", result: "awaiting_data", label: "awaiting verification data",
+      expected: { deltaAKm: 0.5, sign: 1 }, observed: null, elementSetCount: 0, series: [],
+      thresholds: { z: 5, minDeltaAKm: 0.05, sizeTolerance: 0.5, minSets: 8 }, method: "robust baseline",
+      limitations: [], missing: ["eight element sets"], sources: [], simulated: true };
+    await as(test.t, "a").mutation(store, { eventId: test.eventId, fingerprint: before.fingerprint, requestId: "in-flight", result });
+    const after = await as(test.t, "a").mutation(reserve, { eventId: test.eventId, requestId: "later" });
+    expect(after.fingerprint).toBe(before.fingerprint);
+    await expect(as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId))).rejects.toThrow();
+    // A real evidence correction after expiry still fences this immutable schedule and any pending result.
+    await test.t.mutation(internal.events.ingest, ingestArgs(e.snapshotId, { ...advocateEvent, missKm: 0.28 }));
+    expect(await test.t.run(ctx => ctx.db.get(artifactId))).toMatchObject({ reviewRequired: true });
+    await expect(as(test.t, "a").mutation(reserve, { eventId: test.eventId, requestId: "changed" }))
+      .rejects.toMatchObject({ data: { code: "NOT_READY" } });
+  });
+
+  it("keeps committed artifacts and scheduled status while visibly requiring review", async () => {
+    const test = await approvedA();
+    await as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId));
+    const ref = await tick(test.t, test.eventId);
+    const artifactId = await test.t.run(async ctx => {
+      const { approvalRuleVersion: _rule, ...signed } = ref;
+      await ctx.db.patch(test.eventId, { status: "scheduled" });
+      const current = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", test.eventId)).unique();
+      await ctx.db.patch(current!._id, { state: "scheduled" });
+      const id = await ctx.db.insert("maneuvers", { refs: [signed], trajectoryPlanId: null, trajectoryPlanVersion: null,
+        pinned: { snapshotId: "catalog", evidenceKeys: [], policyRevisions: [], assignmentVersions: [] }, intentKey: "committed-test",
+        status: "committed", filePath: "schedule.json", diff: "immutable diff", commitSha: "immutable-sha", writtenBy: "droid",
+        rescreenJobId: null, rescreen: null, error: null, reviewRequired: false, demoRunId: null, updatedAt: Date.now() });
+      await ctx.db.insert("maneuverEvents", { maneuverId: id, eventId: test.eventId });
+      return id;
+    });
+    await policyChange(test);
+    expect((await event(test))!.status).toBe("scheduled");
+    expect(await set(test)).toMatchObject({ state: "scheduled", reviewRequired: true });
+    expect(await test.t.run(ctx => ctx.db.get(artifactId))).toMatchObject({ status: "committed", diff: "immutable diff", commitSha: "immutable-sha", reviewRequired: true });
+    expect((await approvals(test)).every(a => !a.current)).toBe(true);
+  });
+});
+
+describe("permanent responsibility resets", () => {
+  it("never revives an approval after revoke and reassign", async () => {
+    const test = await approvedA();
+    await test.t.mutation(internal.operators.provision, companyA([]));
+    await expectReset(test, "assignment_changed");
+    await test.t.mutation(internal.operators.provision, companyA());
+    await expectReset(test, "assignment_changed");
+    await as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId));
+    expect(await status(test)).toMatchObject({ approvals: { A: { status: "approved" } }, turn: "B" });
+  });
+
+  it("permanently resets all held incidents when an unrelated assignment changes the user's version", async () => {
+    const test = await approvedA();
+    await test.t.run(ctx => ctx.db.insert("spaceObjects", catalogObject("SIM-4001")));
+    await test.t.mutation(internal.operators.provision, companyA(["SIM-1001", "SIM-4001"], ["SIM-1001", "SIM-4001"]));
+    await expectReset(test, "assignment_changed");
+    await as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId));
+    expect(await status(test)).toMatchObject({ approvals: { A: { status: "approved" } }, turn: "B" });
+  });
+
+  it("refuses legacy approval rows without an assignment version", async () => {
+    const test = await approvedA();
+    const [old] = await approvals(test);
+    await test.t.run(ctx => ctx.db.patch(old._id, { assignmentVersion: undefined }));
+    expect(await status(test)).toMatchObject({ allRequiredApproved: false, approvals: { A: { status: "pending" } }, turn: "A" });
+    await expect(as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId))).rejects.toMatchObject({ data: { code: "INVALID_STATE" } });
+    await as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId));
+    expect(await status(test)).toMatchObject({ approvals: { A: { status: "approved" } }, turn: "B" });
+  });
+
+  it("lets the replacement operator act first after responsibility changes", async () => {
+    const test = await approvedA();
+    const replacement = companyA([]);
+    replacement.members[1].assignedObjectIds = ["SIM-1001"];
+    await test.t.mutation(internal.operators.provision, replacement);
+    expect(await as(test.t, "unassigned").query(fn.status, { eventId: test.eventId })).toMatchObject({ turn: "A", myTurn: true });
+    await as(test.t, "unassigned").mutation(fn.approve, await tick(test.t, test.eventId));
+    expect(await as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId))).toMatchObject({ allRequiredApproved: true });
+  });
+
+  it("uses the same valid-approval predicate for turn and count after direct revocation", async () => {
+    const test = await approvedA();
+    await test.t.run(async ctx => {
+      const user = (await ctx.db.query("users").collect()).find(u => u.name === "A")!;
+      for (const a of await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", user._id)).collect()) await ctx.db.patch(a._id, { active: false });
+    });
+    expect(await status(test)).toMatchObject({ turn: "A", approvals: { A: { status: "pending" } } });
+  });
+
+  it("never revives an approval after a role change with unchanged assignment", async () => {
+    const test = await approvedA();
+    const changed = companyA();
+    changed.members[0].role = "head_of_ops";
+    await test.t.mutation(internal.operators.provision, changed);
+    await expectReset(test, "authorization_changed");
+    await test.t.mutation(internal.operators.provision, companyA());
+    await expectReset(test, "authorization_changed");
+  });
+
+  it("does not reset identical provisioning", async () => {
+    const test = await approvedA();
+    const before = await selection(test.t, test.eventId);
+    await test.t.mutation(internal.operators.provision, companyA());
+    expect(await selection(test.t, test.eventId)).toEqual(before);
+    expect(await status(test)).toMatchObject({ approvals: { A: { status: "approved" } }, turn: "B" });
+  });
+
+  it("writes a shared reset record without private policy values", async () => {
+    const test = await approvedA();
+    await as(test.t, "a").mutation(fn.startWorkflow, { eventId: test.eventId });
+    await policyChange(test);
+    const log = await test.t.run(ctx => ctx.db.query("log").withIndex("by_event_at", q => q.eq("eventId", test.eventId)).collect());
+    expect(log.some(r => r.action === "approvals_reset" && r.after?.reason === "policy_changed")).toBe(true);
+    expect(JSON.stringify(log)).not.toContain("PRIVATE_A");
+    expect(JSON.stringify(log)).not.toContain("minFuelReserveKg");
+    const messages = await test.t.run(ctx => ctx.db.query("messages").collect());
+    expect(messages.some(m => m.originalText === "Both approvals reset.")).toBe(true);
+  });
+});

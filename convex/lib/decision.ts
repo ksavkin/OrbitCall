@@ -1,6 +1,6 @@
 import type { Doc } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
-import { countingApprovals, turnOf } from "./approvals";
+import { countingApprovals, turnOf, RESOLVED_STATUSES } from "./approvalState";
 
 // Decision turns (user-flow "App navigation and the decision flow", October 25): the required sides decide in
 // order, A then B. While an incident's decision is open, only the side whose turn it is acts on it; everyone may
@@ -9,7 +9,7 @@ import { countingApprovals, turnOf } from "./approvals";
 type Side = "A" | "B";
 
 /** Statuses after human agreement or with nothing left to decide (functionality §3). */
-export const RESOLVED_STATUSES = new Set(["approved", "scheduled", "monitoring", "awaiting_verification_data", "verified", "no_action_needed"]);
+export { RESOLVED_STATUSES } from "./approvalState";
 
 export const isResolved = (event: Doc<"events">) => !event.active || RESOLVED_STATUSES.has(event.status ?? "new");
 

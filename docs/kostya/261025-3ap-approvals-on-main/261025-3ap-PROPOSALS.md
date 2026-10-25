@@ -11,7 +11,7 @@ The accepted flow (Adil, October 25; user-flow "App navigation and the decision 
 
 1. **§3.4 `rooms.select` row.** Added: "While a decision is open only the side in turn may change it. Served as `api.proposals.select` (issue #6)."
 2. **§3.4 `approvals.veto` row.** Added: "Only the side in turn."
-3. **§3.4, new row `approvals.status`.** It is the event's decision state: workflow, required sides, selection, `SideApproval` per required side, `allRequiredApproved`, `deciding`, `turn`, `lastReset`, `mySide`, `canAct`, `myTurn`. Parties and the observer read it; the observer has no control.
+3. **§3.4, new row `approvals.status`.** It is the event's decision state: workflow, required sides, selection, `SideApproval` per required side, `allRequiredApproved`, `deciding`, `turn`, `lastReset`, `mySide`, `canAct`, `myTurn`. Party operators and heads of operations read it. Observers use only the separately authorized `observer.publicView` projection.
 4. **§4.1 UI contract.** "independent **Approve**" becomes Approve and Veto in turns. An off-turn call returns `INVALID_STATE`, and re-approving is idempotent.
 5. **§4.1 step 2.** `ALREADY_DECIDED` once the event is `approved` or `scheduled`. Publishing candidates moves `new`/`agents` to `proposal`; starting the workflow sets `communication`.
    - The second half is a seam: `rooms.startWorkflow` does not set `communication` yet.
@@ -32,7 +32,7 @@ The accepted flow (Adil, October 25; user-flow "App navigation and the decision 
 ## For Andrew (agents)
 
 - **Proposal cards.** `candidates.publish` now writes `proposals` and `proposalRevisions` in the same transaction, and moves `new`/`agents` to `proposal`. An agent revision of the selected card moves the selection to the new revision and resets approvals. Withdrawing the card clears the selection.
-- **Publishing after consensus is refused** (INVALID_STATE) once the event is `approved` or later. A change after authorization has to come through review, never through a silent republish.
+- **Changed publication after consensus is refused** (INVALID_STATE) once the event is `approved` or later. An identical publication can backfill missing proposal records without resetting a decision. Material changes invalidate human approvals; prepared or committed artifacts remain flagged for review.
 - **Veto.** It returns the event to `agents` with the reason on a `vetoed` approvals row. Nothing schedules the Advocates' revision yet; the veto path should trigger `negotiate`.
 - **The Coordination Host context** reports the approvals these mutations write. A test proves it through `buildHostContext`.
 

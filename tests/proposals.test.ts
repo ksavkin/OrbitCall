@@ -22,7 +22,7 @@ describe("proposal cards", () => {
     expect(cards[3].latest.movingSide).toBe("B");
     expect(await t.run(ctx => ctx.db.get(eventId))).toMatchObject({
       status: "proposal", workflow: "bilateral", requiredApprovalSides: ["A", "B"], approvalRuleVersion: 1 });
-    expect(await as(t, "eye").query(fn.list, { eventId })).toEqual(cards);
+    expect(await code(as(t, "eye").query(fn.list, { eventId }))).toBe("FORBIDDEN");
     expect(await as(t, "head").query(fn.list, { eventId })).toEqual(cards);
     expect(await code(as(t, "c").query(fn.list, { eventId }))).toBe("FORBIDDEN");
     expect(await code(t.query(fn.list, { eventId }))).toBe("UNAUTHENTICATED");

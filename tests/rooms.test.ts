@@ -1,3 +1,4 @@
+import { currentProposal } from "./currentDecision";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFunctionReference } from "convex/server";
 import { internal } from "../convex/_generated/api";
@@ -91,14 +92,14 @@ const classify = (t: Backend, eventIds: Id<"events">[]) => t.run(async ctx => {
 });
 // A selected card for the event, as the proposals module will store it.
 const select = (t: Backend, eventId: Id<"events">) => t.run(async ctx => {
-  const proposalId = await ctx.db.insert("proposals", { eventId, candidateId: "P1", label: "P1", latestRevision: 1, demoRunId: null, createdAt: FIXTURE_NOW });
+  const proposalId = await currentProposal(ctx, eventId);
   await ctx.db.insert("selections", { eventId, proposalId, revision: 1, generation: 1, by: { kind: "agents" }, at: FIXTURE_NOW, lastReset: null });
   return proposalId;
 });
 const approve = (t: Backend, eventId: Id<"events">, proposalId: Id<"proposals">, side: "A" | "B", userId: Id<"users">, companyId: Id<"companies">) =>
   t.run(ctx => ctx.db.insert("approvals", {
     eventId, side, status: "approved", userId, companyId, proposalId, revision: 1, selectionGeneration: 1, approvalRuleVersion: 1,
-    trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, current: true, at: FIXTURE_NOW, assignmentVersion: 1,
+    trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, current: true, at: Date.now(), assignmentVersion: 1,
   }));
 
 type Projection = {

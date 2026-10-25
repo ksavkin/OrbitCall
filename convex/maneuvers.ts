@@ -143,7 +143,8 @@ async function context(ctx: QueryCtx, ref: Ref, approved = false, allowPast = fa
       if (!approval || approval.status !== "approved" || approval.proposalId !== ref.proposalId || approval.revision !== ref.revision ||
           approval.selectionGeneration !== ref.selectionGeneration || approval.approvalRuleVersion !== ref.approvalRuleVersion ||
           approval.companyId !== companies[side] || approval.demoRunId !== (event.demoRunId ?? null) || approval.at < materialAt ||
-          sideApprovals.some(a => a.status === "vetoed") || !authority.some(a => a.userId === approval.userId && a.objects.includes(objectIds[side]))) {
+          sideApprovals.some(a => a.status === "vetoed") || !authority.some(a => a.userId === approval.userId &&
+            a.version === approval.assignmentVersion && a.objects.includes(objectIds[side]))) {
         fail("APPROVAL_REQUIRED", "Every required side must explicitly approve the current revision with current responsibility.");
       }
       if (approval.trajectoryPlanId !== null || approval.trajectoryPlanVersion !== null) fail("SHARED_TRAJECTORY_REQUIRED", "Trajectory-plan scheduling is not connected yet.");

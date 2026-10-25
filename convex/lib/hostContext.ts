@@ -4,14 +4,14 @@ import type { QueryCtx } from "../_generated/server";
 import { buildFacts, isoUtc } from "./events";
 import { inputKey } from "./analyst";
 import { currentAssessment } from "./coordination";
-import { LEGACY_ASSIGNMENT_VERSION } from "./accounts";
+import { countingApprovals } from "./approvalState";
 import { MAX_MESSAGES, type HostContext, type HostTrigger, type Language } from "./host";
 
 type HostEvent = HostContext["events"][number];
 const present = <T>(row: T | null): row is T => row !== null;
 
-// The Coordination Host's allowlisted context, read field by field from shared room rows (roadmap §6). Policies,
-// Backboard memory and advocate contexts are never read here.
+// The Coordination Host's allowlisted context, read field by field from shared room rows (roadmap §6). Private policy values,
+// Backboard memory and advocate contexts never enter the Host context.
 export async function buildHostContext(ctx: QueryCtx, room: Doc<"rooms">, trigger: HostTrigger): Promise<HostContext> {
   const links = await ctx.db.query("roomEvents").withIndex("by_room", q => q.eq("roomId", room._id)).collect();
   const linked = await Promise.all([...new Set(links.map(l => l.eventId))].map(id => ctx.db.get(id)));
@@ -75,7 +75,7 @@ async function hostEvent(ctx: QueryCtx, event: Doc<"events">): Promise<{ event: 
         burnTimeUtc: r.burnTimeUtc, deltaVMs: r.deltaVMs, missAfterKm: r.missAfterKm,
       })),
       feasibility: currentSet ? await sharedOutcomes(ctx, currentSet, hostIds) : [],
-      approvals: currentSet && !currentSet.reviewRequired ? await recordedApprovals(ctx, event, selection, currentSet, [a, b], owners) : [],
+      approvals: currentSet && !currentSet.reviewRequired ? await recordedApprovals(ctx, event, selection) : [],
     },
     pins: { evidenceKey, snapshotId: snapshot._id, snapshotVersion: snapshot.snapshotId, ommUrl: snapshot.ommUrl ?? null,
       workflow: event.workflow ?? null, requiredApprovalSides: event.requiredApprovalSides ?? [], approvalRuleVersion: event.approvalRuleVersion ?? null,
@@ -106,40 +106,12 @@ async function sharedOutcomes(ctx: QueryCtx, set: Doc<"candidateSets">, hostIds:
 }
 
 // Server-reported approval state: current approved rows only. Pending, vetoed and reset rows are not approvals.
-async function recordedApprovals(ctx: QueryCtx, event: Doc<"events">, selection: Doc<"selections"> | null,
-  set: Doc<"candidateSets">, objects: Doc<"spaceObjects">[], owners: (Doc<"satelliteOwners"> | null)[]) {
+async function recordedApprovals(ctx: QueryCtx, event: Doc<"events">, selection: Doc<"selections"> | null) {
   const approvals: HostEvent["approvals"] = [];
-  if (!selection?.proposalId || selection.revision === null || !["bilateral", "unilateral_debris"].includes(event.workflow ?? "")) return approvals;
-  const rows = await ctx.db.query("approvals").withIndex("by_event_current", q => q.eq("eventId", event._id).eq("current", true)).order("desc").collect();
-  const sides = new Set<string>();
-  for (const row of rows) {
-    if (sides.has(row.side)) continue;
-    sides.add(row.side);
-    const index = row.side === "A" ? 0 : 1;
-    const companyId = row.side === "A" ? set.companyAId : set.companyBId;
-    if (row.status !== "approved" || row.proposalId !== selection.proposalId || row.revision !== selection.revision ||
-      row.selectionGeneration !== selection.generation || row.approvalRuleVersion !== event.approvalRuleVersion ||
-      !event.requiredApprovalSides?.includes(row.side) || row.companyId !== companyId || row.companyId !== owners[index]?.companyId ||
-      row.demoRunId !== (event.demoRunId ?? null)) continue;
-    const user = await ctx.db.get(row.userId);
-    const assignment = await ctx.db.query("fleetAssignments").withIndex("by_user_object", q =>
-      q.eq("userId", row.userId).eq("objectId", objects[index].objectId)).unique();
-    // The approvals module's rule: a changed assignment set since the approval means it no longer counts.
-    if (!user || user.role !== "operator" || user.companyId !== row.companyId || !assignment?.active
-      || row.assignmentVersion !== (user.assignmentVersion ?? LEGACY_ASSIGNMENT_VERSION)) continue;
-    const proposal = await ctx.db.get(row.proposalId);
-    if (!proposal || proposal.eventId !== event._id || proposal.latestRevision !== row.revision) continue;
+  for (const row of (await countingApprovals(ctx, event, selection)).values()) {
     const revision = await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
       q.eq("proposalId", row.proposalId).eq("revision", row.revision)).unique();
-    const candidate = revision && await ctx.db.get(revision.candidateRevisionId);
-    if (!candidate || revision?.eventId !== event._id || candidate.eventId !== event._id || !set.candidateRevisionIds.includes(candidate._id)) continue;
-    if (row.trajectoryPlanId) {
-      const plan = await ctx.db.get(row.trajectoryPlanId);
-      if (!plan || plan.planVersion !== row.trajectoryPlanVersion || ["superseded", "review_required"].includes(plan.state) ||
-        !plan.affectedEventIds.includes(event._id) || !plan.eventRefs.some(ref => ref.eventId === event._id && ref.proposalId === row.proposalId &&
-          ref.revision === row.revision && ref.selectionGeneration === row.selectionGeneration)) continue;
-    } else if (row.trajectoryPlanVersion !== null) continue;
-    approvals.push({ companyId: row.companyId, candidateId: candidate._id, revision: candidate.revision });
+    if (revision) approvals.push({ companyId: row.companyId, candidateId: revision.candidateRevisionId, revision: row.revision });
   }
   return approvals;
 }
