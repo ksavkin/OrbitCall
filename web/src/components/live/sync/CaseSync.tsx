@@ -33,7 +33,8 @@ export function CaseSync({ eventId }: { eventId: EventId }) {
           <QueryBoundary>
             <OpenRoom eventId={eventId} />
           </QueryBoundary>
-          <QueryBoundary>
+          {/* rooms.forEvent is newer than some deployments: unreadable counts as no room, and rooms.get decides */}
+          <QueryBoundary onError={() => setNoRoom("latest", true)}>
             <LatestRoom eventId={eventId} />
           </QueryBoundary>
         </>
