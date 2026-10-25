@@ -36,6 +36,7 @@ A backend audit after the trajectory plans (#76) found paths where a shared move
 - **A closing affected event leaves the plan.** An affected event with no selection and no approvals that expires or is retired from the feed now syncs the plan. Before, it stayed listed without a ref, so the plan could never authorize.
 - **Revisions and summary edits use the burn horizon.** `revisions.ts` `sharedBurn` decides whether a maneuver card's mover is shared: a live plan lists this event, or another active, open event of the mover lies in [burn, burn + 72 h] (same demo run, pair duplicates excluded). Rooms no longer decide.
   - A host revision is refused (`TRAJECTORY_PLAN_REQUIRED`) only when a new card with a shared burn changes the burn of the current card with the same id. Text changes, wait cards, cards of an unshared mover and dropping or replacing a card are allowed; the plan then advances and resets the affected events.
+  - Like `maneuvers.ts`, only a plan of more than one incident counts, and an event without a candidate set yet is checked rather than refused.
   - A summary edit is refused (`SHARED_TRAJECTORY_REQUIRED`) only when it changes a shared burn; a note-only edit goes through. `summary.get` `canEdit` follows the same check.
 
 ## Files
@@ -51,10 +52,10 @@ A backend audit after the trajectory plans (#76) found paths where a shared move
 
 - `tests/planWaitCard.test.ts`, 9 tests: a waiting partner on either event schedules once (one prepare, one commit, both events `scheduled`); the waiting event asking first waits, then one write; a single wait still goes to monitoring; a partner moving its other spacecraft fails visibly and never commits; the waiting card or the same burn message is logged once per selection, and nothing is logged while a partner has not selected; a committed plan does not block a later single-event maneuver; a monitoring wait event returns to the decision and signs the plan; a wait approval waits for the plan's diff.
 - `tests/planClosure.test.ts`, 2 tests: an affected event without a selection that expires, or is retired from the feed, drops the plan, and the selecting event previews on its own.
-- `tests/sharedRevisions.test.ts`, 17 tests: revisions keeping the shared burn pass and advance the plan; changing it is refused with or without a plan; a plan listing only another pair, a room-linked event outside the horizon and a closed partner do not block; summary note edits pass, burn edits of a shared mover are refused, and unshared cases pass.
+- `tests/sharedRevisions.test.ts`, 19 tests: revisions keeping the shared burn pass and advance the plan; changing it is refused with or without a plan; a plan listing only another pair, a room-linked event outside the horizon and a closed partner do not block; summary note edits pass, burn edits of a shared mover are refused, and unshared cases pass; a first publication without a candidate set is checked instead of refused, and a plan of this incident alone is not a shared burn.
 - `tests/revisions.test.ts`: three cases adapted from room links to the burn horizon. The "replace a plan-bound mover with wait" case now publishes, because dropping or replacing a card no longer changes a shared burn by itself.
 - The new wait-card, closure and monitoring tests fail on the code before this change.
-- `tsc --noEmit` clean; `vitest run`: 65 files, 1562 tests passed (main: 62 files, 1534 tests).
+- `tsc --noEmit` clean; `vitest run`: 65 files, 1562 tests passed (main: 62 files, 1534 tests); after the follow-up fix, 1564.
 
 ## Known limits
 
