@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "convex/react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowRightLeft,
@@ -20,11 +21,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { advocatesRerunRef, agentsRerunRef } from "@/lib/backend/api";
+import { advocatesRerunRef, agentsRerunRef, hostTriggersRef } from "@/lib/backend/api";
 import { backendError } from "@/lib/backend/errors";
 import { useLive, useRealMode } from "@/lib/backend/live";
+import { briefError, QueryBoundary } from "@/lib/backend/QueryBoundary";
 import { mutate } from "@/lib/backend/run";
-import type { PublicSpan, Side } from "@/lib/backend/types";
+import type { HostTriggerRow, PublicSpan, RoomId, Side } from "@/lib/backend/types";
 import { fmtMs, fmtTokens, fmtUsd } from "@/lib/ops/format";
 import { AGENTS, MODELS, nodeLabel, type AgentInfo } from "@/lib/ops/roster";
 import { isPatrolRoot } from "@/lib/ops/engine";
@@ -257,7 +259,10 @@ export function CallFeed({ className = "", eventId }: { className?: string; even
   const spans = useOps((s) => s.spans);
   const focusAgent = useOps((s) => s.focusAgent);
   const focusSpan = useOps((s) => s.focusSpan);
+  const roomId = useLive((l) => l.roomId);
   const now = useNow(200);
+  // the case room's Host runs close the feed in real mode, unless another agent is in focus
+  const hostRoom = real && (!focusAgent || focusAgent === "host") ? roomId : null;
 
   const items = useMemo(() => {
     const out: FeedItem[] = [];
@@ -312,13 +317,12 @@ export function CallFeed({ className = "", eventId }: { className?: string; even
   // the newest real call stays open; background passes don't count
   const firstCall = items.findIndex((i) => !i.pass);
 
-  if (!items.length) {
-    return (
-      <div className={`px-3 py-6 text-center text-[11px] text-muted ${className}`}>
-        {real ? <RealEmpty field="spans" idle={eventId ? "No agent runs for this case yet." : "No agent runs yet."} /> : "Agents are idle. They wake on red events only."}
-      </div>
-    );
-  }
+  const idle = real ? (
+    <RealEmpty field="spans" idle={eventId ? "No agent runs for this case yet." : "No agent runs yet."} />
+  ) : (
+    "Agents are idle. They wake on red events only."
+  );
+  if (!items.length && !hostRoom) return <div className={`px-3 py-6 text-center text-[11px] text-muted ${className}`}>{idle}</div>;
 
   return (
     <div className={`relative min-h-0 ${className}`}>
@@ -339,6 +343,7 @@ export function CallFeed({ className = "", eventId }: { className?: string; even
         )}
       </AnimatePresence>
       <div ref={box} className="thin-scroll h-full overflow-y-auto px-3 pb-3 pt-0.5 [overflow-anchor:none]">
+        {!items.length && <div className="py-6 text-center text-[11px] text-muted">{idle}</div>}
         <AnimatePresence initial={false}>
           {items.map((it, k) => (
             <motion.div
@@ -360,7 +365,88 @@ export function CallFeed({ className = "", eventId }: { className?: string; even
             </motion.div>
           ))}
         </AnimatePresence>
+        {hostRoom && <HostRuns roomId={hostRoom} now={now} />}
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ host runs */
+
+type RunStatus = RealOutput["runStatus"];
+const RUN_PILL: Record<RunStatus, SpanStatus> = { running: "running", succeeded: "ok", failed: "error", superseded: "waiting" };
+
+/** A failed query's message: the backend's own words for a ConvexError, else the error's first line. */
+function queryMessage(e: Error) {
+  const b = backendError(e);
+  return b.code === "UNKNOWN" ? briefError(e) : b.message;
+}
+
+const utcClock = (t: number) => new Date(t).toISOString().slice(11, 19);
+
+/** The case room's Coordination Host runs (hostTriggers.listForRoom): what triggered each, its attempt and timing. */
+function HostRuns({ roomId, now }: { roomId: RoomId; now: number }) {
+  const [attempt, setAttempt] = useState(0);
+  return (
+    <section className="pt-2">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="eyebrow">Host runs</span>
+        <span className="h-px flex-1 bg-white/[0.05]" />
+        <span className="text-[9.5px] text-faint">this room · newest first</span>
+      </div>
+      <QueryBoundary
+        key={`${roomId}-${attempt}`}
+        fallback={(e) => (
+          <div className="flex items-center gap-2 py-1">
+            <p className="min-w-0 flex-1 text-[11px] leading-[1.5] text-muted">{queryMessage(e)}</p>
+            <button
+              className="btn btn-ghost-line h-6 shrink-0 px-2 text-[11px]"
+              onClick={() => {
+                sfx.click();
+                setAttempt((n) => n + 1);
+              }}
+            >
+              <RotateCw size={11} /> Retry
+            </button>
+          </div>
+        )}
+      >
+        <HostRunRows roomId={roomId} now={now} />
+      </QueryBoundary>
+    </section>
+  );
+}
+
+function HostRunRows({ roomId, now }: { roomId: RoomId; now: number }) {
+  const rows = useQuery(hostTriggersRef, { roomId });
+  if (rows === undefined) return <p className="py-1 text-[11px] text-muted">Loading Host runs</p>;
+  if (!rows.length) return <p className="py-1 text-[11px] text-muted">The Host has not run in this room yet.</p>;
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r) => (
+        <motion.div key={r.hostRunId} layout="position" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
+          <HostRunRow r={r} now={now} />
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
+function HostRunRow({ r, now }: { r: HostTriggerRow; now: number }) {
+  const status = r.status in RUN_PILL ? RUN_PILL[r.status as RunStatus] : null;
+  const ms = r.finishedAt !== null ? r.finishedAt - r.createdAt : r.status === "running" ? (now ? Math.max(now - r.createdAt, 0) : 0) : null;
+  return (
+    <div className="flex items-center gap-2 rounded-[11px] bg-white/[0.02] px-2.5 py-1.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.045)]">
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[11px] text-fg-2">{humanize(r.trigger)}</span>
+        <span className="block truncate text-[10px] text-muted">
+          Attempt <span className="mono tnum">{r.attempt}</span> · <span className="mono tnum">{utcClock(r.createdAt)}</span> UTC
+        </span>
+      </span>
+      <span className="flex shrink-0 flex-col items-end gap-0.5">
+        {status ? <StatusIcon status={status} compact /> : <span className="text-[9.5px] text-muted">{humanize(r.status)}</span>}
+        <span className="mono tnum text-[9.5px] text-muted">{fmtElapsed(ms)}</span>
+      </span>
     </div>
   );
 }
