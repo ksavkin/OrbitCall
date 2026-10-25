@@ -222,7 +222,7 @@ function guestTemplate(): ConjunctionEvent {
 export function acceptSmokeInvite(userId: string) {
   const invite = readStored();
   const side = smokeSideFor(userId);
-  const actAs = side === "a" || side === "b" ? side : "b";
+  const actAs = side === "a" || side === "b" ? side : null;
   const event = invite?.event ?? guestTemplate();
   const parties: Party[] = [...(event.parties ?? [])];
   if (!parties.some((p) => p.role === "affected")) {

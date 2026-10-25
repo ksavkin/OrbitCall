@@ -18,8 +18,8 @@ export function SmokeBridge() {
     if (side === "a" || side === "b") {
       if (useOps.getState().actAs !== side) useOps.getState().set({ actAs: side, autopilot: false });
     } else if (side === "affected") {
-      // RU watches and can talk; treat as side b for turn UI so Approve stays on CN
-      if (useOps.getState().actAs !== "b") useOps.getState().set({ actAs: "b", autopilot: false });
+      // RU is invited for visibility and voice; they do not take A/B approve turns
+      if (useOps.getState().actAs !== null) useOps.getState().set({ actAs: null, autopilot: true });
     }
   }, [me?.userId]);
   useEffect(() => {
