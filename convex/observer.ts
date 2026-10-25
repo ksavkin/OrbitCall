@@ -81,6 +81,11 @@ const publicViewResult = v.object({
   truncated: v.boolean(),
 });
 
+// Spec §4.5 Limits: at most 32,000 scanned documents per query; Convex also caps one query at 4096 index ranges
+// and 16 MiB read. Each event costs up to about 120 ranges and 700 documents (501 of them `log` rows, which have no
+// index by action or intent), so the projection reads at most six whole events: about 4.3k documents and 750 ranges.
+// The rehearsed demo has two to five events.
+const MAX_EVENTS = 6;
 
 /** Grants one provisioned observer the read of one open demo run (internal: run from the CLI or a seed). */
 export const authorize = internalMutation({
@@ -107,11 +112,11 @@ export const publicView = query({
     if (run.state === "closed" || run.closedAt !== null) {
       return { demoRunId, scenario: run.scenario, state: run.state, events: [], scans: [], truncated: false };
     }
-    const rows = await ctx.db.query("events").withIndex("by_demo_run", q => q.eq("demoRunId", demoRunId)).take(101);
+    const rows = await ctx.db.query("events").withIndex("by_demo_run", q => q.eq("demoRunId", demoRunId)).take(MAX_EVENTS + 1);
     const scans = await ctx.db.query("scanRuns").withIndex("by_demo_run", q => q.eq("demoRunId", demoRunId)).take(21);
-    let truncated = rows.length > 100 || scans.length > 20;
+    let truncated = rows.length > MAX_EVENTS || scans.length > 20;
     const events = [];
-    for (const e of rows.slice(0, 100)) {
+    for (const e of rows.slice(0, MAX_EVENTS)) {
       const [a, b, selection, proposals, approvals, links, verifications] = await Promise.all([
         ctx.db.get(e.objectAId),
         ctx.db.get(e.objectBId),
