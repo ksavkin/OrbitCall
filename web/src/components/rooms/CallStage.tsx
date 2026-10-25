@@ -12,6 +12,10 @@ import { ClaudeGlyph } from "@/components/ops/Glyphs";
 import { RoomTimeline, withValues } from "@/components/roomChat/RoomTimeline";
 import { Select } from "@/components/ui/Popover";
 import type { RoomCard } from "@/components/roomChat/model";
+import type { StageChat } from "@/components/roomChat/live";
+import { LiveComposer } from "@/components/roomChat/LiveComposer";
+import { LiveTimeline } from "@/components/roomChat/LiveTimeline";
+import { useStageChat } from "@/components/roomChat/useRoom";
 import { useAudioLevel } from "./useAudioLevel";
 import { VoiceBlob } from "./VoiceBlob";
 
@@ -47,9 +51,15 @@ export function CallStage({
   onMode,
   compact = false,
   lockedBy,
+  chat,
 }: {
   /** Another party is deciding: this dispatcher's voice and text pause until it is their turn. */
   lockedBy?: string;
+  /**
+   * Real mode: the backend room whose typed lines this stage shows and sends (messages.list / messages.send).
+   * The docked call defaults to the open case's room; dev mode ignores it.
+   */
+  chat?: StageChat;
   /** Inside the case view: the case header already names it, so only the live state and translator show. */
   compact?: boolean;
   call: StageCall;
@@ -64,6 +74,7 @@ export function CallStage({
   const joined = c.state === "joined" || c.state === "reconnecting";
   const othersSpeaking = c.participants.some((p) => !p.isMe && !p.isTranslator && p.speaking);
   const level = useAudioLevel({ micOn: c.micOn, othersSpeaking });
+  const roomChat = useStageChat(chat, compact);
 
   const switchTo = (m: StageMode) => {
     if (m === mode) return;
@@ -76,7 +87,7 @@ export function CallStage({
     onMode(m);
   };
 
-  if (compact) return <DockedCall c={c} level={level} joined={joined} lockedBy={lockedBy} mode={mode} onMode={switchTo} />;
+  if (compact) return <DockedCall c={c} level={level} joined={joined} lockedBy={lockedBy} mode={mode} onMode={switchTo} chat={roomChat} />;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="call-panel" data-state={c.state} data-mode={mode}>
@@ -133,19 +144,23 @@ export function CallStage({
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="absolute inset-0 flex flex-col"
             >
-              <RoomTimeline
-                messages={c.captions ?? []}
-                cards={cards}
-                myUserId={c.identity?.replace(/^user-/, "") ?? null}
-                testId="call-captions"
-                empty="No messages yet. Type below, or switch to Voice and talk."
-              />
+              {roomChat ? (
+                <LiveTimeline chat={roomChat} captions={c.captions ?? []} myUserId={c.identity?.replace(/^user-/, "") ?? null} />
+              ) : (
+                <RoomTimeline
+                  messages={c.captions ?? []}
+                  cards={cards}
+                  myUserId={c.identity?.replace(/^user-/, "") ?? null}
+                  testId="call-captions"
+                  empty="No messages yet. Type below, or switch to Voice and talk."
+                />
+              )}
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      <Controls c={c} joined={joined} mode={mode} lockedBy={lockedBy} />
+      <Controls c={c} joined={joined} mode={mode} lockedBy={lockedBy} chat={roomChat} />
     </div>
   );
 }
@@ -304,6 +319,7 @@ function DockedCall({
   lockedBy,
   mode,
   onMode,
+  chat,
 }: {
   c: StageCall;
   level: ReturnType<typeof useAudioLevel>;
@@ -311,6 +327,7 @@ function DockedCall({
   lockedBy?: string;
   mode: StageMode;
   onMode: (m: StageMode) => void;
+  chat: StageChat | null;
 }) {
   const speaker = c.participants.find((p) => !p.isMe && !p.isTranslator && p.speaking);
   const last = (c.captions ?? []).at(-1);
@@ -385,8 +402,9 @@ function DockedCall({
             </span>
             {c.simulated && <span className="shrink-0 rounded-full bg-[rgba(255,159,64,0.12)] px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-[0.08em] text-orange">simulated</span>}
           </div>
-          {joined && mode === "text" && !observer ? (
-            <Composer c={c} lockedBy={lockedBy} className="mt-2" />
+          {/* real mode: the room's text does not need the call, so someone outside it can still type */}
+          {(joined && mode === "text" && !observer) || (chat && !joined && c.state !== "joining") ? (
+            <Composer c={c} lockedBy={lockedBy} className="mt-2" chat={chat} autoFocus={joined} />
           ) : (
             <AnimatePresence mode="wait">
               {joined && last ? (
@@ -444,8 +462,14 @@ function DockedCall({
   );
 }
 
+/** The text field: in real mode the backend room's (messages.send), in dev mode the simulated call's. */
+function Composer({ c, lockedBy, className = "", chat, autoFocus = true }: { c: StageCall; lockedBy?: string; className?: string; chat: StageChat | null; autoFocus?: boolean }) {
+  if (chat) return <LiveComposer chat={chat} className={className} autoFocus={autoFocus} />;
+  return <SimComposer c={c} lockedBy={lockedBy} className={className} />;
+}
+
 /** Rounded message field with a round send button: typed text goes through the same translation as speech. */
-function Composer({ c, lockedBy, className = "" }: { c: StageCall; lockedBy?: string; className?: string }) {
+function SimComposer({ c, lockedBy, className = "" }: { c: StageCall; lockedBy?: string; className?: string }) {
   const [text, setText] = useState("");
   return (
     // the text path (LANG-7): same translation, for noisy rooms. Live calls get it with the room-messages backend
@@ -508,7 +532,7 @@ function SoundToggle() {
   );
 }
 
-function Controls({ c, joined, mode, lockedBy }: { c: StageCall; joined: boolean; mode: StageMode; lockedBy?: string }) {
+function Controls({ c, joined, mode, lockedBy, chat }: { c: StageCall; joined: boolean; mode: StageMode; lockedBy?: string; chat: StageChat | null }) {
   // primary button only: a right click opens the context menu and may never deliver pointerup (a stuck microphone)
   const press = (e: PointerEvent) => {
     if (e.button === 0) {
@@ -556,7 +580,7 @@ function Controls({ c, joined, mode, lockedBy }: { c: StageCall; joined: boolean
   if (mode === "text") {
     return (
       <div className="flex items-center gap-3 border-t border-white/[0.06] px-6 py-4">
-        <Composer c={c} lockedBy={lockedBy} className="flex-1" />
+        <Composer c={c} lockedBy={lockedBy} className="flex-1" chat={chat} />
         {c.role !== "observer" && <SoundToggle />}
         {sound}
         {leave}
