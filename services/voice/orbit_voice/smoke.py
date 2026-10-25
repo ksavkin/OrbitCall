@@ -55,11 +55,11 @@ async def main(path: str, lang: str, targets: list[str]) -> None:
         print(f"LLM  {(time.monotonic() - t1) * 1000:.0f} ms ({cfg.translation_model}); errors {out.errors}")
         for t, s in out.texts.items():
             print(f"     {t}: {s.encode('unicode_escape').decode()}")
-            if not tts.available(t):
-                print(f"TTS  {t}: text-only (no voice configured)")
+            if not tts.available(t, cfg.tts_default_voice):
+                print(f"TTS  {t}: text-only (no {cfg.tts_default_voice} voice configured)")
                 continue
             t2, first, n = time.monotonic(), None, 0
-            async for chunk in tts.stream(s, t):
+            async for chunk in tts.stream(s, t, cfg.tts_default_voice):
                 first = first or time.monotonic()
                 n += len(chunk)
             print(f"TTS  {t}: first byte {((first or t2) - t2) * 1000:.0f} ms, {n / 2 / SAMPLE_RATE:.1f} s of audio, "

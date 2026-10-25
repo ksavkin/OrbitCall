@@ -31,14 +31,16 @@ class FakeTranslator:
 
 
 class FakeVoice:
-    def __init__(self, fail=(), langs=("en", "ru", "zh")):
-        self.fail, self.langs, self.spoken = set(fail), set(langs), []
+    def __init__(self, fail=(), langs=("en", "ru", "zh"), silent=()):
+        self.fail, self.langs, self.silent = set(fail), set(langs), set(silent)  # silent: (lang, gender) text-only
+        self.spoken, self.voices = [], []
 
-    def available(self, lang):
-        return lang in self.langs
+    def available(self, lang, gender):
+        return lang in self.langs and (lang, gender) not in self.silent
 
-    async def stream(self, text, lang):
+    async def stream(self, text, lang, gender):
         self.spoken.append((lang, text))
+        self.voices.append((lang, gender))
         if lang in self.fail:
             raise TTSError(f"{lang}: HTTP 503")
         yield b"\0\0" * 240
@@ -62,9 +64,9 @@ def make(translator, voice=None):
     return Pipeline(translator, voice or FakeVoice(), sink, player), sink, player
 
 
-async def run(p, text="burn 0.2 m/s at T-6h", src="en", targets=("ru", "zh")):
-    res = await p.handle(room_id="r1", identity="user-a", src=src, text=text, started_at_ms=1_700_000_000_000,
-                         segment=Segment("r1:user-a:e:1"), targets=list(targets))
+async def run(p, text="burn 0.2 m/s at T-6h", src="en", targets=("ru", "zh"), gender="female"):
+    res = await p.handle(room_id="r1", identity="user-a", src=src, gender=gender, text=text,
+                         started_at_ms=1_700_000_000_000, segment=Segment("r1:user-a:e:1"), targets=list(targets))
     await p.drain()
     return res
 
@@ -112,8 +114,23 @@ async def test_text_only_language_is_stated_not_silent():
     await run(p)
     assert [r["rev"] for r in sink.rows] == [1, 2]
     assert sink.rows[-1]["translationStatus"] == {"ru": "ok", "zh": "ok"}
-    assert sink.rows[-1]["errors"] == {"zh": {"code": "VOICE_UNAVAILABLE", "message": "no voice configured for zh"}}
+    assert sink.rows[-1]["errors"] == {"zh": {"code": "VOICE_UNAVAILABLE",
+                                               "message": "no female voice configured for zh"}}
     assert {lang for lang, _, _ in player.played} == {"ru"}
+
+
+async def test_voice_follows_the_speakers_gender():
+    voice = FakeVoice(silent={("zh", "male")})  # a male zh voice is not configured; the female one is
+    p, sink, player = make(FakeTranslator({"ru": "ru ok", "zh": "zh ok"}), voice)
+    await run(p, gender="male")
+    assert voice.voices == [("ru", "male")]
+    assert sink.rows[-1]["errors"] == {"zh": {"code": "VOICE_UNAVAILABLE",
+                                               "message": "no male voice configured for zh"}}
+    assert {lang for lang, _, _ in player.played} == {"ru"}
+    p, sink, player = make(FakeTranslator({"ru": "ru ok", "zh": "zh ok"}), voice)
+    await run(p, gender="female")
+    assert voice.voices[-2:] == [("ru", "female"), ("zh", "female")]
+    assert "errors" not in sink.rows[-1]
 
 
 async def test_same_language_room_posts_original_without_translation():
@@ -185,10 +202,10 @@ async def test_translation_does_not_wait_for_playout():
         return asyncio.create_task(consume())
     sink = Sink()
     p = Pipeline(FakeTranslator({"ru": "ru ok"}), FakeVoice(), sink, slow_player)
-    await asyncio.wait_for(p.handle(room_id="r1", identity="user-a", src="en", text="burn 1", started_at_ms=1,
-                                    segment=Segment("r1:user-a:e:1"), targets=["ru"]), 2)
-    await asyncio.wait_for(p.handle(room_id="r1", identity="user-a", src="en", text="burn 2", started_at_ms=2,
-                                    segment=Segment("r1:user-a:e:2"), targets=["ru"]), 2)
+    await asyncio.wait_for(p.handle(room_id="r1", identity="user-a", src="en", gender="female", text="burn 1",
+                                    started_at_ms=1, segment=Segment("r1:user-a:e:1"), targets=["ru"]), 2)
+    await asyncio.wait_for(p.handle(room_id="r1", identity="user-a", src="en", gender="female", text="burn 2",
+                                    started_at_ms=2, segment=Segment("r1:user-a:e:2"), targets=["ru"]), 2)
     assert sum(1 for r in sink.rows if r["rev"] == 2) == 2  # both translated while nothing has played yet
     gate.set()
     await p.drain()

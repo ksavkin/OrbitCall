@@ -18,6 +18,8 @@ export const translations = v.object({ en: v.optional(v.string()), ru: v.optiona
 export const phraseError = v.object({ code: v.string(), message: v.string() });
 export const phraseErrors = v.object({ en: v.optional(phraseError), ru: v.optional(phraseError), zh: v.optional(phraseError) });
 export const memberRole = v.union(v.literal("operator"), v.literal("observer"));
+/** The speaker's voice gender for the translated tracks, signed into the join token as the participant attribute `voice`. */
+export const voiceGender = v.union(v.literal("male"), v.literal("female"));
 
 export const callTables = {
   // Identity seam until sign-in: identity subject → member of one room, with the language and company that the
@@ -25,6 +27,7 @@ export const callTables = {
   call_members: defineTable({
     roomId: v.string(), subject: v.string(), userId: v.string(), companyId: v.string(), name: v.string(), lang,
     role: memberRole, // an observer listens and reads; its token cannot publish (spec §5)
+    voice: v.optional(voiceGender), // absent: the worker's TTS_DEFAULT_VOICE
     devToken: v.optional(v.string()), simulated: v.boolean(),
   }).index("by_room", ["roomId", "subject"]).index("by_room_user", ["roomId", "userId"]).index("by_subject", ["subject"])
     .index("by_dev_token", ["devToken"]),

@@ -1,7 +1,10 @@
 """Segments, script guard, zh numeral normalization, config, long-text split."""
 
+from types import SimpleNamespace
+
 import pytest
 
+from orbit_voice.agent import speaker_voice
 from orbit_voice.config import Config
 from orbit_voice.normalize import normalize
 from orbit_voice.pipeline import MAX_TEXT, split_long
@@ -51,19 +54,65 @@ def test_only_zh_is_normalized():
     assert normalize("six hours", "en") == ("six hours", False)
 
 
+VOICE_ENV = ("CARTESIA_API_KEY", "XAI_API_KEY", "CARTESIA_VOICE_EN", "CARTESIA_VOICE_ZH", "XAI_TTS_VOICE_ID",
+             "CARTESIA_VOICE_EN_MALE", "CARTESIA_VOICE_EN_FEMALE", "CARTESIA_VOICE_ZH_MALE", "CARTESIA_VOICE_ZH_FEMALE",
+             "XAI_TTS_VOICE_RU_MALE", "XAI_TTS_VOICE_RU_FEMALE", "TTS_DEFAULT_VOICE")
+
+
 def test_tts_provider_is_text_only_without_voice(monkeypatch):
-    for k in ("CARTESIA_API_KEY", "CARTESIA_VOICE_EN", "CARTESIA_VOICE_ZH", "XAI_API_KEY", "XAI_TTS_VOICE_ID"):
+    for k in VOICE_ENV:
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("CARTESIA_API_KEY", "sk-cartesia-secret")
-    monkeypatch.setenv("CARTESIA_VOICE_EN", "voice-en")
+    monkeypatch.setenv("CARTESIA_VOICE_EN", "voice-en")  # legacy id: both genders of English
+    monkeypatch.setenv("CARTESIA_VOICE_EN_MALE", "voice-en-m")
     monkeypatch.setenv("XAI_API_KEY", "xai-secret")
+    monkeypatch.setenv("XAI_TTS_VOICE_RU_FEMALE", "voice-ru-f")
     c = Config()
-    assert c.tts_provider("en") == ("cartesia", "voice-en")
-    assert c.tts_provider("zh") is None  # no voice id: text only, never another provider
-    assert c.tts_provider("ru") is None  # no XAI_TTS_VOICE_ID: text only
+    assert c.tts_provider("en", "male") == ("cartesia", "voice-en-m")  # the gendered id wins
+    assert c.tts_provider("en", "female") == ("cartesia", "voice-en")  # the legacy id voices the other gender
+    assert c.tts_provider("zh", "male") is None and c.tts_provider("zh", "female") is None  # never another provider
+    assert c.tts_provider("ru", "female") == ("grok", "voice-ru-f")
+    assert c.tts_provider("ru", "male") is None  # no cross-gender substitution
+    assert c.tts_provider("ru", "robot") == ("grok", "voice-ru-f")  # unknown gender: the default voice (female)
     d = c.describe()
-    assert d["tts"] == {"en": "cartesia", "ru": "text-only", "zh": "text-only"}
+    assert d["tts"] == {"en": {"male": "cartesia", "female": "cartesia"}, "ru": {"male": "text-only", "female": "grok"},
+                        "zh": {"male": "text-only", "female": "text-only"}}
+    assert d["ttsDefaultVoice"] == "female"
     assert "secret" not in str(d)  # presence only, never values
+
+
+def test_tts_default_voice_reads_env(monkeypatch):
+    monkeypatch.setenv("TTS_DEFAULT_VOICE", "male")
+    assert Config().tts_default_voice == "male"
+    monkeypatch.setenv("TTS_DEFAULT_VOICE", "Robot")
+    assert Config().tts_default_voice == "female"
+
+
+def test_speaker_voice_reads_the_signed_attribute():
+    """The gender comes from the participant attribute `voice` (set by Convex in the join token); anything else is the
+    configured default, never a guess from the name or the language."""
+    participant = lambda attrs: SimpleNamespace(attributes=attrs, identity="user-x", name="Dispatcher RU")  # noqa: E731
+    assert speaker_voice(participant({"voice": "male", "lang": "ru"}), "female") == "male"
+    assert speaker_voice(participant({"lang": "ru"}), "female") == "female"
+    assert speaker_voice(participant({"lang": "ru"}), "male") == "male"
+    assert speaker_voice(participant({"voice": "x"}), "female") == "female"
+    assert speaker_voice(participant({"gender": "male"}), "female") == "female"  # the wrong key is not the attribute
+
+
+def test_health_readiness_needs_every_provider_a_voice_uses(tmp_path, monkeypatch):
+    import orbit_voice.health as h
+    monkeypatch.setattr(h, "RUNTIME_DIR", tmp_path)
+    monkeypatch.setattr(h.Health, "_probe", lambda self, name, url, headers: {"ready": name != "cartesia", "status": 0})
+    monkeypatch.setattr(h.Health, "_registered", lambda self: {"ready": True, "status": "registered"})
+    for k in VOICE_ENV:
+        monkeypatch.delenv(k, raising=False)
+    for k in ("XAI_API_KEY", "ANTHROPIC_API_KEY", "CARTESIA_API_KEY", "CONVEX_SITE_URL", "CALL_SERVICE_TOKEN"):
+        monkeypatch.setenv(k, "x")
+    monkeypatch.setenv("XAI_TTS_VOICE_RU_MALE", "adam")
+    state = h.Health(Config()).check()  # no Cartesia voice configured: the unready Cartesia probe does not count
+    assert state["ready"] is True and state["voice"]["ru"] == {"male": "grok", "female": "text-only"}
+    monkeypatch.setenv("CARTESIA_VOICE_EN_FEMALE", "eve")
+    assert h.Health(Config()).check()["ready"] is False  # a configured Cartesia voice needs Cartesia ready
 
 
 def test_split_long_never_drops_text():

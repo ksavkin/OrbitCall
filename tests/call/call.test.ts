@@ -117,8 +117,19 @@ describe("membership and identity [ACC-2]", () => {
 describe("call.join token (spec §5)", () => {
   const decode = (part: string) => JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
 
-  it("a 2-hour HS256 LiveKit token for coordination-<roomId> with lang and company as signed attributes", async () => {
+  it("reseeding an existing demo room adds the voice gender to members that have none and hands out no new tokens", async () => {
     const r = await room();
+    await r.t.run((ctx) => ctx.db.patch(r.ru._id, { voice: undefined })); // a room seeded before the gender existed
+    expect((await r.t.run((ctx) => ctx.db.get(r.ru._id)))!.voice).toBeUndefined();
+    expect(await r.t.mutation(api.call.demo.seed, { roomId: r.roomId })).toEqual({ roomId: r.roomId, tokens: null });
+    const after = await r.t.run((ctx) => ctx.db.query("call_members").collect());
+    expect(after.map((m: any) => m.voice).sort()).toEqual([undefined, "female", "female", "male"].sort());
+    expect(after.find((m: any) => m._id === r.ru._id)).toMatchObject({ voice: "male", devToken: r.ru.devToken });
+  });
+
+  it("a 2-hour HS256 LiveKit token for coordination-<roomId> with lang, company and the speaker's voice as signed attributes", async () => {
+    const r = await room();
+    expect([r.en.voice, r.ru.voice, r.zh.voice, r.observer.voice]).toEqual(["female", "male", "female", undefined]); // seeded genders
     vi.stubEnv("LIVEKIT_URL", "ws://livekit.test:7880");
     vi.stubEnv("LIVEKIT_API_KEY", "devkey");
     vi.stubEnv("LIVEKIT_API_SECRET", "test-secret-for-hmac-0123456789abcdef");
@@ -129,7 +140,7 @@ describe("call.join token (spec §5)", () => {
     expect(decode(h)).toEqual({ alg: "HS256", typ: "JWT" });
     const claims = decode(p);
     expect(claims).toMatchObject({ iss: "devkey", sub: `user-${r.ru.userId}`, jti: `user-${r.ru.userId}`, name: "Dispatcher RU",
-      attributes: { lang: "ru", companyId: r.ru.companyId },
+      attributes: { lang: "ru", companyId: r.ru.companyId, voice: "male" },
       video: { room: `coordination-${r.roomId}`, roomJoin: true, canPublish: true, canPublishSources: ["microphone"], canSubscribe: true,
         canPublishData: false, canUpdateOwnMetadata: false },
       roomConfig: { agents: [{ agentName: "orbit-translator" }] } });
@@ -147,6 +158,8 @@ describe("call.join token (spec §5)", () => {
     const res = await r.t.action(api.call.join.join, { roomId: r.roomId, devToken: r.tokens.observer });
     expect(res.role).toBe("observer");
     expect(decode(res.token.split(".")[1]).video).toMatchObject({ canPublish: false, canPublishSources: [], canSubscribe: true });
+    // a member without a voice gender gets exactly the old attribute set: no `voice` key
+    expect(decode(res.token.split(".")[1]).attributes).toEqual({ lang: "en", companyId: r.observer.companyId });
   });
 
   it("not configured → FEATURE_DISABLED; not a member → FORBIDDEN", async () => {
