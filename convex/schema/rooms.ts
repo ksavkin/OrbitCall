@@ -62,9 +62,11 @@ export const roomTables = {
       eventId: v.optional(v.id("events")), proposalId: v.optional(v.id("proposals")), revision: v.optional(v.number()),
     }),
     form: v.union(summaryForm, v.null()),
+    demoRunId: v.union(v.id("demoRuns"), v.null()),
     simulated: v.boolean(),
     createdAt: v.number(),
-  }).index("by_room_created", ["roomId", "createdAt"]).index("by_room_event_created", ["roomId", "eventId", "createdAt"]),
+  }).index("by_room_created", ["roomId", "createdAt"]).index("by_room_event_created", ["roomId", "eventId", "createdAt"])
+    .index("by_demo_run", ["demoRunId"]),
   // One Coordination Host attempt, deduplicated by room, input version and trigger. The span, checked output and
   // Grok check are exactly what coordinationHost.run and rationaleCheck.run return; a stale result is superseded.
   hostRuns: defineTable({
@@ -73,8 +75,11 @@ export const roomTables = {
     span: v.union(agentSpanValidator, v.null()),
     output: v.union(hostOutputValidator, v.null()),
     check: v.union(v.object({ span: agentSpanValidator, result: v.union(checkResultValidator, v.null()) }), v.null()),
+    // An old run's host job must not publish into a new run (roadmap §14).
+    demoRunId: v.union(v.id("demoRuns"), v.null()),
     createdAt: v.number(), finishedAt: v.union(v.number(), v.null()),
-  }).index("by_room_input_trigger", ["roomId", "inputVersion", "trigger"]).index("by_room_created", ["roomId", "createdAt"]),
+  }).index("by_room_input_trigger", ["roomId", "inputVersion", "trigger"]).index("by_room_created", ["roomId", "createdAt"])
+    .index("by_demo_run", ["demoRunId"]),
   // What the agents took from the discussion (spec §2.3 Understood, ROOM-12, LOG-6). `text` is the original in
   // `originalLang`. A correction never edits the old entry: it inserts a new one and marks the old one "corrected"
   // with `correctedById`, so "cannot move Wednesday" corrected to "prefer Thursday" keeps both.

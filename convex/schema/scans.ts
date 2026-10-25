@@ -38,5 +38,5 @@ export const scanTables = {
     demoRunId: v.union(v.id("demoRuns"), v.null()),
     updatedAt: v.number(),
   }).index("by_user", ["requestedBy"]).index("by_user_request", ["requestedBy", "requestId"])
-    .index("by_status", ["status"]).index("by_job", ["jobId"]),
+    .index("by_status", ["status"]).index("by_job", ["jobId"]).index("by_demo_run", ["demoRunId"]),
 };

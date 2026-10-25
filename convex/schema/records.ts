@@ -52,7 +52,8 @@ export const recordTables = {
     userId: v.id("users"), eventId: v.id("events"),
     unread: v.boolean(), lastUpdateAt: v.number(), lastUpdateSummary: v.string(),
     demoRunId: v.union(v.id("demoRuns"), v.null()), simulated: v.boolean(),
-  }).index("by_user_updated", ["userId", "lastUpdateAt"]).index("by_user_event", ["userId", "eventId"]),
+  }).index("by_user_updated", ["userId", "lastUpdateAt"]).index("by_user_event", ["userId", "eventId"])
+    .index("by_demo_run", ["demoRunId"]),
   // Stored apart from the schedule file: a committed schedule is not evidence of execution [VER-1..VER-4].
   verifications: defineTable({
     eventId: v.union(v.id("events"), v.null()),   // null for the labeled historical replay
@@ -64,8 +65,9 @@ export const recordTables = {
     series: v.array(v.object({ epochUtc: v.string(), smaKm: v.number() })),
     thresholds: v.object({ z: v.number(), minDeltaAKm: v.number(), sizeTolerance: v.number(), minSets: v.number() }),
     method: v.string(), limitations: v.array(v.string()), missing: v.array(v.string()), sources: v.array(sourceRef),
+    demoRunId: v.union(v.id("demoRuns"), v.null()),
     simulated: v.boolean(), createdAt: v.number(),
-  }).index("by_event", ["eventId"]).index("by_kind", ["kind"]),
+  }).index("by_event", ["eventId"]).index("by_kind", ["kind"]).index("by_demo_run", ["demoRunId"]),
   // One observation queued for the Tiger hypertable. `observationKey` includes the observation time, so a
   // repeated export of the same point is a no-op on both sides.
   observationExports: defineTable({
@@ -75,7 +77,8 @@ export const recordTables = {
     value: v.union(v.number(), v.null()), evidenceVersion: v.string(), simulated: v.boolean(),
     exportState, attempts: v.number(), lastError: v.union(v.string(), v.null()),
     updatedAt: v.number(),
-  }).index("by_key", ["observationKey"]).index("by_event", ["eventId"]).index("by_state", ["exportState"]),
+  }).index("by_key", ["observationKey"]).index("by_event", ["eventId"]).index("by_state", ["exportState"])
+    .index("by_demo_run", ["demoRunId"]),
   // Versioned cache of the Tiger series that history.series reads. Real and simulated points stay apart.
   historySeries: defineTable({
     eventId: v.id("events"), seriesVersion: v.number(),

@@ -36,8 +36,8 @@ export const scheduleTables = {
   // One card per event and candidate ("P1".."P4"); revisions are its history.
   proposals: defineTable({
     eventId: v.id("events"), candidateId: v.string(), label: v.string(),
-    latestRevision: v.number(), createdAt: v.number(),
-  }).index("by_event", ["eventId"]).index("by_event_candidate", ["eventId", "candidateId"]),
+    latestRevision: v.number(), demoRunId: v.union(v.id("demoRuns"), v.null()), createdAt: v.number(),
+  }).index("by_event", ["eventId"]).index("by_event_candidate", ["eventId", "candidateId"]).index("by_demo_run", ["demoRunId"]),
   proposalRevisions: defineTable({
     proposalId: v.id("proposals"), eventId: v.id("events"), revision: v.number(),
     candidateRevisionId: v.id("candidateRevisions"),
@@ -69,8 +69,10 @@ export const scheduleTables = {
     // The trajectory plan version this approval also signs when the maneuver spans several pair events.
     trajectoryPlanId: v.union(v.id("trajectoryPlans"), v.null()), trajectoryPlanVersion: v.union(v.number(), v.null()),
     reason: v.union(v.string(), v.null()),
+    demoRunId: v.union(v.id("demoRuns"), v.null()),
     current: v.boolean(), at: v.number(),
-  }).index("by_event_current", ["eventId", "current"]).index("by_event_generation", ["eventId", "selectionGeneration"]),
+  }).index("by_event_current", ["eventId", "current"]).index("by_event_generation", ["eventId", "selectionGeneration"])
+    .index("by_demo_run", ["demoRunId"]),
   // A reserved schedule-write intent and its result: one row per physical schedule write. `refs` has one entry for a
   // single-event maneuver and one per affected event for a trajectory plan; maneuverEvents indexes them by event.
   // `intentKey` is the plan id and version for a plan, or event, proposal, revision and selection generation for a
@@ -85,8 +87,10 @@ export const scheduleTables = {
     writtenBy: v.union(v.literal("droid"), v.literal("backend")),
     rescreenJobId: v.union(v.string(), v.null()), rescreen: v.union(rescreen, v.null()),
     error: v.union(v.string(), v.null()), reviewRequired: v.boolean(),
+    // Reset keeps the artifact reference under its closed run and stops a retry from writing into a new one.
+    demoRunId: v.union(v.id("demoRuns"), v.null()),
     updatedAt: v.number(),
-  }).index("by_intent", ["intentKey"]),
+  }).index("by_intent", ["intentKey"]).index("by_demo_run", ["demoRunId"]),
   // One row per event a maneuver touches, written with the maneuver from its refs, so maneuvers.get({ eventId }) is indexed.
   maneuverEvents: defineTable({ maneuverId: v.id("maneuvers"), eventId: v.id("events") })
     .index("by_event", ["eventId"]).index("by_maneuver", ["maneuverId"]),
@@ -104,5 +108,6 @@ export const scheduleTables = {
     maneuverId: v.union(v.id("maneuvers"), v.null()),
     demoRunId: v.union(v.id("demoRuns"), v.null()),
     createdAt: v.number(), updatedAt: v.number(),
-  }).index("by_object_state", ["objectId", "state"]).index("by_object_version", ["objectId", "planVersion"]),
+  }).index("by_object_state", ["objectId", "state"]).index("by_object_version", ["objectId", "planVersion"])
+    .index("by_demo_run", ["demoRunId"]),
 };

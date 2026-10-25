@@ -38,5 +38,6 @@ export const dataTables = {
     // Server-owned; a classification change advances it, which invalidates approvals signed on the old one.
     approvalRuleVersion: v.optional(v.number()),
     demoRunId: v.optional(v.id("demoRuns")),
-  }).index("by_pair_tca", ["objectAId", "objectBId", "tcaMs"]).index("by_active", ["active"]),
+  }).index("by_pair_tca", ["objectAId", "objectBId", "tcaMs"]).index("by_active", ["active"])
+    .index("by_demo_run", ["demoRunId"]),
 };
