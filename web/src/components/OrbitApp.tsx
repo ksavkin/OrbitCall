@@ -90,7 +90,7 @@ export function OrbitApp() {
       <AnimatePresence>{tab === "audit" && <AuditScreen key="audit" />}</AnimatePresence>
       <AnimatePresence>{orbit && dev && <ScenarioBar key="scenario" />}</AnimatePresence>
       {/* real-mode counterpart of the scenario bar: launch a demo satellite, reset the demonstration */}
-      {orbit && !dev && CONVEX_ENABLED && <DemoControls />}
+      <AnimatePresence>{orbit && !dev && CONVEX_ENABLED && <DemoControls key="demo" />}</AnimatePresence>
       <DecisionDock />
       <IncidentView />
       <UrgencyOverlay />

@@ -47,6 +47,7 @@ export function OrbitOps() {
 
 function FleetPanel({ live }: { live: boolean }) {
   const me = useMe();
+  const liveRun = useLive((s) => s.scan);
   const fleet = useFleet();
   const dev = useOps((s) => s.dev);
   const scan = useOps((s) => s.scan);
@@ -91,33 +92,36 @@ function FleetPanel({ live }: { live: boolean }) {
       <div className="mt-2.5">
         <ScanButton />
       </div>
-      <div className="mt-2 flex items-center gap-2 text-[10.5px] text-muted">
-        <Radar size={11} className={scan.phase === "scanning" ? "text-[#7fd8ff]" : ""} />
-        {scan.phase === "scanning" ? (
-          <span className="shimmer font-medium">Screening your fleet against the catalog…</span>
-        ) : found > 0 ? (
-          <>
+      {/* real mode: once a scan exists, the scan button reports it underneath; this line would repeat it */}
+      {!(live && liveRun) && (
+        <div className="mt-2 flex items-center gap-2 text-[10.5px] text-muted">
+          <Radar size={11} className={scan.phase === "scanning" ? "text-[#7fd8ff]" : ""} />
+          {scan.phase === "scanning" ? (
+            <span className="shimmer font-medium">Screening your fleet against the catalog…</span>
+          ) : found > 0 ? (
+            <>
+              <span>
+                Last scan found <span className="text-fg-2">{found}</span> conjunction{found > 1 ? "s" : ""}
+              </span>
+              <button
+                className="ml-auto flex items-center gap-1 text-fg-2 hover:text-white"
+                onClick={() => {
+                  sfx.click();
+                  useOps.setState((s) => ({ scan: { ...s.scan, phase: "results" } }));
+                }}
+              >
+                <ListChecks size={11} /> Show
+              </button>
+            </>
+          ) : dev && lastScan ? (
             <span>
-              Last scan found <span className="text-fg-2">{found}</span> conjunction{found > 1 ? "s" : ""}
+              Routine check {now ? Math.max(0, Math.round((now - lastScan.at) / 60000)) : 0} min ago · {lastScan.objects.toLocaleString("en-US")} objects
             </span>
-            <button
-              className="ml-auto flex items-center gap-1 text-fg-2 hover:text-white"
-              onClick={() => {
-                sfx.click();
-                useOps.setState((s) => ({ scan: { ...s.scan, phase: "results" } }));
-              }}
-            >
-              <ListChecks size={11} /> Show
-            </button>
-          </>
-        ) : dev && lastScan ? (
-          <span>
-            Routine check {now ? Math.max(0, Math.round((now - lastScan.at) / 60000)) : 0} min ago · {lastScan.objects.toLocaleString("en-US")} objects
-          </span>
-        ) : (
-          <span>72 hours ahead · 5 km screening distance</span>
-        )}
-      </div>
+          ) : (
+            <span>72 hours ahead · 5 km screening distance</span>
+          )}
+        </div>
+      )}
     </motion.section>
   );
 }
