@@ -21,6 +21,7 @@ import { CONVEX_ENABLED } from "@/lib/backend/provider";
 import { BackendListSafe, BackendSnapshotLine } from "./BackendQueue";
 import { RESOLVED, RISK_COLOR, STATUS_META } from "./meta";
 import { ScanButton } from "./DemoFlow";
+import { PcChart } from "./PcChart";
 
 /** Stable fallback: a new {} per render would loop the store subscription. */
 const NO_OWNERS: Record<string, string> = {};
@@ -295,7 +296,9 @@ function EventDetail({ e }: { e: ConjunctionEvent }) {
         <Cell label="TCA" value={fmtWhen(e.tca)} top border />
       </div>
 
-      <PcChart e={e} />
+      <div className="mt-3">
+        <PcChart e={e} />
+      </div>
 
       {e.status === "needs_decision" && (
         <div className="mt-2.5 rounded-[9px] bg-[rgba(255,159,64,0.07)] p-2 text-[10.5px] leading-[1.45] text-fg-2 shadow-[inset_0_0_0_1px_rgba(255,159,64,0.2)]">
@@ -404,43 +407,6 @@ function Cell({ label, value, hint, border, top, tone }: { label: string; value:
         {value}
       </div>
       {hint && <div className="mono truncate text-[9.5px] text-faint">{hint}</div>}
-    </div>
-  );
-}
-
-/** Pc over time on a log axis with the red line at 1e-4 (ROOM-10). */
-export function PcChart({ e }: { e: ConjunctionEvent }) {
-  const W = 262;
-  const H = 54;
-  // decades around the action line, so the climb through 1e-4 reads clearly
-  const lo = -5.5;
-  const hi = -3;
-  const y = (pc: number) => H - 4 - ((Math.log10(Math.max(pc, 1e-7)) - lo) / (hi - lo)) * (H - 10);
-  const pts = e.pcHistory.map((p, i) => [(i / (e.pcHistory.length - 1)) * W, y(p.pc)] as const);
-  const d = pts.map(([px, py], i) => `${i ? "L" : "M"}${px.toFixed(1)},${py.toFixed(1)}`).join("");
-  const color = e.risk === "red" ? "#ff5a4f" : "#f5c451";
-  const redY = y(1e-4);
-  return (
-    <div className="mt-2.5">
-      <div className="flex items-center justify-between">
-        <span className="eyebrow">Probability · 24 h</span>
-        <span className="mono text-[9.5px] text-faint">log scale</span>
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="mt-1 overflow-visible">
-        <defs>
-          <linearGradient id={`pc-${e.id}`} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0" stopColor={color} stopOpacity="0.22" />
-            <stop offset="1" stopColor={color} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <line x1="0" x2={W} y1={redY} y2={redY} stroke="#ff5a4f" strokeOpacity="0.45" strokeDasharray="3 3" />
-        <text x={W} y={redY - 3} textAnchor="end" fontSize="8" fill="#ff5a4f" fillOpacity="0.7" className="mono">
-          1e-4
-        </text>
-        <path d={`${d}L${W},${H}L0,${H}Z`} fill={`url(#pc-${e.id})`} />
-        <path d={d} fill="none" stroke={color} strokeWidth="1.4" />
-        <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="2.6" fill="#fff" />
-      </svg>
     </div>
   );
 }
