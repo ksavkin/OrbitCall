@@ -1,4 +1,5 @@
-"""One published audio track per (listener language, speaker): `tr:<lang>:<speakerIdentity>` (spec section 5).
+"""One published audio track per (listener language, speaker): `tr:<lang>:<speakerIdentity>` (spec section 5), and
+per listener language for the Coordination Host: `host:<lang>` (published by the `host` connection, host.py).
 Phrases on one track play in order; different tracks play in parallel."""
 
 from __future__ import annotations
@@ -20,9 +21,14 @@ def track_name(lang: str, identity: str) -> str:
     return f"tr:{lang}:{identity}"
 
 
+def host_track_name(lang: str) -> str:
+    return f"host:{lang}"
+
+
 class TrackPlayer:
-    def __init__(self, room: rtc.Room, lang: str, identity: str) -> None:
-        self.room, self.name = room, track_name(lang, identity)
+    def __init__(self, room: rtc.Room, lang: str, identity: str, name: str | None = None) -> None:
+        """`name` overrides the translation track name (`host:<lang>` for the host connection)."""
+        self.room, self.name = room, name or track_name(lang, identity)
         self.source = rtc.AudioSource(SAMPLE_RATE, 1)
         self.track = rtc.LocalAudioTrack.create_audio_track(self.name, self.source)
         self.publication: rtc.LocalTrackPublication | None = None
