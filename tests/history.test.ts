@@ -331,6 +331,35 @@ describe("export and refresh", () => {
     expect((await scheduled(t, "historyActions:exportObservation")).filter(f => f.state.kind === "pending")).toHaveLength(1);
   });
 
+  it("claims one export at a time and keeps concurrent duplicate deliveries inside the retry limit", async () => {
+    const { t, eventId } = await setup();
+    tiger.connectError = pgError("ECONNREFUSED");
+    await record(t, eventId, realMiss());
+    const [row] = await exports(t);
+    await Promise.all([
+      t.action(internal.historyActions.exportObservation, { exportId: row._id }),
+      t.action(internal.historyActions.exportObservation, { exportId: row._id }),
+    ]);
+    await finish(t);
+    expect((await exports(t))[0]).toMatchObject({ exportState: "failed", attempts: 3 });
+    expect(tiger.connects).toBe(3);
+    await t.action(internal.historyActions.exportObservation, { exportId: row._id });
+    expect(tiger.connects).toBe(3);
+  });
+
+  it("ignores a lost attempt's failure after an explicit lease recovery starts a new round", async () => {
+    const { t, eventId } = await setup();
+    await record(t, eventId, realMiss());
+    vi.mocked(connectTiger).mockImplementationOnce(async () => {
+      vi.setSystemTime(Date.now() + LEASE_MS + 1);
+      expect((await record(t, eventId, realMiss())).status).toBe("retried");
+      throw new AnalystError("HISTORY_NOT_CONFIGURED", "Old attempt failed.");
+    });
+    await finish(t);
+    expect((await exports(t))[0]).toMatchObject({ exportState: "exported", attempts: 1, lastError: null });
+    expect((await cache(t, eventId))!.stale).toBe(false);
+  });
+
   it("keeps the last good points and marks them stale when a later export or read fails", async () => {
     const { t, eventId } = await setup();
     await record(t, eventId, realMiss());

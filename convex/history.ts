@@ -118,10 +118,23 @@ export const recordObservation = internalMutation({
   },
 });
 
-export const loadExport = internalQuery({
+// Claim before opening a database connection. Concurrent or duplicate deliveries cannot spend extra attempts.
+// Pending attempts > 0 hold the lease; recordObservation explicitly requeues one only after it expires.
+export const claimExport = internalMutation({
   args: { exportId: v.id("observationExports") },
-  handler: (ctx, { exportId }) => activeExport(ctx, exportId),
+  handler: async (ctx, { exportId }) => {
+    const row = await activeExport(ctx, exportId);
+    if (!row || (row.exportState === "pending" && row.attempts > 0)
+      || (row.exportState === "failed" && !retryPending(row))) return null;
+    const patch = { exportState: "pending" as const, attempts: row.attempts + 1, updatedAt: Date.now() };
+    await ctx.db.patch(exportId, patch);
+    return { ...row, ...patch };
+  },
 });
+
+const attemptArgs = { attempts: v.number(), claimedAt: v.number() };
+const ownsAttempt = (row: Doc<"observationExports">, attempts: number, claimedAt: number) =>
+  row.exportState === "pending" && row.attempts === attempts && row.updatedAt === claimedAt;
 
 // Simulated points are read for the event's current demo run only, so an old run cannot look like fresh history.
 // `baseVersion` is the cache version the read starts from; with the start time it orders reads (see isOlderRead).
@@ -142,24 +155,23 @@ const isOlderRead = (cache: Doc<"historySeries"> | null, fetchedAt: number, base
   cache !== null && (cache.fetchedAt > fetchedAt || (cache.fetchedAt === fetchedAt && cache.seriesVersion > baseVersion));
 
 export const markExported = internalMutation({
-  args: { exportId: v.id("observationExports") },
+  args: { exportId: v.id("observationExports"), ...attemptArgs },
   returns: v.null(),
-  handler: async (ctx, { exportId }) => {
+  handler: async (ctx, { exportId, attempts, claimedAt }) => {
     const row = await activeExport(ctx, exportId);
-    if (!row) return null;
-    await ctx.db.patch(exportId, { exportState: "exported", attempts: row.attempts + 1, lastError: null, updatedAt: Date.now() });
+    if (!row || !ownsAttempt(row, attempts, claimedAt)) return null;
+    await ctx.db.patch(exportId, { exportState: "exported", lastError: null, updatedAt: Date.now() });
     await ctx.scheduler.runAfter(0, internal.historyActions.refreshSeries, { eventId: row.eventId });
     return null;
   },
 });
 
 export const markFailed = internalMutation({
-  args: { exportId: v.id("observationExports"), code: v.string(), message: v.string() },
+  args: { exportId: v.id("observationExports"), code: v.string(), message: v.string(), ...attemptArgs },
   returns: v.object({ retryScheduled: v.boolean() }),
-  handler: async (ctx, { exportId, code, message }) => {
+  handler: async (ctx, { exportId, code, message, attempts, claimedAt }) => {
     const row = await activeExport(ctx, exportId);
-    if (!row) return { retryScheduled: false };
-    const attempts = row.attempts + 1;
+    if (!row || !ownsAttempt(row, attempts, claimedAt)) return { retryScheduled: false };
     const lastError = failureText(code, message);
     await ctx.db.patch(exportId, { exportState: "failed", attempts, lastError, updatedAt: Date.now() });
     await markStale(ctx, row.eventId, lastError);

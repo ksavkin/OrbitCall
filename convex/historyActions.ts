@@ -29,15 +29,16 @@ export const exportObservation = internalAction({
   args: { exportId: v.id("observationExports") },
   returns: v.null(),
   handler: async (ctx, { exportId }): Promise<null> => {
-    const row = await ctx.runQuery(internal.history.loadExport, { exportId });
-    if (!row || row.exportState === "exported") return null;
+    const row = await ctx.runMutation(internal.history.claimExport, { exportId });
+    if (!row) return null;
+    const attempt = { attempts: row.attempts, claimedAt: row.updatedAt };
     try {
       await withTiger(db => exportWith(db, toTigerObservation(row)), connectTiger);
     } catch (error) {
-      await ctx.runMutation(internal.history.markFailed, { exportId, ...safeTigerFailure(error) });
+      await ctx.runMutation(internal.history.markFailed, { exportId, ...attempt, ...safeTigerFailure(error) });
       return null;
     }
-    await ctx.runMutation(internal.history.markExported, { exportId });
+    await ctx.runMutation(internal.history.markExported, { exportId, ...attempt });
     return null;
   },
 });
