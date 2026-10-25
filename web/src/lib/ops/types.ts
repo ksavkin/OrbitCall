@@ -136,6 +136,11 @@ export interface ConjunctionEvent {
   summary: string[] | null;
   /** Everyone involved; length 2+ (A, B, then affected operators). Optional until the backend sends it. */
   parties?: Party[];
+  /**
+   * The check against SOCRATES (spec §2.2 ReferenceCheck): matched (same pair, TCA within 60 s), data differs
+   * (same pair, other element-set epochs) or not listed. Their numbers sit next to ours; it is provenance, not a score.
+   */
+  reference?: { status: "matched" | "data_differs" | "not_listed"; runAt: number; tca: number | null; missM: number | null; maxProb: number | null };
   /** How much to trust this event, with the reason in plain words (scan results list). */
   confidence?: { level: "high" | "medium" | "low"; why: string };
   /** What was actually done and checked once the event closed (VER-1, EXE-2, DSP-3). */
