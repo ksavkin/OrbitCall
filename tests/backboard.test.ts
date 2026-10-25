@@ -238,20 +238,52 @@ describe("recallMemory", () => {
 });
 
 describe("closeRunAssistant", () => {
-  it("deletes only the named assistant with one request", async () => {
-    const fetch = stubFetch(json({ message: "deleted", assistant_id: ASSISTANT, deleted_at: "2026-10-24T11:00:00Z" }));
+  const reset = () => json({ success: true, message: "Memories reset" });
+  const deleted = () => json({ message: "deleted", assistant_id: ASSISTANT, deleted_at: "2026-10-24T11:00:00Z" });
+
+  it("resets the named assistant's memories, then deletes that assistant", async () => {
+    const fetch = stubFetch(reset(), deleted());
     await expect(closeRunAssistant(ASSISTANT)).resolves.toEqual({ closed: true });
-    expect(fetch).toHaveBeenCalledTimes(1);
-    const { url, options } = call(fetch);
-    expect(url).toBe(`${BASE}/assistants/${ASSISTANT}`);
-    expect(options.method).toBe("DELETE");
-    expect(options.headers).toEqual({ "X-API-Key": KEY });
-    expect(options.body).toBeUndefined();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const first = call(fetch, 0), second = call(fetch, 1);
+    expect(first.url).toBe(`${BASE}/assistants/${ASSISTANT}/memories`);
+    expect(second.url).toBe(`${BASE}/assistants/${ASSISTANT}`);
+    for (const { options } of [first, second]) {
+      expect(options.method).toBe("DELETE");
+      expect(options.headers).toEqual({ "X-API-Key": KEY });
+      expect(options.body).toBeUndefined();
+    }
+  });
+
+  it("still deletes the assistant when its memories are already gone", async () => {
+    const fetch = stubFetch(json({ detail: SECRET }, 404), deleted());
+    await expect(closeRunAssistant(ASSISTANT)).resolves.toEqual({ closed: true });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("reports an already-missing assistant as not closed", async () => {
-    stubFetch(json({ detail: SECRET }, 404));
+    const fetch = stubFetch(reset(), json({ detail: SECRET }, 404));
     await expect(closeRunAssistant(ASSISTANT)).resolves.toEqual({ closed: false });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports not closed when both the memories and the assistant are gone", async () => {
+    stubFetch(json({ detail: SECRET }, 404), json({ detail: SECRET }, 404));
+    await expect(closeRunAssistant(ASSISTANT)).resolves.toEqual({ closed: false });
+  });
+
+  it("does not delete the assistant when the memory reset fails", async () => {
+    const fetch = stubFetch(json({ detail: SECRET }, 503), deleted());
+    const error = await closeRunAssistant(ASSISTANT).catch(error => error);
+    expect(safeBackboardFailure(error).code).toBe("UPSTREAM_UNAVAILABLE");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides provider text when the assistant delete fails after a reset", async () => {
+    const fetch = stubFetch(reset(), json({ detail: SECRET }, 500));
+    const error = await closeRunAssistant(ASSISTANT).catch(error => error);
+    expect(safeBackboardFailure(error)).toEqual({ code: "UPSTREAM_UNAVAILABLE", message: expect.not.stringContaining(SECRET) });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a missing assistant ID before any request", async () => {

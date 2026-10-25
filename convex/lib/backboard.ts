@@ -131,9 +131,12 @@ export async function recallMemory(
   }
 }
 
-// Deletes this run's assistant, and with it the run's memory namespace. Other assistants are never listed or touched.
+// Deleting an assistant is documented to remove its threads and documents but not its memories, so this run's
+// memories are reset first, then the assistant is deleted. Other assistants are never listed or touched.
 export async function closeRunAssistant(assistantId: string): Promise<{ closed: boolean }> {
-  const data = await request("DELETE", assistantPath(assistantId), undefined, true);
+  const path = assistantPath(assistantId);
+  await request("DELETE", `${path}/memories`, undefined, true);
+  const data = await request("DELETE", path, undefined, true);
   return { closed: data !== null };
 }
 
