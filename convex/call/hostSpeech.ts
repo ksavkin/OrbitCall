@@ -7,13 +7,14 @@
 // when it has no sending participant (a server SDK sent it) and this topic, translates it for every listener language
 // and voices it on `host:<lang>` tracks from a second connection with identity `host`. Nothing here writes a table or
 // creates an approval. A caller schedules it from a mutation:
-//   await ctx.scheduler.runAfter(0, speakRef, { roomId, hostRunId, text });
+//   await ctx.scheduler.runAfter(0, speakRef, { roomId, hostRunId, text, expectedInputVersion });
 
 import { v } from "convex/values";
 import { makeFunctionReference } from "convex/server";
 import { internalAction, internalQuery, type QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { HostOutput } from "../lib/host";
+import { buildHostContext } from "../lib/hostContext";
 import { roomNameOf } from "./core";
 import { MAX_TEXT } from "./ingest";
 import { STALE_MS } from "./presence";
@@ -27,7 +28,7 @@ const TOKEN_TTL_S = 120;
 const NBF_SKEW_S = 5;
 const FETCH_TIMEOUT_MS = 10_000;
 
-export type HostSpeechRejection = "not_found" | "not_succeeded" | "wrong_room" | "closed" | "unchecked_text" | "too_long";
+export type HostSpeechRejection = "not_found" | "not_succeeded" | "wrong_room" | "closed" | "unchecked_text" | "too_long" | "stale";
 export type HostSpeechResult =
   | { status: "sent"; httpStatus: number; id: string }
   | { status: "failed"; httpStatus: number | null; id: string | null; reason: string }
@@ -63,10 +64,12 @@ async function anyoneInCall(ctx: QueryCtx, roomId: Id<"rooms">): Promise<boolean
 }
 
 type Prepared = { ok: true; listeners: boolean } | { ok: false; reason: HostSpeechRejection };
+type SpeechArgs = { roomId: Id<"rooms">; hostRunId: Id<"hostRuns">; text: string; expectedInputVersion: string };
+const speakArgs = { roomId: v.id("rooms"), hostRunId: v.id("hostRuns"), text: v.string(), expectedInputVersion: v.string() };
 
 export const prepare = internalQuery({
-  args: { roomId: v.id("rooms"), hostRunId: v.id("hostRuns"), text: v.string() },
-  handler: async (ctx, { roomId, hostRunId, text }): Promise<Prepared> => {
+  args: speakArgs,
+  handler: async (ctx, { roomId, hostRunId, text, expectedInputVersion }): Promise<Prepared> => {
     const run = await ctx.db.get(hostRunId);
     if (!run) return { ok: false, reason: "not_found" };
     if (run.roomId !== roomId) return { ok: false, reason: "wrong_room" };
@@ -77,10 +80,13 @@ export const prepare = internalQuery({
     if (room.demoRunId !== run.demoRunId || !await isOpen(ctx, room)) return { ok: false, reason: "closed" };
     if (!checkedTexts(run.output).includes(text) || !text.trim()) return { ok: false, reason: "unchecked_text" };
     if (text.length > MAX_TEXT) return { ok: false, reason: "too_long" };
+    // Pin the context AFTER publication: this run's own understood rows are part of the baseline.
+    // A later message, correction, selection, evidence or responsibility change cancels queued speech.
+    if ((await buildHostContext(ctx, room, run.trigger)).inputVersion !== expectedInputVersion) return { ok: false, reason: "stale" };
     return { ok: true, listeners: await anyoneInCall(ctx, roomId) };
   },
 });
-const prepareRef = makeFunctionReference<"query", { roomId: Id<"rooms">; hostRunId: Id<"hostRuns">; text: string }, Prepared>(
+const prepareRef = makeFunctionReference<"query", SpeechArgs, Prepared>(
   "call/hostSpeech:prepare");
 
 const enc = new TextEncoder();
@@ -106,16 +112,14 @@ export async function speechId(hostRunId: string, text: string): Promise<string>
   return `${hostRunId}:${hex(digest).slice(0, 16)}`;
 }
 
-const speakArgs = { roomId: v.id("rooms"), hostRunId: v.id("hostRuns"), text: v.string() };
-
 export const speak = internalAction({
   args: speakArgs,
-  handler: async (ctx, { roomId, hostRunId, text }): Promise<HostSpeechResult> => {
+  handler: async (ctx, { roomId, hostRunId, text, expectedInputVersion }): Promise<HostSpeechResult> => {
     // Never throws: a scheduled caller gets a result, whatever fails (the query, hashing, signing or the network).
     let id: string | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const prepared = await ctx.runQuery(prepareRef, { roomId, hostRunId, text });
+      const prepared = await ctx.runQuery(prepareRef, { roomId, hostRunId, text, expectedInputVersion });
       if (!prepared.ok) return { status: "rejected", reason: prepared.reason };
       if (!prepared.listeners) return { status: "no_listeners" };
       const serverUrl = process.env.LIVEKIT_URL, apiKey = process.env.LIVEKIT_API_KEY, apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -149,5 +153,5 @@ export const speak = internalAction({
 });
 
 /** For callers before codegen lists this module (internal.call.hostSpeech.speak afterwards). */
-export const speakRef = makeFunctionReference<"action", { roomId: Id<"rooms">; hostRunId: Id<"hostRuns">; text: string }, HostSpeechResult>(
+export const speakRef = makeFunctionReference<"action", SpeechArgs, HostSpeechResult>(
   "call/hostSpeech:speak");
