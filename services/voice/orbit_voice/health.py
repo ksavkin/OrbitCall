@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 
-from .config import LANGS, Config
+from .config import Config
 
 log = logging.getLogger("orbit_voice.health")
 INTERVAL_S = 300
@@ -87,10 +87,12 @@ class Health:
         providers["cartesia"] = self._probe("cartesia", "https://api.cartesia.ai/voices?limit=1",
                                             {"Authorization": f"Bearer {c.cartesia_api_key}", "Cartesia-Version": "2026-08-14"}) \
             if c.cartesia_api_key else {"ready": False, "status": "CARTESIA_API_KEY missing"}
-        voice = {lang: (c.tts_provider(lang) or ("text-only",))[0] for lang in LANGS}
+        voice = c.voices()  # per language: which genders are voiced, and by which provider
         providers["livekit"] = self._registered()
-        # ready = STT + translation + every TTS provider a configured voice uses + Convex settings + registered in LiveKit
-        tts_ok = all(providers["cartesia" if v == "cartesia" else "xai"]["ready"] for v in voice.values() if v != "text-only")
+        # ready = STT + translation + every TTS provider a configured voice (any language, either gender) uses + Convex
+        # settings + registered in LiveKit. A text-only language or gender never blocks readiness: it is visible here.
+        used = {v for genders in voice.values() for v in genders.values() if v != "text-only"}
+        tts_ok = all(providers["cartesia" if v == "cartesia" else "xai"]["ready"] for v in used)
         ready = (providers["xai"]["ready"] and providers["anthropic"]["ready"] and tts_ok and providers["livekit"]["ready"]
                  and bool(c.convex_site_url and c.call_service_token))
         with self._lock:

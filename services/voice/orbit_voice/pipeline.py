@@ -54,8 +54,8 @@ class Sink(Protocol):
 
 
 class Voice(Protocol):
-    def available(self, lang: str) -> bool: ...
-    def stream(self, text: str, lang: str) -> AsyncIterator[bytes]: ...
+    def available(self, lang: str, gender: str) -> bool: ...
+    def stream(self, text: str, lang: str, gender: str) -> AsyncIterator[bytes]: ...
 
 
 # play(lang, speaker_identity, chunks) -> enqueues on that track and returns a future that resolves when the phrase has
@@ -117,8 +117,10 @@ class Pipeline:
         while self._background:
             await asyncio.gather(*list(self._background), return_exceptions=True)
 
-    async def handle(self, *, room_id: str, identity: str, src: str, text: str, started_at_ms: int,
+    async def handle(self, *, room_id: str, identity: str, src: str, gender: str, text: str, started_at_ms: int,
                      segment: Segment, targets: list[str]) -> Result:
+        """`gender` is the speaker's voice gender (`male` / `female`): it selects the voice on every listener track
+        and is not stored in the phrase row."""
         t0 = self.clock()
         if len(text) > MAX_TEXT:
             raise ValueError("utterance longer than MAX_TEXT: split it first (split_long)")
@@ -137,7 +139,7 @@ class Pipeline:
         posts = [asyncio.create_task(self.sink.post({**base, "rev": segment.next_rev(), "translations": {},
                                                      "translationStatus": {t: "pending" for t in targets}}))]
         try:
-            return await self._finish(base, segment, src, masked, values, targets, res, t0, posts)
+            return await self._finish(base, segment, src, gender, masked, values, targets, res, t0, posts)
         except Exception as e:  # never leave a pending row behind (W5): the original with a visible failure
             log.exception("%s failed", segment.seg_id)
             report("pipeline", type(e).__name__)
@@ -149,7 +151,7 @@ class Pipeline:
             res.translations, res.errors = {}, {t: err for t in targets}
             return res
 
-    async def _finish(self, base, segment, src, masked, values, targets, res, t0, posts) -> Result:
+    async def _finish(self, base, segment, src, gender, masked, values, targets, res, t0, posts) -> Result:
         if len(values) > MAX_VALUES:  # beyond the ingest limit: the original only, visibly (never a voiced phrase)
             err = {"code": "TOO_MANY_VALUES", "message": f"{len(values)} values (limit {MAX_VALUES})"}
             res.errors = {t: err for t in targets}
@@ -165,10 +167,10 @@ class Pipeline:
         status = {t: ("ok" if t in res.translations else "original_only") for t in targets}
         spoken = []
         for lang in res.translations:  # text is correct either way; a missing voice is stated, not silent
-            if self.voice.available(lang):
+            if self.voice.available(lang, gender):
                 spoken.append(lang)
             else:
-                res.errors[lang] = {"code": "VOICE_UNAVAILABLE", "message": f"no voice configured for {lang}"}
+                res.errors[lang] = {"code": "VOICE_UNAVAILABLE", "message": f"no {gender} voice configured for {lang}"}
         posts.append(asyncio.create_task(self.sink.post({
             **base, "rev": segment.next_rev(), "translations": dict(res.translations), "translationStatus": status,
             **({"errors": dict(res.errors)} if res.errors else {})})))
@@ -189,7 +191,8 @@ class Pipeline:
 
         for lang in spoken:
             try:
-                done = await self.play(lang, base["speakerIdentity"], prefetch(self.voice.stream(res.translations[lang], lang)))
+                chunks = prefetch(self.voice.stream(res.translations[lang], lang, gender))
+                done = await self.play(lang, base["speakerIdentity"], chunks)
             except Exception as e:  # no track to play on: visible
                 res.errors[lang] = {"code": "TTS_FAILED", "message": f"playback: {type(e).__name__}"}
                 self._spawn(self.sink.post({**base, "rev": segment.next_rev(), "translations": dict(res.translations),
