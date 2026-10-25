@@ -6,7 +6,8 @@ import { checkResultValidator } from "../lib/checker";
 import { side } from "../lib/policyValidators";
 
 // Coordination rooms, their text messages and Coordination Host runs (spec §2.3 RoomState, §2.4 Message, §3.4).
-// A room groups linked pair events for 2-4 operator companies; selection and approval stay per event (schedule.ts).
+// A room groups linked pair events for any number of operator companies; selection and approval stay per event
+// (schedule.ts).
 // Voice phrases stay in call_phrases; `messages` holds typed text, agent and system lines.
 
 export const agentRole = v.union(
@@ -32,6 +33,7 @@ export const hostTrigger = v.union(
 );
 
 export const roomTables = {
+  // A room groups all linked pair events for any number of operator companies; nothing caps its size.
   rooms: defineTable({
     state: v.union(v.literal("open"), v.literal("closed")),
     companyIds: v.array(v.id("companies")),

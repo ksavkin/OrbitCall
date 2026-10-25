@@ -52,13 +52,17 @@ export const scheduleTables = {
     eventId: v.id("events"), side, status: approvalStatus,
     userId: v.id("users"), companyId: v.id("companies"),
     proposalId: v.id("proposals"), revision: v.number(), selectionGeneration: v.number(), approvalRuleVersion: v.number(),
+    // The trajectory plan version this approval also signs when the maneuver spans several pair events.
+    trajectoryPlanId: v.union(v.id("trajectoryPlans"), v.null()), trajectoryPlanVersion: v.union(v.number(), v.null()),
     reason: v.union(v.string(), v.null()),
     current: v.boolean(), at: v.number(),
   }).index("by_event_current", ["eventId", "current"]).index("by_event_generation", ["eventId", "selectionGeneration"]),
-  // A reserved schedule-write intent and its result. `intentKey` (event, proposal, revision, selection generation)
-  // makes a retry return the existing result instead of writing a second entry. A file is not an execution.
+  // A reserved schedule-write intent and its result. `intentKey` (event, proposal, revision, selection generation and
+  // trajectory plan version) makes a retry return the existing result instead of writing a second entry.
+  // A file is not an execution.
   maneuvers: defineTable({
     eventId: v.id("events"), proposalId: v.id("proposals"), revision: v.number(), selectionGeneration: v.number(),
+    trajectoryPlanId: v.union(v.id("trajectoryPlans"), v.null()),
     intentKey: v.string(), status: maneuverStatus,
     filePath: v.string(), diff: v.union(v.string(), v.null()), commitSha: v.union(v.string(), v.null()),
     writtenBy: v.union(v.literal("droid"), v.literal("backend")),
@@ -66,4 +70,20 @@ export const scheduleTables = {
     error: v.union(v.string(), v.null()), reviewRequired: v.boolean(),
     updatedAt: v.number(),
   }).index("by_event", ["eventId"]).index("by_intent", ["intentKey"]),
+  // One spacecraft's planned maneuver and every pair event it affects. A conjunction event stays a pair; a maneuver
+  // can touch several. Authorization needs every affected event's required approvals on the same planVersion, and
+  // any material change advances planVersion, which invalidates approvals of the affected events only.
+  trajectoryPlans: defineTable({
+    objectId: v.string(), planVersion: v.number(),
+    state: v.union(
+      v.literal("draft"), v.literal("authorizing"), v.literal("scheduled"), v.literal("superseded"), v.literal("review_required"),
+    ),
+    affectedEventIds: v.array(v.id("events")),
+    eventRefs: v.array(v.object({
+      eventId: v.id("events"), proposalId: v.id("proposals"), revision: v.number(), selectionGeneration: v.number(),
+    })),
+    maneuverId: v.union(v.id("maneuvers"), v.null()),
+    demoRunId: v.union(v.id("demoRuns"), v.null()),
+    createdAt: v.number(), updatedAt: v.number(),
+  }).index("by_object_state", ["objectId", "state"]).index("by_object_version", ["objectId", "planVersion"]),
 };
