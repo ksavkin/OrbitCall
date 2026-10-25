@@ -187,9 +187,12 @@ class RoomTranslator:
         self.tts = TTS(cfg)
         self.sink = ConvexSink(cfg.convex_site_url, cfg.call_service_token)
         self.pipeline = Pipeline(self.translator, self.tts, self.sink, self.play)
-        self.host_voice = HostPublisher(cfg, self.room.name)
+        self.host_voice = HostPublisher(cfg, self.room.name, self.humans)
         self.host = HostSpeech(self.room_id, self.translator, self.tts, self.host_voice.play, self.listener_langs,
                                cfg.tts_default_voice)
+
+    def humans(self) -> list[str]:
+        return [p.identity for p in self.room.remote_participants.values() if p.identity.startswith(HUMAN_PREFIX)]
 
     def listener_langs(self) -> list[str]:
         return listener_langs(self.room.remote_participants.values())
@@ -249,11 +252,9 @@ class RoomTranslator:
 
     def on_gone(self, participant: rtc.Participant) -> None:
         asyncio.create_task(self._leave(participant.identity))
-        humans = [p for p in self.room.remote_participants.values()
-                  if p.identity.startswith(HUMAN_PREFIX) and p.identity != participant.identity]
-        if participant.identity.startswith(HUMAN_PREFIX) and not humans:
-            # a lingering `host` would keep the empty room open; the generation guards a line that reconnects meanwhile
-            asyncio.create_task(self.host_voice.idle(self.host_voice.generation))
+        if participant.identity.startswith(HUMAN_PREFIX):
+            # a lingering `host` would keep the empty room open; idle() decides on the humans present when it runs
+            asyncio.create_task(self.host_voice.idle())
 
     def on_unsubscribed(self, track: rtc.Track, publication: rtc.TrackPublication, participant: rtc.Participant) -> None:
         self.on_unpublished(publication, participant)

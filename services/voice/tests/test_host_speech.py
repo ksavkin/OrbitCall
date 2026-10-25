@@ -12,7 +12,7 @@ from livekit import rtc
 
 from orbit_voice.agent import RoomTranslator, listener_langs
 from orbit_voice.config import Config
-from orbit_voice.host import (IDENTITY, NAME, TOPIC, HostPublisher, HostSpeech, host_token, parse)
+from orbit_voice.host import (IDENTITY, NAME, TOPIC, HostPublisher, HostSpeech, NoListeners, host_token, parse)
 from orbit_voice.player import TrackPlayer, host_track_name, track_name
 from orbit_voice.translate import Translation
 from orbit_voice.tts import TTSError
@@ -235,6 +235,13 @@ async def test_last_human_leaving_mid_line_stops_it_without_reconnecting():
     assert out == {"en": "queued", "ru": "NO_LISTENERS"}
 
 
+async def test_a_publisher_finding_the_room_empty_marks_the_line_no_listeners():
+    async def empty(lang, chunks):
+        raise NoListeners("no humans in the room")
+    hs = HostSpeech(ROOM_ID, FakeTranslator(), FakeVoice(), empty, lambda: ["en"], "female")
+    assert await hs.speak(parse(packet(), ROOM_ID)[0]) == {"en": "NO_LISTENERS"}
+
+
 async def test_a_language_whose_listener_left_during_translation_is_not_played():
     langs = ["en", "ru", "zh"]
 
@@ -307,6 +314,7 @@ class FakeLocal:
 
 class FakeRoom:
     made = []
+    gate: asyncio.Event | None = None  # when set, connect() waits for it (a slow connect)
 
     def __init__(self):
         self.local_participant, self.connected, self.connects = FakeLocal(), False, []
@@ -314,6 +322,8 @@ class FakeRoom:
 
     async def connect(self, url, token, options):
         self.connects.append((url, token, options.auto_subscribe))
+        if FakeRoom.gate is not None:
+            await FakeRoom.gate.wait()
         self.connected = True
 
     def isconnected(self):
@@ -333,7 +343,7 @@ async def tone():
 
 async def test_publisher_connects_lazily_once_and_names_tracks_host_lang():
     FakeRoom.made = []
-    pub = HostPublisher(cfg(), "coordination-r1", room_factory=FakeRoom)
+    pub = HostPublisher(cfg(), "coordination-r1", lambda: ["user-1"], room_factory=FakeRoom)
     assert not FakeRoom.made  # nothing until the first host speech
     await asyncio.wait_for(await pub.play("ru", tone()), 5)
     await asyncio.wait_for(await pub.play("ru", tone()), 5)
@@ -349,22 +359,50 @@ async def test_publisher_connects_lazily_once_and_names_tracks_host_lang():
         await pub.play("ru", tone())
 
 
-async def test_publisher_reconnects_after_a_drop_and_goes_idle_when_asked():
-    FakeRoom.made = []
-    pub = HostPublisher(cfg(), "coordination-r1", room_factory=FakeRoom)
+async def test_publisher_reconnects_after_a_drop_and_idles_only_without_humans():
+    FakeRoom.made, FakeRoom.gate = [], None
+    humans = ["user-1"]
+    pub = HostPublisher(cfg(), "coordination-r1", lambda: list(humans), room_factory=FakeRoom)
     await asyncio.wait_for(await pub.play("en", tone()), 5)
     FakeRoom.made[0].connected = False  # the connection dropped
     await asyncio.wait_for(await pub.play("en", tone()), 5)
     assert len(FakeRoom.made) == 2 and FakeRoom.made[1].local_participant.published == [
         ("host:en", rtc.TrackSource.SOURCE_MICROPHONE)]
-    stale = pub.generation - 1  # an idle() decided before the reconnect must not close the new connection
-    await pub.idle(stale)
+    await pub.idle()  # a late idle() while a human is (back) in the room: the connection stays and keeps playing
     assert FakeRoom.made[1].connected
-    await pub.idle(pub.generation)  # the last human left: leave the room so it can close
-    assert not FakeRoom.made[1].connected
-    await asyncio.wait_for(await pub.play("en", tone()), 5)  # a later line connects again
+    await asyncio.wait_for(await pub.play("en", tone()), 5)
+    assert len(FakeRoom.made) == 2
+    humans.clear()
+    await pub.idle()  # nobody is left: leave the room so it can close
+    assert not FakeRoom.made[1].connected and pub.room is None and not pub.players
+    with pytest.raises(NoListeners):  # and a line for the empty room does not connect again
+        await pub.play("en", tone())
+    assert len(FakeRoom.made) == 2
+    humans.append("user-2")
+    await asyncio.wait_for(await pub.play("en", tone()), 5)  # a later line for a returning human connects again
     assert len(FakeRoom.made) == 3
     await pub.close()
+
+
+async def test_human_leaving_during_a_slow_connect_leaves_no_host_behind():
+    FakeRoom.made, FakeRoom.gate = [], asyncio.Event()
+    humans = ["user-1"]
+    pub = HostPublisher(cfg(), "coordination-r1", lambda: list(humans), room_factory=FakeRoom)
+    try:
+        playing = asyncio.create_task(pub.play("en", tone()))
+        while not FakeRoom.made or not FakeRoom.made[0].connects:
+            await asyncio.sleep(0)
+        humans.clear()  # the last human leaves while connect() is in flight
+        idle = asyncio.create_task(pub.idle())  # what on_gone schedules; it waits for the lock
+        FakeRoom.gate.set()
+        with pytest.raises(NoListeners):
+            await playing
+        await idle
+        room = FakeRoom.made[0]
+        assert not room.connected and room.local_participant.published == [] and pub.room is None and not pub.players
+    finally:
+        FakeRoom.gate = None
+        await pub.close()
 
 
 def test_track_player_keeps_tr_names_and_accepts_a_host_name():
@@ -424,19 +462,19 @@ async def test_room_job_wires_host_speech_and_targets_ignore_the_host():
 
 
 async def test_last_human_leaving_releases_the_host_connection():
+    FakeRoom.made, FakeRoom.gate = [], None
     ctx, _ = fake_ctx()
-    rt = RoomTranslator(ctx, Config())
-    idle = []
-
-    async def fake_idle(generation=None):
-        idle.append(generation)
-    rt.host_voice.idle = fake_idle
-    ctx.room.remote_participants = {"user-2": SimpleNamespace(identity="user-2", attributes={"lang": "en"})}
+    rt = RoomTranslator(ctx, cfg())
+    rt.host_voice._room_factory = FakeRoom
+    ctx.room.remote_participants = {p: SimpleNamespace(identity=p, attributes={"lang": "en"}) for p in ("user-1", "user-2")}
+    await asyncio.wait_for(await rt.host_voice.play("en", tone()), 5)
+    room = FakeRoom.made[0]
+    del ctx.room.remote_participants["user-1"]  # LiveKit removes the participant, then emits participant_disconnected
     rt.on_gone(SimpleNamespace(identity="user-1"))
     await asyncio.sleep(0.01)
-    assert idle == []  # someone is still there
+    assert room.connected  # someone is still there
     ctx.room.remote_participants = {}
     rt.on_gone(SimpleNamespace(identity="user-2"))
     await asyncio.sleep(0.01)
-    assert idle == [rt.host_voice.generation]  # the generation seen when the human left
+    assert not room.connected and rt.host_voice.room is None
     await rt.host_voice.close()

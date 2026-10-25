@@ -51,6 +51,10 @@ TOKEN_TTL = datetime.timedelta(hours=6)
 Play = Callable[[str, AsyncIterator[bytes]], Awaitable[Awaitable[None]]]
 
 
+class NoListeners(ConnectionError):
+    """No human is in the room: the `host` connection does not connect (or leaves again) for an empty room."""
+
+
 @dataclass(frozen=True)
 class HostLine:
     id: str
@@ -190,6 +194,9 @@ class HostSpeech:
             return
         try:
             done = await self.play(lang, prefetch(self.voice.stream(text, lang, self.gender)))
+        except NoListeners:  # the last human left while the line was on its way
+            out[lang] = "NO_LISTENERS"
+            return
         except Exception as e:  # no host track to play on
             log.warning("host speech %s: no %s track: %s", line.id, host_track_name(lang), type(e).__name__)
             out[lang] = "TTS_FAILED"
@@ -223,27 +230,38 @@ def host_token(cfg: Config, room_name: str) -> str:
 
 class HostPublisher:
     """The second connection of the room job, identity `host`: connected on the first host line, reused, left when the
-    last human leaves (so the room can close) and closed with the job. One `host:<lang>` track per language."""
+    last human leaves (so the room can close) and closed with the job. One `host:<lang>` track per language.
 
-    def __init__(self, cfg: Config, room_name: str, room_factory: Callable[[], rtc.Room] = rtc.Room) -> None:
-        self.cfg, self.room_name, self._room_factory = cfg, room_name, room_factory
+    `humans()` returns the human participants now in the room. Connecting and leaving are decided on that current state
+    under one lock: play() never connects for an empty room and leaves again when the last human left during the
+    connect; idle() leaves only while nobody is there, so a late idle() never closes a connection a returning human's
+    line uses."""
+
+    def __init__(self, cfg: Config, room_name: str, humans: Callable[[], list[str]],
+                 room_factory: Callable[[], rtc.Room] = rtc.Room) -> None:
+        self.cfg, self.room_name, self.humans, self._room_factory = cfg, room_name, humans, room_factory
         self.room: rtc.Room | None = None
         self.players: dict[str, TrackPlayer] = {}
         self._lock = asyncio.Lock()
         self._closed = False
-        self.generation = 0  # one per connection; an idle() decided for an older one is ignored
 
     async def play(self, lang: str, chunks: AsyncIterator[bytes]) -> asyncio.Future:
         async with self._lock:
             if self._closed:
                 raise ConnectionError("host voice closed")
+            if not self.humans():
+                await self._leave()
+                raise NoListeners("no humans in the room")
             if self.room is None or not self.room.isconnected():
                 await self._leave()  # players of a dropped connection are dead
                 room = self._room_factory()
                 await room.connect(self.cfg.livekit_url, host_token(self.cfg, self.room_name),
                                    rtc.RoomOptions(auto_subscribe=False))
                 self.room = room
-                self.generation += 1
+                if not self.humans():  # the last human left during the connect: do not stay in the empty room
+                    log.info("host leaves %s at once: no humans left", self.room_name)
+                    await self._leave()
+                    raise NoListeners("no humans in the room")
                 log.info("host connected to %s", self.room_name)
             player = self.players.get(lang)
             if player is None:
@@ -267,11 +285,10 @@ class HostPublisher:
             except Exception:  # already gone
                 pass
 
-    async def idle(self, generation: int | None = None) -> None:
-        """Leaves the room; a later host line connects again. With `generation`, only the connection current when the
-        caller decided (the last human left) is left: a line may have connected again since."""
+    async def idle(self) -> None:
+        """A human left: leaves the room if nobody is there now; a later host line connects again."""
         async with self._lock:
-            if generation is not None and generation != self.generation:
+            if self.humans():
                 return
             if self.room is not None:
                 log.info("host leaves %s: no humans left", self.room_name)
