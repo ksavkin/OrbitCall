@@ -175,11 +175,18 @@ describe("agent run lifecycle", () => {
   it("retry waits for a stall; a stuck old attempt cannot publish afterward", async () => {
     const t = backend();
     const eventId = await insertEvent(t);
+    await t.run(async ctx => {
+      const companyId = await ctx.db.insert("companies", { key: "retry", name: "Retry operator", simulated: true });
+      const userId = await ctx.db.insert("users", { tokenIdentifier: "retry", companyId, role: "operator", name: "Retry", language: "en" });
+      await ctx.db.insert("satelliteOwners", { objectId: redEvent.objectA.objectId, companyId });
+      await ctx.db.insert("fleetAssignments", { userId, objectId: redEvent.objectA.objectId, active: true });
+    });
+    const operator = t.withIdentity({ tokenIdentifier: "retry" });
     const claimed = await t.mutation(internal.agentRuns.begin, { eventId });
-    await expect(t.mutation(internal.agents.rerun, { eventId })).rejects.toThrow("INVALID_STATE");
+    await expect(operator.mutation(api.agents.rerun, { eventId })).rejects.toThrow("INVALID_STATE");
     vi.setSystemTime(FIXTURE_NOW + 61_000);
     await t.mutation(internal.agentRuns.watchdog, { runId: claimed!.runId });
-    await t.mutation(internal.agents.rerun, { eventId });
+    await operator.mutation(api.agents.rerun, { eventId });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect((await t.query(internal.agentRuns.inspect, { eventId })).runs[0].status).toBe("succeeded");
     expect((await t.mutation(internal.agentRuns.finish, {
