@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Eye, Mic, RotateCcw, Send, Sparkles, X } from "lucide-react";
 import { useState } from "react";
+import { useRealMode } from "@/lib/backend/live";
 import { engine } from "@/lib/ops/engine";
 import { fmtCountdown, fmtMiss, fmtWhen } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
@@ -11,6 +12,7 @@ import { sfx } from "@/lib/sound";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { Brief, ObjectChip } from "@/components/ops/Entity";
 import { VoiceInput, optionText } from "@/components/ops/DecisionDock";
+import { LivePlans } from "./LivePlans";
 import { cardsOf, requiredSides, revisionOf, type Card } from "./model";
 
 // Proposal cards and approval (spec §3.4, §4.1). Three separate acts, never merged:
@@ -88,6 +90,10 @@ export function ProposalPanel({
     sfx.click();
     engine.decide(e.id, viewer, { decision: "countered", via: "message", note });
   };
+
+  // real mode: the backend's plans and decisions (LivePlans, wiring map §1); everything above is the simulator's
+  const real = useRealMode();
+  if (real) return <LivePlans e={e} now={now} embedded={embedded} readOnly={readOnly} />;
 
   return (
     <div className="text-fg">
