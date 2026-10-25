@@ -1,13 +1,16 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { requireActiveMember, requireMember, roomTurns } from "./rooms";
 import { lang, languageStatus, protectedValue } from "./schema/call";
 import { messageAuthor, messageKind, summaryForm } from "./schema/rooms";
 
 // Room text lines (spec §3.4 messages.send / messages.list, ROOM-6, LANG-7) on the round 1.5 `messages` table. send
-// stores the original at once; translation and agent reactions arrive later through the same rows (round 3), so
-// nothing is scheduled and no model is called here. A line can never stand in for an approval (ROOM-7).
+// stores the original at once and queues one Coordination Host request (roadmap §6: a final human message triggers
+// the host); no model is called here. Only human lines trigger: agent and system lines are written elsewhere and
+// never schedule a host run, so the host cannot loop on its own output. A line can never stand in for an approval
+// (ROOM-7).
 
 export const MAX_TEXT = 2000;
 export const DEFAULT_LIMIT = 100;
@@ -76,6 +79,9 @@ export const send = mutation({
       refs: { ...(eventId === undefined ? {} : { eventId }), ...(refs ?? {}) }, form: null,
       demoRunId: room.demoRunId, simulated: room.simulated || company.simulated, createdAt: Date.now(),
     });
+    // Queued only if this write commits. request reads the room's input version itself, dedupes by room, input
+    // version and trigger, and returns null for a closed room or a reset demo run (hostTriggers.ts).
+    await ctx.scheduler.runAfter(0, internal.hostTriggers.request, { roomId: room._id, trigger: "final_message" });
     return { messageId };
   },
 });

@@ -59,6 +59,8 @@ async function seed() {
   return { t, roomId, crossId: cross.eventId as Id<"events">, eastId: east.eventId as Id<"events"> };
 }
 const texts = async (t: Backend, args: Record<string, unknown>) => ((await as(t, "bo").query(list, args)) as View[]).map(m => m.text);
+const hostRequests = (t: Backend) =>
+  t.run(async ctx => (await ctx.db.system.query("_scheduled_functions").collect()).filter(j => j.name === "hostTriggers:request"));
 const proposalFor = (t: Backend, eventId: Id<"events">) =>
   t.run(ctx => currentProposal(ctx, eventId));
 
@@ -131,7 +133,7 @@ describe("messages", () => {
     expect(await code(as(t, "bo").query(list, { roomId, before: "yesterday" }))).toBe("VALIDATION");
   });
 
-  it("writes one messages row and nothing else: no caption, no agent or host run, nothing scheduled", async () => {
+  it("writes one messages row and queues one host request, with no caption, agent run or approval", async () => {
     const { t, roomId } = await seed();
     const counts = () => t.run(async ctx => ({
       call_phrases: (await ctx.db.query("call_phrases").collect()).length,
@@ -144,7 +146,39 @@ describe("messages", () => {
     }));
     const before = await counts();
     await as(t, "ana").mutation(send, { roomId, text: "Holding for the screen" });
-    expect(await counts()).toEqual({ ...before, messages: before.messages + 1 });
+    expect(await counts()).toEqual({ ...before, messages: before.messages + 1, scheduled: before.scheduled + 1 });
+  });
+
+  it("schedules exactly one final_message host request per human line, which starts one host run", async () => {
+    const { t, roomId, crossId } = await seed();
+    const before = (await hostRequests(t)).length;
+    await as(t, "ana").mutation(send, { roomId, text: "We can move 0.2 m/s" });
+    const queued = (await hostRequests(t)).slice(before);
+    expect(queued.map(j => j.args)).toEqual([[{ roomId, trigger: "final_message" }]]);
+    await as(t, "bo").mutation(send, { roomId, eventId: crossId, text: "Понял" });
+    expect((await hostRequests(t)).length).toBe(before + 2);
+    // The queued request is the host contract's own entry point; it records one running final_message run.
+    const hostRunId = await t.mutation(internal.hostTriggers.request, queued[0].args[0] as { roomId: Id<"rooms">; trigger: "final_message" });
+    const runs = await t.run(ctx => ctx.db.query("hostRuns").collect());
+    expect(runs.map(r => ({ id: r._id, roomId: r.roomId, trigger: r.trigger, status: r.status })))
+      .toEqual([{ id: hostRunId, roomId, trigger: "final_message", status: "running" }]);
+  });
+
+  it("schedules no host request for a rejected send or a system line", async () => {
+    const { t, roomId, crossId, eastId } = await seed();
+    const before = (await hostRequests(t)).length;
+    expect(await code(as(t, "ana").mutation(send, { roomId, text: "   " }))).toBe("VALIDATION");
+    expect(await code(as(t, "ana").mutation(send, { roomId, eventId: eastId, text: "elsewhere" }))).toBe("VALIDATION");
+    expect(await code(as(t, "cy").mutation(send, { roomId, text: "hi" }))).toBe("FORBIDDEN");
+    expect(await code(as(t, "hoa").mutation(send, { roomId, text: "hi" }))).toBe("FORBIDDEN");
+    expect(await hostRequests(t)).toHaveLength(before);
+    // Closing the room writes a system line; it never queues the host, and later human lines are refused.
+    await t.run(ctx => ctx.db.patch(crossId, { status: "approved" }));
+    await t.mutation(closeIfResolved, { eventId: crossId });
+    const lines = await t.run(ctx => ctx.db.query("messages").collect());
+    expect(lines.map(m => m.author.kind)).toEqual(["system"]);
+    expect(await code(as(t, "ana").mutation(send, { roomId, text: "late" }))).toBe("INVALID_STATE");
+    expect(await hostRequests(t)).toHaveLength(before);
   });
 
   it("lets everyone discuss until a decision opens, then only the side in turn", async () => {
