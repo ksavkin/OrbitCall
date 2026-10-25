@@ -1,8 +1,8 @@
 # Proposed changes for the UI reads
 
-Status: proposed; the spec edit below is not applied yet. The issue #6 text is still for the team to post.
+Status: the spec edit below is applied on `kostya/r4-ui-reads`. The issue #6 text is still for the team to post.
 
-## Proposed for docs/specification.md
+## Applied in docs/specification.md
 
 1. **§3.4.** New row `rooms.forEvent`: the incident's most recent room, open or closed, for reading a closed room's history after a reload.
 
