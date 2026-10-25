@@ -9,11 +9,21 @@ import { supersede } from "./lib/runs";
 import type { Id } from "./_generated/dataModel";
 
 export const publish = internalMutation({
-  args: { eventId: v.id("events"), baseVersion: v.union(v.number(), v.null()), candidates: v.array(candidate), start: v.optional(v.boolean()) },
-  handler: async (ctx, { eventId, baseVersion, candidates, start = true }) => {
+  args: {
+    eventId: v.id("events"), baseVersion: v.union(v.number(), v.null()), candidates: v.array(candidate), start: v.optional(v.boolean()),
+    // What the candidates were computed on; an event that moved on since then is refused rather than mislabeled.
+    expectedEvidenceKey: v.optional(v.string()), expectedSnapshotId: v.optional(v.string()),
+  },
+  handler: async (ctx, { eventId, baseVersion, candidates, start = true, expectedEvidenceKey, expectedSnapshotId }) => {
     const event = await ctx.db.get(eventId);
     if (!event) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
     const facts = await loadFacts(ctx, event);
+    if (expectedEvidenceKey !== undefined && expectedEvidenceKey !== inputKey(facts)) {
+      throw new ConvexError({ code: "STALE_REVISION", message: "The event's evidence changed while candidates were computed; recompute them." });
+    }
+    if (expectedSnapshotId !== undefined && expectedSnapshotId !== (await ctx.db.get(event.snapshotId))?.snapshotId) {
+      throw new ConvexError({ code: "STALE_REVISION", message: "The event's snapshot changed while candidates were computed; recompute them." });
+    }
     validateCandidates(candidates, facts);
     const [companyAId, companyBId] = await Promise.all([facts.objectA.objectId, facts.objectB.objectId].map(async objectId =>
       (await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", objectId)).unique())?.companyId ?? null));
