@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight, DoorOpen } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent } from "@/lib/ops/types";
@@ -78,11 +78,50 @@ export function RoomsScreen() {
 }
 
 /** One room's call. Keyed by room: switching rooms leaves the call, as the real hook does. */
-function RoomCall({ e }: { e: ConjunctionEvent }) {
+/** The plan a phrase names: "option B" / "plan 2" / "P2" / "вариант Б" → "P2". Null when it names none. */
+function planNamed(text: string): string | null {
+  const t = text.toLowerCase();
+  const m = t.match(/\b(?:option|plan|card)\s*([a-d1-4])\b/) ?? t.match(/\bp\s*([1-4])\b/) ?? t.match(/вариант\s*([а-г1-4])/);
+  if (!m) return null;
+  const k = m[1];
+  const n = "abcd".indexOf(k) + 1 || "абвг".indexOf(k) + 1 || Number(k);
+  return n >= 1 && n <= 4 ? `P${n}` : null;
+}
+
+export function RoomCall({ e, compact = false }: { e: ConjunctionEvent; compact?: boolean }) {
   const isSample = e.id === SAMPLE_ID;
   const [mode, setMode] = useState<StageMode>("voice");
   const [seed] = useState(() => (isSample ? sampleMessages(e) : undefined));
-  const call = useSimCall(e, { seed, joined: isSample, spaceToTalk: mode === "voice" });
+  // turns: while another party decides on this case, this dispatcher's voice and text pause
+  const viewer = useOps((s) => s.actAs ?? "a");
+  // select the stable array, filter outside the selector: a new array per read loops the store forever
+  const humans = useOps((s) => s.humans);
+  const deciding = useMemo(() => humans.filter((h) => h.eventId === e.id), [humans, e.id]);
+  const otherSide = deciding.find((h) => h.side !== viewer);
+  const lockedBy =
+    otherSide && !deciding.some((h) => h.side === viewer)
+      ? (e.parties?.find((p) => p.role === otherSide.side)?.operator ?? `Side ${otherSide.side.toUpperCase()}`).replace(/\s*\(synthetic\)/i, "")
+      : undefined;
+  const call = useSimCall(e, { seed, joined: isSample, spaceToTalk: mode === "voice" && !lockedBy });
+
+  // in a running case the call joins on its own: nobody should hunt for Join in the middle of a decision
+  const joinedOnce = useRef(false);
+  useEffect(() => {
+    if (!compact || joinedOnce.current || call.state !== "idle") return;
+    joinedOnce.current = true;
+    void call.join();
+  }, [compact, call]);
+
+  // "option B", "P2", "вариант Б": a plan named in the call is offered for confirmation in the plan panel
+  const lastSaid = useRef<string | null>(null);
+  useEffect(() => {
+    const myId = call.identity?.replace(/^user-/, "");
+    const mine = [...(call.captions ?? [])].reverse().find((m) => m.author.kind === "human" && m.author.userId === myId);
+    if (!mine || mine.messageId === lastSaid.current) return;
+    lastSaid.current = mine.messageId;
+    const label = planNamed(mine.originalText);
+    if (label) useOps.setState({ voiceIntent: { eventId: e.id, label, said: mine.originalText, at: Date.now() } });
+  }, [call.captions, call.identity, e.id]);
   const replies = useOps((s) => s.replies);
   const cards = useMemo(() => (isSample ? sampleCards(e) : roomCards(e, replies)), [e, replies, isSample]);
   const flagOf: FlagOf = (p) => {
@@ -92,6 +131,8 @@ function RoomCall({ e }: { e: ConjunctionEvent }) {
   };
   return (
     <CallStage
+      compact={compact}
+      lockedBy={lockedBy}
       call={call}
       mode={mode}
       onMode={setMode}
@@ -166,7 +207,7 @@ function CaseSide({ e }: { e: ConjunctionEvent | undefined }) {
   const openCase = () => {
     sfx.whoosh();
     const st = useOps.getState();
-    st.set({ tab: "conjunctions", focusEvent: e.id, ...(st.incident === e.id ? { incidentView: "expanded" as const } : {}) });
+    st.set(st.incident === e.id ? { tab: "decision", incidentView: "expanded" as const } : { tab: "orbit", focusEvent: e.id });
   };
   return (
     <div className="thin-scroll min-h-0 overflow-y-auto px-5 py-5">
