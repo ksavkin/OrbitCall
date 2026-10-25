@@ -75,4 +75,24 @@ export const roomTables = {
     check: v.union(v.object({ span: agentSpanValidator, result: v.union(checkResultValidator, v.null()) }), v.null()),
     createdAt: v.number(), finishedAt: v.union(v.number(), v.null()),
   }).index("by_room_input_trigger", ["roomId", "inputVersion", "trigger"]).index("by_room_created", ["roomId", "createdAt"]),
+  // What the agents took from the discussion (spec §2.3 Understood, ROOM-12, LOG-6). `text` is the original in
+  // `originalLang`. A correction never edits the old entry: it inserts a new one and marks the old one "corrected"
+  // with `correctedById`, so "cannot move Wednesday" corrected to "prefer Thursday" keeps both.
+  understood: defineTable({
+    roomId: v.id("rooms"), eventId: v.union(v.id("events"), v.null()),
+    kind: v.union(
+      v.literal("fact"), v.literal("constraint"), v.literal("preference"), v.literal("correction"), v.literal("hypothetical"),
+    ),
+    hard: v.boolean(),
+    text: v.string(), originalLang: lang,
+    side: v.union(side, v.null()),
+    sourceMessageId: v.id("messages"),
+    status: v.union(v.literal("active"), v.literal("corrected")),
+    correctedById: v.union(v.id("understood"), v.null()),
+    // The Coordination Host run that extracted it; null when entered another way.
+    hostRunId: v.union(v.id("hostRuns"), v.null()),
+    demoRunId: v.union(v.id("demoRuns"), v.null()),
+    createdAt: v.number(),
+  }).index("by_room_status", ["roomId", "status"]).index("by_event_status", ["eventId", "status"])
+    .index("by_demo_run", ["demoRunId"]),
 };
