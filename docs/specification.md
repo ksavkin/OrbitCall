@@ -173,7 +173,7 @@ interface EventRow {
   outcome: VerificationResult | null;          // [Q-8]
   reviewRequired: boolean;          // scheduled plan flagged by new data or a policy edit [POL-3]
   roomId: Id<"rooms"> | null;       // coordination room may link several pair events
-  roomOpen: boolean;                // a room exists (created at red) [Q-3]
+  roomOpen: boolean;                // an open room exists (created by Start workflow) [DSP-1]
   sources: SourceRef[];
   reference: ReferenceCheck | null; // SOCRATES check of our scan's event; null before matching_sources ran
   simulated: boolean;
@@ -268,6 +268,8 @@ interface Understood {              // facts, constraints, preferences the agent
 
 interface RoomState {
   roomId: Id<"rooms">;
+  state: "open" | "closed";         // closes when every linked incident is resolved; a closed room stays readable
+  closedAt: ISODate | null;
   event: EventRow;                 // focused event with viewer-specific canAct/assignment scope
   linkedEvents: { eventId: Id<"events">; summary: string; canAct: boolean; requiredApprovalSides: Side[] }[]; // intentionally shared projection
   operatorCompanyIds: Id<"companies">[]; // every active operator company with a linked event; no fixed cap
@@ -414,7 +416,8 @@ interface InboxItem {               // per person [INBOX-1, INBOX-2]
   situation: Situation;
   tcaUtc: ISODate;
   lastUpdateAt: ISODate;
-  lastUpdateSummary: string;
+  lastUpdateSummary: string;       // a notice when someone added the reader to a room [INBOX-1]
+  room: { roomId: Id<"rooms">; joined: boolean; otherSideJoined: boolean; otherSidePresenceAt: ISODate | null } | null; // [DSP-5]
   simulated: boolean;
 }
 
@@ -563,15 +566,17 @@ The default dashboard is My Fleet + My Incidents + globe. Label the separate mis
 
 ### 3.4 Coordination room (screen 2)
 
-A room groups all linked pair events and every operator company they involve, with no fixed operator count. Main demo: US/RU and US/CN, three dispatchers. Call/chat/presence are room-scoped. Selection, approval, scheduling, and verification remain event-scoped. A situation with more satellites is several linked pair events in one room; a spacecraft whose maneuver affects more than one of them has one `TrajectoryPlan` (§2.5, §4.1). A room member can read the intentionally shared card projection for linked incidents without permission to approve them or read private policy/memory. An observer uses `demo.publicView`, not the operator room query.
+A room groups all linked pair events and every operator company they involve, with no fixed operator count. It is an optional, automatically connected channel: an operator starts the workflow on an incident, every operator currently assigned to an involved object is joined, and deciding never requires opening the room. It closes when every linked incident is resolved (status approved or later, or no longer active); a closed room stays readable and refuses new lines and presence changes. A head of operations reads the rooms of company incidents and cannot start, join or post. Main demo: US/RU and US/CN, three dispatchers. Call/chat/presence are room-scoped. Selection, approval, scheduling, and verification remain event-scoped. A situation with more satellites is several linked pair events in one room; a spacecraft whose maneuver affects more than one of them has one `TrajectoryPlan` (§2.5, §4.1). A room member can read the intentionally shared card projection for linked incidents without permission to approve them or read private policy/memory. An observer uses `demo.publicView`, not the operator room query.
 
 Counter uses `messages.send`, optionally referencing the selected proposal/revision. There is no `approvals.counter` mutation, structured counter form or `countered` approval state.
 
 | Function | Kind | Arguments → result | Notes |
 |---|---|---|---|
-| `rooms.get` | query | `{ eventId }` → `RoomState \| null` | `null` while no room exists (yellow, new) |
+| `rooms.startWorkflow` | mutation | `{ eventId }` → `{ roomId, created: boolean, joined: Id<"users">[] }` | Operator of a party object, active incident. Creates or returns the encounter's open room (every pair row within ±60 s, both object orders), joins every assigned operator of the involved companies to the room and its call, and leaves an inbox notice for those joined by someone else. Nobody is redirected. Idempotent [DSP-1, DSP-5] |
+| `rooms.get` | query | `{ eventId }` → `RoomState \| null` | `null` until someone starts the workflow, or after the room closed |
 | `rooms.byId` | query | `{ roomId }` → shared group-room projection | Membership required; no private policy/memory/context |
-| `rooms.join` / `rooms.leave` | mutation | `{ roomId }` → `null` | Presence for "has B joined" [DSP-5] |
+| `rooms.listMine` | query | `{}` → shared room projections | Open rooms of the caller's incidents |
+| `rooms.join` / `rooms.leave` | mutation | `{ roomId }` → `null` | Presence for "is B in the room" [DSP-5]. Start workflow already joins; operators only. `INVALID_STATE` on a closed room |
 | `rooms.setInCall` | mutation | `{ roomId, inCall: boolean }` → `null` | Called on LiveKit connect/disconnect |
 | `proposals.list` | query | `{ eventId }` → `ProposalCard[]` | Up to four computed candidate cards total, including wait when justified. Fewer/zero options are explicit; do not require exactly one shared recommendation [ROOM-5] |
 | `proposals.revisions` | query | `{ proposalId }` → `Revision[]` | History, oldest first |
@@ -652,7 +657,8 @@ Unrelated messages never reset approvals. Old approvals stay in the log and neve
 ### 4.3 Events and statuses
 
 - Status and color change only on the backend. The lifecycle is functionality section 3, including `no_action_needed`.
-- A room is created when an event turns red. While no room exists, `rooms.get` returns `null` and the UI shows the event without a room.
+- A room is created when an operator starts the workflow on an active incident. Every operator currently assigned to an involved object is joined; the others receive an inbox notice and stay on their screen. While no room exists, `rooms.get` returns `null` and the UI shows the event without a room.
+- The room closes when every linked incident is resolved. A later Start workflow on a still-active incident opens a new room.
 - `situation` is set only while the status is `communication`.
 
 ### 4.4 Simulated data [DATA-5, DATA-7]
