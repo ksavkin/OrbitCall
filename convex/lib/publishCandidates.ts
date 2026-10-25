@@ -133,7 +133,10 @@ export function cardsFor(response: CandidatesResponse, input: PublishInput, even
     facts: input.facts, activeSide: input.activeSide, counterpartSide: input.counterpartSide, previous: input.previous, nowMs,
     eventId, evidenceVersion: input.evidenceVersion, snapshotId: input.snapshotId,
   };
-  return mapCandidates(toCardResponse(response, eventId, nowMs, input.sharedMovers), context);
+  // Both baselines may differ by one rounding unit. A card must widen the stored baseline too, otherwise its
+  // own displayed before/after values can suggest an improvement that the rounded numbers do not establish.
+  const comparable = { ...response, candidates: response.candidates.filter(c => c.missAfterKm !== null && c.missAfterKm > input.facts.missKm) };
+  return mapCandidates(toCardResponse(comparable, eventId, nowMs, input.sharedMovers), context);
 }
 
 /** The linked events whose mover appears on a published card, sorted. */

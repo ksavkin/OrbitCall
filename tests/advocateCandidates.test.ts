@@ -286,6 +286,14 @@ describe("advocates.publishFromOrbit", () => {
     expect(cards.every(c => c.missBeforeKm === 1.5)).toBe(true);
   });
 
+  it("does not claim improvement from a difference within baseline rounding", async () => {
+    const { t, eventId } = await pairSetup();
+    await t.run(ctx => ctx.db.patch(eventId, { missKm: 1.501 }));
+    mockOrbit({ missBeforeKm: 1.5, grid: GRID.map((g, i) => i === 0 ? { ...g, missAfterKm: 1.501 } : g) });
+    expect(await publish(t, eventId)).toMatchObject({ status: "published", cards: 4 });
+    expect((await currentCards(t, eventId)).filter(c => c.kind === "maneuver").every(c => c.missAfterKm! > c.missBeforeKm)).toBe(true);
+  });
+
   it("sends the OMM snapshot the orbit service holds for a SOCRATES-loaded event", async () => {
     const { t, eventId } = await pairSetup();
     const useSnapshot = (snapshotId: string, ommUrl?: string) => t.run(async ctx => {
