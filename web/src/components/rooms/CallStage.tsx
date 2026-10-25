@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Languages, Loader2, LogOut, MessageSquare, Mic, MicOff, PhoneCall, Send, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, Languages, Loader2, LogOut, MessageSquare, Mic, MicOff, PhoneCall, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useState, type PointerEvent, type ReactNode } from "react";
 import type { Lang } from "@/call/api";
 import type { CallParticipant, UseCoordinationCall } from "@/call/useCoordinationCall";
@@ -76,18 +76,20 @@ export function CallStage({
     onMode(m);
   };
 
+  if (compact) return <DockedCall c={c} level={level} joined={joined} lockedBy={lockedBy} mode={mode} onMode={switchTo} />;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="call-panel" data-state={c.state} data-mode={mode}>
       {/* header */}
-      <div className={`flex items-start gap-3 px-6 ${compact ? "pb-1 pt-3" : "pb-3 pt-5"}`}>
+      <div className="flex items-start gap-3 px-6 pb-3 pt-5">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-[11.5px] font-medium text-neutral-500">
             <span className={`h-1.5 w-1.5 rounded-full ${joined ? "bg-green" : "bg-neutral-600"}`} style={joined ? { boxShadow: "0 0 8px var(--green)" } : undefined} />
             {joined ? (c.state === "reconnecting" ? "Reconnecting" : "Live") : c.state === "joining" ? "Joining" : "Not joined"}
             {c.simulated && <span className="rounded-full bg-[rgba(255,159,64,0.12)] px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.08em] text-orange">simulated · no audio</span>}
           </div>
-          {!compact && <div className="mt-1 text-[20px] font-semibold tracking-[-0.02em] text-white">{title}</div>}
-          {!compact && subtitle && <div className="mt-0.5 text-[13px] text-neutral-500">{subtitle}</div>}
+          <div className="mt-1 text-[20px] font-semibold tracking-[-0.02em] text-white">{title}</div>
+          {subtitle && <div className="mt-0.5 text-[13px] text-neutral-500">{subtitle}</div>}
         </div>
         {joined && <TranslatorBadge c={c} />}
       </div>
@@ -103,10 +105,10 @@ export function CallStage({
       {c.presenceError && <div className="mx-6 mb-2 text-[12px] text-amber">Presence sync failed ({c.presenceError.code}); the call itself works.</div>}
 
       {/* who is here */}
-      <AnimatePresence>{joined && !compact && <Participants list={c.participants} flagOf={flagOf} />}</AnimatePresence>
+      <AnimatePresence>{joined && <Participants list={c.participants} flagOf={flagOf} />}</AnimatePresence>
 
       {/* voice or text, switched in the middle of the room */}
-      {joined && !compact && <ModeSwitch mode={mode} onMode={switchTo} />}
+      {joined && <ModeSwitch mode={mode} onMode={switchTo} />}
 
       {/* clipped: in the short case-view slot the voice view must never spill over the switch above it */}
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -120,11 +122,7 @@ export function CallStage({
               transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
               className="absolute inset-0"
             >
-              {compact ? (
-                <VoiceStrip c={c} level={level} joined={joined} lockedBy={lockedBy} mode={mode} onMode={switchTo} />
-              ) : (
-                <VoiceView c={c} level={level} joined={joined} size={300} lockedBy={lockedBy} />
-              )}
+              <VoiceView c={c} level={level} joined={joined} size={300} lockedBy={lockedBy} />
             </motion.div>
           ) : (
             <motion.div
@@ -217,9 +215,9 @@ function Participants({ list, flagOf }: { list: CallParticipant[]; flagOf: FlagO
   );
 }
 
-function ModeSwitch({ mode, onMode }: { mode: StageMode; onMode: (m: StageMode) => void }) {
+function ModeSwitch({ mode, onMode, bare = false }: { mode: StageMode; onMode: (m: StageMode) => void; bare?: boolean }) {
   return (
-    <div className="flex justify-center pb-1 pt-2">
+    <div className={bare ? "flex" : "flex justify-center pb-1 pt-2"}>
       <div className="flex rounded-full bg-white/[0.05] p-1 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]" role="tablist" aria-label="Talk or type">
         {(
           [
@@ -295,8 +293,11 @@ function VoiceView({ c, level, joined, size, lockedBy }: { c: StageCall; level: 
   );
 }
 
-/** The docked call in the case view: a small sphere, what is happening, the latest phrase, and the switch. */
-function VoiceStrip({
+/**
+ * The call docked under the decision: one row. The sphere is the talk button (hold it, or Space; a click toggles in
+ * open-mic mode), the middle says what is happening and shows the latest phrase, or the text field in Text mode.
+ */
+function DockedCall({
   c,
   level,
   joined,
@@ -315,39 +316,161 @@ function VoiceStrip({
   const last = (c.captions ?? []).at(-1);
   const mine = last?.author.kind === "human" && last.author.userId === c.identity?.replace(/^user-/, "");
   const who = !last ? "" : last.author.kind === "human" ? (mine ? "You" : last.author.name) : last.author.kind === "agent" ? last.author.role : "System";
+  const observer = c.role === "observer";
+  const canTalk = joined && !observer && c.canTalk && !lockedBy && mode === "voice";
   const status = !joined
-    ? "Joining the case's call…"
-    : lockedBy
-      ? `${lockedBy} is deciding · your voice is paused`
-      : c.micOn
-        ? "You're speaking"
-        : speaker
-          ? `${speaker.name} is speaking`
-          : "Hold the button or Space to talk";
+    ? c.state === "joining"
+      ? "Joining the case's call…"
+      : "Not in the call"
+    : observer
+      ? "Observer · listen only"
+      : lockedBy
+        ? `${lockedBy} is deciding · your voice is paused`
+        : c.micOn
+          ? "You're speaking"
+          : speaker
+            ? `${speaker.name} is speaking`
+            : mode === "voice"
+              ? c.micMode === "hold"
+                ? "Hold the sphere or Space to talk"
+                : "Click the sphere to unmute"
+              : "Typing · the room reads it in their language";
+  const press = (e: PointerEvent) => {
+    if (e.button === 0 && c.micMode === "hold") {
+      sfx.toggle(true);
+      c.startTalking();
+    }
+  };
   return (
-    <div className="flex h-full items-center gap-4 px-5">
-      <div className={`pointer-events-none shrink-0 ${joined ? "" : "opacity-50"}`}>
-        <VoiceBlob level={level} size={104} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-[12.5px] font-medium" style={{ color: c.micOn ? "var(--green)" : speaker ? "#dbe7ff" : "#8a8a8a" }}>
-            {status}
-          </span>
-          {joined && <span className="ml-auto shrink-0"><ModeSwitch mode={mode} onMode={onMode} /></span>}
+    <div className="flex flex-col" data-testid="call-panel" data-state={c.state} data-mode={mode}>
+      {c.error && (
+        <div className="mx-5 mt-3 flex items-center gap-3 rounded-[12px] bg-[rgba(255,90,79,0.1)] px-4 py-2 text-[12.5px] text-[#ff8a80]" role="alert" data-testid="call-error" data-code={c.error.code}>
+          {ERROR_TEXT[c.error.code] ?? `${c.error.code}: ${c.error.message}`}
+          <button className="ml-auto text-[12px] text-neutral-400 underline" onClick={c.clearError}>
+            Dismiss
+          </button>
         </div>
-        <AnimatePresence mode="wait">
-          {joined && last && (
-            <motion.div key={last.messageId + last.translationStatus} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} data-testid="call-subtitle" className="mt-1.5">
-              <span className="text-[11px] text-neutral-500">{who} · </span>
-              <span className="line-clamp-2 text-[13.5px] leading-[1.45] text-neutral-100">
-                {last.translationStatus === "pending" && !mine ? <span className="shimmer">Translating…</span> : withValues(mine ? last.originalText : last.text, last.values)}
-              </span>
-            </motion.div>
+      )}
+      <div className="flex items-center gap-4 px-5 py-3">
+        <Tooltip label={canTalk ? (c.micMode === "hold" ? "Hold to talk · or hold Space" : c.micOn ? "Click to mute" : "Click to unmute") : status}>
+          <button
+            className="relative grid h-[68px] w-[68px] shrink-0 place-items-center rounded-full transition-[transform,opacity] active:scale-95 disabled:cursor-default"
+            style={{
+              opacity: canTalk || c.micOn ? 1 : 0.45,
+              boxShadow: c.micOn ? "0 0 0 2px var(--green), 0 0 28px -6px rgba(61,220,151,0.8)" : "inset 0 0 0 1px rgba(255,255,255,0.08)",
+              background: "rgba(255,255,255,0.025)",
+            }}
+            data-testid="call-talk"
+            data-on={c.micOn}
+            disabled={!canTalk}
+            onPointerDown={press}
+            onPointerUp={() => c.micMode === "hold" && c.stopTalking()}
+            onPointerLeave={() => c.micMode === "hold" && c.stopTalking()}
+            onPointerCancel={() => c.micMode === "hold" && c.stopTalking()}
+            onClick={() => c.micMode === "open" && c.toggleMic()}
+            aria-label={c.micMode === "hold" ? "Hold to talk" : c.micOn ? "Mute" : "Unmute"}
+          >
+            <span className="pointer-events-none">
+              <VoiceBlob level={level} size={64} />
+            </span>
+          </button>
+        </Tooltip>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-[12px]">
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${joined ? "bg-green" : "bg-neutral-600"}`} style={joined ? { boxShadow: "0 0 8px var(--green)" } : undefined} />
+            <span className="truncate font-medium" style={{ color: c.micOn ? "var(--green)" : speaker ? "#dbe7ff" : "#8a8a8a" }}>
+              {status}
+            </span>
+            {c.simulated && <span className="shrink-0 rounded-full bg-[rgba(255,159,64,0.12)] px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-[0.08em] text-orange">simulated</span>}
+          </div>
+          {joined && mode === "text" && !observer ? (
+            <Composer c={c} lockedBy={lockedBy} className="mt-2" />
+          ) : (
+            <AnimatePresence mode="wait">
+              {joined && last ? (
+                <motion.div key={last.messageId + last.translationStatus} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} data-testid="call-subtitle" className="mt-1 truncate text-[14px] leading-[1.45]">
+                  <span className="text-neutral-500">{who} · </span>
+                  <span className="text-neutral-100">{last.translationStatus === "pending" && !mine ? <span className="shimmer">Translating…</span> : withValues(mine ? last.originalText : last.text, last.values)}</span>
+                </motion.div>
+              ) : (
+                <div className="mt-1 text-[13px] text-neutral-600">{joined ? "Phrases appear here, translated for you." : ""}</div>
+              )}
+            </AnimatePresence>
           )}
-        </AnimatePresence>
+        </div>
+
+        {joined ? (
+          <div className="flex shrink-0 items-center gap-2">
+            {!observer && <ModeSwitch mode={mode} onMode={onMode} bare />}
+            {!observer && <SoundToggle />}
+            {c.soundBlocked && (
+              <button className="btn h-10 shrink-0 gap-1.5 px-3 text-[13px] text-amber" data-testid="call-sound" onClick={() => void c.enableSound()}>
+                <Volume2 size={14} /> Enable sound
+              </button>
+            )}
+            <Tooltip label="Leave the call">
+              <button
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/[0.05] text-neutral-300 transition-colors hover:bg-[rgba(255,90,79,0.14)] hover:text-[#ff8a80]"
+                data-testid="call-leave"
+                aria-label="Leave the call"
+                onClick={() => {
+                  sfx.close();
+                  void c.leave();
+                }}
+              >
+                <LogOut size={15} />
+              </button>
+            </Tooltip>
+          </div>
+        ) : (
+          c.state !== "joining" && (
+            <button
+              className="btn btn-primary h-10 shrink-0 gap-2 px-4 text-[13px]"
+              data-testid="call-join"
+              disabled={!c.ready}
+              onClick={() => {
+                sfx.chime();
+                void c.join();
+              }}
+            >
+              <PhoneCall size={14} /> {c.state === "left" ? "Join again" : "Join the call"}
+            </button>
+          )
+        )}
       </div>
     </div>
+  );
+}
+
+/** Rounded message field with a round send button: typed text goes through the same translation as speech. */
+function Composer({ c, lockedBy, className = "" }: { c: StageCall; lockedBy?: string; className?: string }) {
+  const [text, setText] = useState("");
+  return (
+    // the text path (LANG-7): same translation, for noisy rooms. Live calls get it with the room-messages backend
+    <form
+      className={`flex h-11 min-w-0 items-center gap-2 rounded-[22px] bg-white/[0.05] pl-4 pr-1.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)] transition-colors focus-within:bg-white/[0.08] focus-within:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)] ${c.sendText ? "" : "opacity-60"} ${className}`}
+      title={c.sendText ? undefined : "Typed messages in live calls need room messages on the backend (messages.send) and a worker that voices text"}
+      onSubmit={(ev) => {
+        ev.preventDefault();
+        if (!text.trim()) return;
+        c.sendText?.(text);
+        setText("");
+      }}
+    >
+      <input
+        value={text}
+        disabled={!c.sendText || c.role === "observer" || !!lockedBy}
+        autoFocus
+        onChange={(ev) => setText(ev.target.value)}
+        onKeyDown={(ev) => ev.stopPropagation()}
+        placeholder={c.role === "observer" ? "Observers read only" : lockedBy ? `${lockedBy} is deciding · you can type when it is your turn` : c.sendText ? "Message the room · each side reads it in their language" : "Typing in live calls is coming · switch to Voice to talk"}
+        className="min-w-0 flex-1 bg-transparent text-[14px] text-white outline-none placeholder:text-neutral-600"
+      />
+      <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white text-black transition-opacity disabled:opacity-25" disabled={!c.sendText || !text.trim()} aria-label="Send">
+        <ArrowUp size={15} strokeWidth={2.4} />
+      </button>
+    </form>
   );
 }
 
@@ -385,7 +508,6 @@ function SoundToggle() {
 }
 
 function Controls({ c, joined, mode, lockedBy }: { c: StageCall; joined: boolean; mode: StageMode; lockedBy?: string }) {
-  const [text, setText] = useState("");
   // primary button only: a right click opens the context menu and may never deliver pointerup (a stuck microphone)
   const press = (e: PointerEvent) => {
     if (e.button === 0) {
@@ -433,30 +555,7 @@ function Controls({ c, joined, mode, lockedBy }: { c: StageCall; joined: boolean
   if (mode === "text") {
     return (
       <div className="flex items-center gap-3 border-t border-white/[0.06] px-6 py-4">
-        {/* the text path (LANG-7): same translation, for noisy rooms. Live calls get it with the room-messages backend */}
-        <form
-          className={`flex h-11 min-w-0 flex-1 items-center gap-2 rounded-full bg-white/[0.05] pl-5 pr-1.5 focus-within:bg-white/[0.08] ${c.sendText ? "" : "opacity-60"}`}
-          title={c.sendText ? undefined : "Typed messages in live calls need room messages on the backend (messages.send) and a worker that voices text"}
-          onSubmit={(ev) => {
-            ev.preventDefault();
-            if (!text.trim()) return;
-            c.sendText?.(text);
-            setText("");
-          }}
-        >
-          <input
-            value={text}
-            disabled={!c.sendText || c.role === "observer" || !!lockedBy}
-            autoFocus
-            onChange={(ev) => setText(ev.target.value)}
-            onKeyDown={(ev) => ev.stopPropagation()}
-            placeholder={c.role === "observer" ? "Observers read only" : lockedBy ? `${lockedBy} is deciding · you can type when it is your turn` : c.sendText ? "Type a message · the room reads it in their language" : "Typing in live calls is coming · switch to Voice to talk"}
-            className="min-w-0 flex-1 bg-transparent text-[14px] text-white outline-none placeholder:text-neutral-600"
-          />
-          <button className="grid h-8 w-8 place-items-center rounded-full bg-white text-black disabled:opacity-30" disabled={!c.sendText || !text.trim()} aria-label="Send">
-            <Send size={13} />
-          </button>
-        </form>
+        <Composer c={c} lockedBy={lockedBy} className="flex-1" />
         {c.role !== "observer" && <SoundToggle />}
         {sound}
         {leave}

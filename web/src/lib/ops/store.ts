@@ -45,6 +45,8 @@ interface OpsState {
   humans: HumanPrompt[];
   /** A plan named by voice in the case's call ("option B"); the plan panel asks for a click to confirm it. */
   voiceIntent: { eventId: string; label: string; said: string; at: number } | null;
+  /** The case call as this screen sees it: party ids in the call and speaking now (the parties bar reads it). */
+  callLive: { eventId: string; inCall: string[]; speaking: string[] } | null;
   /** Risk Monitor screening pass in progress (drives the globe sweep). */
   scanning: boolean;
   lastScan: { at: number; objects: number; pairs: number; flagged: number; ms: number } | null;
@@ -89,6 +91,7 @@ export const useOps = create<OpsState>((set) => ({
   incidentView: "expanded",
   humans: [],
   voiceIntent: null,
+  callLive: null,
   scanning: false,
   lastScan: null,
   validation: null,
