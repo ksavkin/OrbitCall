@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@auth0/auth0-react": "^2.28.2",
     "@types/three": "^0.186.0",
     "convex": "^1.48.0",
     "livekit-client": "^2.23.0",
