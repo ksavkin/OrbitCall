@@ -9,6 +9,8 @@ import { ommSnapshotId } from "./lib/publishCandidates";
 import { startScreen, getScreenJob, orbitFailure, type OrbitJob, type ScreenResult } from "./lib/orbitClient";
 import { internal } from "./_generated/api";
 import { sourceName } from "./lib/validators";
+import { seededRunOf } from "./lib/seeded";
+import { seededRunForFleet } from "./seedCases";
 
 // Round 2: durable request reservation and bounded polling. Round 3: each encounter a committed scan publishes is
 // queued as one observation for the Tiger history (history.recordObservation, roadmap §10, spec §3.4).
@@ -44,6 +46,8 @@ async function fleetRun(ctx: QueryCtx, ids: string[]) {
 async function validScope(ctx: QueryCtx, r: Doc<"scanRuns">) {
  const user = await ctx.db.get(r.requestedBy);
  if (!user || user.role !== "operator" || (user.assignmentVersion ?? 1) !== r.assignmentVersion) return false;
+ // A seeded demo scan pins its own run; its cases are hidden until it finds them, so fleetRun cannot derive it.
+ if (await seededRunOf(ctx, r.demoRunId)) return true;
  if (r.demoRunId) { const d = await ctx.db.get(r.demoRunId); if (!d || d.state !== "open" || d.closedAt !== null) return false; }
  for (const id of r.primaryObjectIds) {
   const a = await ctx.db.query("fleetAssignments").withIndex("by_user_object", q=>q.eq("userId",user._id).eq("objectId",id)).unique();
@@ -65,20 +69,22 @@ export const startMine = mutation({
   const ids=scope.objects.map(o=>o.objectId).filter(id=>owned.has(id));
   if (!ids.length) fail("EMPTY_FLEET","Assign a satellite before scanning.");
   if (ids.length>50) fail("LIMIT_EXCEEDED","A scan supports at most 50 assigned satellites.");
-  const run=await fleetRun(ctx,ids);
+  const seeded=await seededRunForFleet(ctx,ids);
+  const run=seeded?{valid:true,demoRunId:seeded._id}:await fleetRun(ctx,ids);
   if(!run.valid)fail("INVALID_STATE","Every assigned simulated satellite must belong to the same unambiguous open demonstration.");
   const existing=await ctx.db.query("scanRuns").withIndex("by_user_request",q=>q.eq("requestedBy",scope.user._id).eq("requestId",requestId)).unique();
   if (existing) {
    if (!await validScope(ctx,existing)) fail("STALE_ASSIGNMENT","Responsibility changed; start a new scan.");
    if (existing.status==="failed") {
     await ctx.db.patch(existing._id,{status:"queued",phase:"queued",error:null,finishedAt:null,updatedAt:Math.max(Date.now(),existing.updatedAt)});
-    await ctx.scheduler.runAfter(0,runRef,{scanId:existing._id});
+    if(await seededRunOf(ctx,existing.demoRunId)) await ctx.scheduler.runAfter(0,internal.seedCases.scanStep,{scanId:existing._id,step:0});
+    else await ctx.scheduler.runAfter(0,runRef,{scanId:existing._id});
    }
    return {scanId:existing._id,reused:true};
   }
   const recent=await ctx.db.query("scanRuns").withIndex("by_user",q=>q.eq("requestedBy",scope.user._id)).order("desc").take(20);
   for(const r of recent.filter(pending)) {
-   if(await validScope(ctx,r)) return {scanId:r._id,reused:true};
+   if((!seeded||r.demoRunId===seeded._id)&&await validScope(ctx,r)) return {scanId:r._id,reused:true};
    await failStored(ctx,r,"STALE_ASSIGNMENT","Responsibility changed; this scan was stopped.");
   }
   if(recent[0] && Date.now()-recent[0]._creationTime<30_000) fail("RATE_LIMITED","Wait briefly before starting another scan.");
@@ -91,7 +97,10 @@ export const startMine = mutation({
    counts:{primaryObjects:ids.length,catalogObjects:0,primariesCompleted:0,pairsChecked:0,eventsFound:0},
    coverage:{complete:false,catalogScope:"Not screened yet",excludedObjects:0,reasons:[],missingPrimaryIds:[]},
    jobId:null,startedAt:null,finishedAt:null,error:null,demoRunId:run.demoRunId,updatedAt:Date.now()});
-  await ctx.scheduler.runAfter(0,runRef,{scanId}); return {scanId,reused:false};
+  // With seeded demo cases open on this fleet, a timed stand-in replaces the orbit-service job (seedCases.scanStep).
+  if(seeded) await ctx.scheduler.runAfter(0,internal.seedCases.scanStep,{scanId,step:0});
+  else await ctx.scheduler.runAfter(0,runRef,{scanId});
+  return {scanId,reused:false};
  }
 });
 export const getMine=query({args:{scanId:v.optional(v.id("scanRuns"))},handler:async(ctx,{scanId})=>{

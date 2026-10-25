@@ -10,6 +10,7 @@ import { publishHostOutput } from "./lib/hostPublish";
 import { requireFleetScope } from "./fleetQuery";
 import { checkedTexts, speakRef } from "./call/hostSpeech";
 import { recordAutomaticQueue } from "./revisions";
+import { isSeededRun } from "./lib/seeded";
 
 // Coordination Host runs (roadmap §6 Gemini Host contract). A caller asks explicitly; nothing here watches messages.
 // One run per room, input version and trigger; a failed or superseded run may be retried, at most MAX_ATTEMPTS failures.
@@ -70,7 +71,8 @@ export const request = internalMutation({
   handler: async (ctx, { roomId, trigger, inputVersion: seen }): Promise<Id<"hostRuns"> | null> => {
     const room = await ctx.db.get(roomId);
     if (!room) throw new ConvexError({ code: "NOT_FOUND", message: "Room not found." });
-    if (!await isOpen(ctx, room)) return null;
+    // Seeded demo rooms run without the Host's model calls (seedCases.ts).
+    if (!await isOpen(ctx, room) || await isSeededRun(ctx, room.demoRunId)) return null;
     const now = Date.now();
     await expireLost(ctx, roomId, now);
     const context = await buildHostContext(ctx, room, trigger);

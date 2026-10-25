@@ -7,6 +7,7 @@ import { isoUtc, TCA_MATCH_MS } from "./lib/events";
 import { color, eventStatus, workflow } from "./lib/validators";
 import { side } from "./lib/policyValidators";
 import { decisionTurn, isResolved } from "./lib/decision";
+import { isSeededRun } from "./lib/seeded";
 
 // Coordination rooms (spec §3.4) on the round 1.5 tables in schema/rooms.ts. A room is the optional, automatically
 // connected communication channel of one case (user-flow "App navigation and the decision flow"): an operator presses
@@ -247,9 +248,12 @@ export const startWorkflow = mutation({
       });
       room = (await ctx.db.get(roomId))!;
     }
+    // Seeded demo cases play their agents as timed runs (seedCases.play); no agent calls out for them.
+    const seeded = await isSeededRun(ctx, event.demoRunId);
     for (const e of linked) {
       if (await openRoomLinkedTo(ctx, e._id)) continue;
       await ctx.db.insert("roomEvents", { roomId: room._id, eventId: e._id, linkedAt: now });
+      if (seeded) { await ctx.scheduler.runAfter(0, internal.seedCases.play, { eventId: e._id, step: 0 }); continue; }
       // "Run agents on this case": the Analyst and the candidate grid start for each newly linked incident. Both
       // deduplicate on their own (agentRuns.begin claims one run per input; candidates.publish checks the version).
       await ctx.scheduler.runAfter(0, internal.agents.analyst.start, { eventId: e._id });
