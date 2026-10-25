@@ -169,7 +169,12 @@ export async function syncPlans(ctx: MutationCtx, event: Doc<"events">, opts: { 
     // With no next version the refused one is not a record of anything pending: it would only block the mover.
     if (!desired && opts.previous && opts.previous.state !== "superseded") active.push(opts.previous);
     if (!desired && !active.length) continue;
-    if (desired && existing && active.length === 1 && existing.state !== "review_required" && samePlan(existing, desired)) continue;
+    const live = active.filter(p => p.state !== "review_required");
+    if (desired && live.length === 1 && samePlan(live[0], desired)) {
+      // The current version already matches: only a refused version left beside it is retired, without resets.
+      for (const plan of active) if (plan.state === "review_required") await ctx.db.patch(plan._id, { state: "superseded", updatedAt: Date.now() });
+      continue;
+    }
     const targets = new Set([...active.flatMap(p => p.affectedEventIds), ...desired?.affectedEventIds ?? []]);
     for (const id of targets) {
       if (opts.trigger && id === event._id) continue;
@@ -184,14 +189,13 @@ export async function syncPlans(ctx: MutationCtx, event: Doc<"events">, opts: { 
       const maneuver = plan.maneuverId && await ctx.db.get(plan.maneuverId);
       if (maneuver && maneuver.demoRunId === run && !maneuver.reviewRequired) await ctx.db.patch(maneuver._id, { reviewRequired: true, updatedAt: now });
     }
-    if (!desired) {
-      // No longer shared: each event that was in a plan prepares its own single-event schedule again.
-      for (const id of new Set(active.flatMap(p => p.affectedEventIds))) {
-        const row = await ctx.db.get(id);
-        if (row?.active && !["verified", "no_action_needed"].includes(row.status ?? "")) await ctx.scheduler.runAfter(0, requestPreview, { eventId: id });
-      }
-      continue;
+    // Each event that left the plan (all of them once the mover is no longer shared) prepares its own schedule again.
+    for (const id of new Set(active.flatMap(p => p.affectedEventIds))) {
+      if (desired?.affectedEventIds.includes(id)) continue;
+      const row = await ctx.db.get(id);
+      if (row?.active && !["verified", "no_action_needed"].includes(row.status ?? "")) await ctx.scheduler.runAfter(0, requestPreview, { eventId: id });
     }
+    if (!desired) continue;
     await ctx.db.insert("trajectoryPlans", {
       objectId, planVersion: await nextVersion(ctx, objectId, run), state: "draft",
       affectedEventIds: desired.affectedEventIds, eventRefs: await refsOf(ctx, desired.affectedEventIds),
