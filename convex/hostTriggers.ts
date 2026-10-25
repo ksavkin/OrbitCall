@@ -6,7 +6,7 @@ import { hostTrigger } from "./schema/rooms";
 import { agentSpanValidator, hostOutputValidator, spanFailure, type AgentSpan, type HostContext, type HostOutput } from "./lib/host";
 import { checkResultValidator, type CheckResult } from "./lib/checker";
 import { buildHostContext } from "./lib/hostContext";
-import { requireUser } from "./session";
+import { requireFleetScope } from "./fleetQuery";
 
 // Coordination Host runs (roadmap §6 Gemini Host contract). A caller asks explicitly; nothing here watches messages.
 // One run per room, input version and trigger; a failed or superseded run may be retried, at most MAX_ATTEMPTS failures.
@@ -217,13 +217,24 @@ export const fail = internalMutation({
   },
 });
 
-/** A room's latest host runs for the agent trace, newest first. Room members only. */
+/** A room's latest host runs for the agent trace, newest first. Current involved room members only. */
 export const listForRoom = query({
   args: { roomId: v.id("rooms") },
   handler: async (ctx, { roomId }) => {
-    const { user } = await requireUser(ctx);
+    const { user, objects, companyObjects } = await requireFleetScope(ctx);
     const member = await ctx.db.query("roomMembers").withIndex("by_room_user", q => q.eq("roomId", roomId).eq("userId", user._id)).first();
-    if (!member) throw new ConvexError({ code: "FORBIDDEN", message: "Only room members can see its host runs." });
+    if (!member || member.companyId !== user.companyId) throw new ConvexError({ code: "FORBIDDEN", message: "Only room members can see its host runs." });
+    const owned = new Set(companyObjects.map(o => o.objectId));
+    const responsible = new Set(objects.filter(o => owned.has(o.objectId)).map(o => o.objectId));
+    const links = await ctx.db.query("roomEvents").withIndex("by_room", q => q.eq("roomId", roomId)).collect();
+    let involved = false;
+    for (const link of links) {
+      const event = await ctx.db.get(link.eventId);
+      if (!event) continue;
+      const pair = await Promise.all([ctx.db.get(event.objectAId), ctx.db.get(event.objectBId)]);
+      if (pair.some(object => object && responsible.has(object.objectId))) { involved = true; break; }
+    }
+    if (!involved) throw new ConvexError({ code: "FORBIDDEN", message: "Current responsibility for a linked event is required." });
     const runs = await ctx.db.query("hostRuns").withIndex("by_room_created", q => q.eq("roomId", roomId)).order("desc").take(20);
     return runs.map(r => ({
       hostRunId: r._id, trigger: r.trigger, inputVersion: r.inputVersion, attempt: r.attempt, status: r.status,

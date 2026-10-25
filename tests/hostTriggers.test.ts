@@ -704,6 +704,24 @@ describe("Proposal labels", () => {
 });
 
 describe("Room host runs", () => {
+  it.each(["assignment", "company", "owner", "observer"] as const)("rejects a stale room membership after %s access changes", async change => {
+    const t = backend();
+    const room = await approvedRoom(t);
+    await t.run(async ctx => {
+      if (change === "assignment") {
+        const assignment = (await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", room.userIds[0])).first())!;
+        await ctx.db.patch(assignment._id, { active: false });
+      }
+      if (change === "company") await ctx.db.patch(room.userIds[0], { companyId: room.companyIds[1] });
+      if (change === "owner") {
+        const owner = (await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", "SIM-2000")).unique())!;
+        await ctx.db.patch(owner._id, { companyId: room.companyIds[1] });
+      }
+      if (change === "observer") await ctx.db.patch(room.userIds[0], { role: "demo_observer" });
+    });
+    await expect(as(t, "u0").query(api.hostTriggers.listForRoom, { roomId: room.roomId })).rejects.toThrow("FORBIDDEN");
+  });
+
   it("lists a room's host runs, newest first, to its members only", async () => {
     const t = backend();
     const room = await seedRoom(t);
