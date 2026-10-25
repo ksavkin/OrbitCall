@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight, Check, CheckCheck, CircleDot, Hourglass, Radar, RotateCcw, Sparkles, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CallMessage } from "@/call/api";
+import { useRealMode } from "@/lib/backend/live";
 import { fmtMiss, fmtMs, fmtOdds, fmtUsd, fmtWhen } from "@/lib/ops/format";
 import { runScan } from "@/lib/ops/scenarios";
 import { sfx } from "@/lib/sound";
@@ -15,6 +16,7 @@ import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 import { NodeGlyph } from "./Glyphs";
 import { ObjectChip, RichLine } from "./Entity";
 import type { useRoomState } from "./DecisionDock";
+import { VerificationPanel } from "@/components/live/Verification";
 
 // The Decision Center as one shared meeting, oldest at the top: what people said (voice or typed, in each reader's
 // language), the agents' reasoning that matters (each note says which tools it used, so it reads as an agent at
@@ -254,6 +256,8 @@ function Line({ at, tone, who, text }: { at: number; tone: keyof typeof LINE; wh
 
 /** The closing report: what was decided, by whom, what was done and checked, with links into the case. */
 function Report({ e }: { e: ConjunctionEvent }) {
+  // real mode checks the backend's verification record instead of the simulator's checks
+  const real = useRealMode();
   const p = e.proposal;
   const replies = useOps((s) => s.replies);
   const approvals = replies.filter((r) => r.eventId === e.id && r.decision === "approved" && r.version === p?.version);
@@ -320,7 +324,8 @@ function Report({ e }: { e: ConjunctionEvent }) {
             {e.b.kind === "debris" ? ". Debris has no operator." : "."}
           </p>
         )}
-        {checks.length > 0 && (
+        {real && <VerificationPanel eventId={e.id} />}
+        {!real && checks.length > 0 && (
           <ul className="space-y-1.5">
             {checks.map((c) => (
               <li key={c.label} className="flex items-start gap-2 text-[13px] leading-[1.5]">

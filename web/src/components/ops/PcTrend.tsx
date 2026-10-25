@@ -1,18 +1,26 @@
 "use client";
 
 import { Area, AreaChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from "recharts";
+import { useRealMode } from "@/lib/backend/live";
 import { fmtChance, fmtOdds } from "@/lib/ops/format";
 import type { ConjunctionEvent } from "@/lib/ops/types";
 import { useNow } from "@/lib/useNow";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { PcHistory } from "@/components/live/PcHistory";
 
 // Chance of collision over the last day, interactive: hover any point for the time, the odds and the exact value.
 // The scale is logarithmic (each step is 10× less likely) but every label speaks in odds, and the action line is named.
+// Real mode draws the backend's observation history instead (history.series), never the simulator's.
 
 const ACTION = 1e-4;
 const config: ChartConfig = { pc: { label: "Chance", color: "#ff7a6b" } };
 
 export function PcTrend({ e }: { e: ConjunctionEvent }) {
+  const real = useRealMode();
+  return real ? <PcHistory eventId={e.id} /> : <SimPcTrend e={e} />;
+}
+
+function SimPcTrend({ e }: { e: ConjunctionEvent }) {
   const now = useNow(60_000);
   const h = e.pcHistory;
   if (h.length < 2) return null;

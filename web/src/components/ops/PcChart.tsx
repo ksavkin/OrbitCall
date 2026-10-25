@@ -1,14 +1,17 @@
 "use client";
 
 import { useId } from "react";
+import { useRealMode } from "@/lib/backend/live";
 import { fmtChance, fmtOdds, fmtPc } from "@/lib/ops/format";
 import type { ConjunctionEvent } from "@/lib/ops/types";
 import { useNow } from "@/lib/useNow";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { PcHistory } from "@/components/live/PcHistory";
 
 // Collision probability over the last day (ROOM-10), readable without knowing log scales:
 // the headline says what happened, the axis speaks in odds ("1 in 10,000"), the action line
 // is named, and the line turns red only where it is above that line.
+// Real mode draws the backend's observation history instead (history.series), never the simulator's.
 
 const ACTION = 1e-4;
 
@@ -40,6 +43,11 @@ function story(e: ConjunctionEvent, now: number) {
 }
 
 export function PcChart({ e }: { e: ConjunctionEvent }) {
+  const real = useRealMode();
+  return real ? <PcHistory eventId={e.id} compact /> : <SimPcChart e={e} />;
+}
+
+function SimPcChart({ e }: { e: ConjunctionEvent }) {
   const now = useNow(60_000);
   const clip = useId().replace(/:/g, "");
   const h = e.pcHistory;
