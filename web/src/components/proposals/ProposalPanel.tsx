@@ -88,7 +88,7 @@ export function ProposalPanel({
         <div className="flex items-baseline gap-3 px-5 pb-3 pt-4">
           <span className="text-[15px] font-semibold tracking-[-0.01em] text-white">{readOnly ? "Plans on the table" : "Choose a plan"}</span>
           <span className="text-[12.5px] text-neutral-500">{sel ? `${selName} selected` : "none selected yet"}</span>
-          <span className="ml-auto truncate text-[12px] text-neutral-600">Changing the plan resets every approval</span>
+          <span className="ml-auto truncate text-[12px] text-neutral-600">{readOnly ? "Read only until your turn" : "Pick a circle to select · selecting is not approving"}</span>
         </div>
       ) : (
         <div className="flex items-start gap-3 px-5 pb-3 pt-5">
@@ -298,17 +298,38 @@ function PlanCard({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.05 + index * 0.05, duration: 0.25 }}
-      className={`relative ${last ? "" : "border-b border-white/[0.06]"} ${c.selected ? "bg-white/[0.07]" : ""}`}
+      className={`relative ${last ? "" : "border-b border-white/[0.06]"} ${c.selected ? "bg-white/[0.06]" : ""}`}
     >
-      {/* selected: the one filled card with a white bar; previewed: only a thin grey bar, no fill */}
-      {c.selected ? <span className="absolute inset-y-0 left-0 w-[3px] bg-white" /> : viewing && <span className="absolute inset-y-2 left-0 w-[2px] rounded-full bg-white/30" />}
+      {/* previewed: only a thin grey bar; selected: the filled radio and a light fill */}
+      {viewing && !c.selected && <span className="absolute inset-y-2 left-0 w-[2px] rounded-full bg-white/30" />}
+      {/* the radio is the only control that selects; the row itself only previews */}
+      <button
+        role="radio"
+        aria-checked={c.selected}
+        aria-label={`Select ${c.label} for both sides`}
+        disabled={!canSelect || c.selected}
+        onClick={() => {
+          if (canSelect && !c.selected) onSelect();
+        }}
+        className={`group/radio absolute left-4 top-[15px] z-[1] grid h-5 w-5 place-items-center rounded-full transition-[box-shadow,background] duration-200 ${
+          c.selected ? "bg-white" : canSelect ? "shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.32)] hover:shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.8)]" : "shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.14)]"
+        } disabled:cursor-default`}
+      >
+        <AnimatePresence initial={false}>
+          {c.selected ? (
+            <motion.span key="on" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={{ type: "spring", stiffness: 600, damping: 26 }} className="h-2 w-2 rounded-full bg-black" />
+          ) : (
+            canSelect && <span key="hover" className="h-2 w-2 rounded-full bg-white/0 transition-colors group-hover/radio:bg-white/40" />
+          )}
+        </AnimatePresence>
+      </button>
       <button
         onClick={() => {
           sfx.click();
           onLook();
         }}
         onPointerEnter={() => sfx.hover()}
-        className="flex w-full items-start gap-3.5 px-4 py-3.5 text-left transition-colors duration-200 hover:bg-white/[0.03]"
+        className="flex w-full items-start gap-3 py-3.5 pl-12 pr-4 text-left transition-colors duration-200 hover:bg-white/[0.03]"
       >
         <span className="mono mt-[2px] w-6 shrink-0 text-[12px] font-semibold text-neutral-500">{c.label}</span>
         <span className="min-w-0 flex-1">
@@ -316,7 +337,6 @@ function PlanCard({
             {t.verb}
             {t.who ? <ObjectChip e={e} side={t.who} size="sm" /> : <span>for the next CDM</span>}
             {o.action !== "wait" && <span className="tnum font-normal text-neutral-400">by {o.dvMs} m/s</span>}
-            {c.selected && <span className="ml-1 rounded-full bg-white px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-[0.06em] text-black">Selected</span>}
             {o.recommended && (
               <span className="rounded-full px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-[0.06em] text-neutral-300 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.22)]">
                 Agents&rsquo; pick
@@ -339,18 +359,6 @@ function PlanCard({
           <span className="tnum mt-1 block text-[11px] text-neutral-500">from {fmtMiss(e.missM)}</span>
         </span>
       </button>
-      <AnimatePresence initial={false}>
-        {canSelect && viewing && !c.selected && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-            <div className="flex items-center gap-3 px-4 pb-3.5 pl-[54px]">
-              <button className="btn h-8 gap-1.5 px-3 text-[12.5px] text-white" onClick={onSelect}>
-                <Eye size={12} /> Select {c.label} for both sides
-              </button>
-              <span className="text-[11.5px] leading-snug text-neutral-500">Puts it in front of both sides and resets approvals. It does not approve it.</span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </motion.div>
   );
 }
