@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  voice:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -79,6 +79,7 @@ jobs:
             for f in requirements.txt requirements-dev.txt; do
               if [ -f "$f" ]; then pip install -r "$f"; fi
             done
+            if [ -f pyproject.toml ]; then pip install -e .; fi
           else
             extra=$(python -c "import tomllib; print('[test]' if 'test' in tomllib.load(open('pyproject.toml', 'rb')).get('project', {}).get('optional-dependencies', {}) else '')")
             pip install -e ".$extra"
