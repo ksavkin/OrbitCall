@@ -8,6 +8,7 @@ import { inputKey } from "./lib/analyst";
 import { supersede } from "./lib/runs";
 import { ommSnapshotId } from "./lib/publishCandidates";
 import { syncProposals } from "./lib/proposals";
+import { RESOLVED_STATUSES } from "./lib/decision";
 import type { Id } from "./_generated/dataModel";
 
 export const publish = internalMutation({
@@ -64,6 +65,8 @@ export const publish = internalMutation({
     const previous = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     if ((previous?.version ?? null) !== baseVersion) throw new ConvexError({ code: "STALE_REVISION", message: "Candidate set changed; reload it before publishing." });
     if (previous && previous.state !== "open") throw new ConvexError({ code: "INVALID_STATE", message: "Scheduled or closed plans cannot be rewritten by candidate publication." });
+    // After consensus a change flags the plan for review; publication never silently replaces it (spec §4.1).
+    if (RESOLVED_STATUSES.has(event.status ?? "new")) throw new ConvexError({ code: "INVALID_STATE", message: "This incident is decided; its candidates can no longer change." });
     const candidateRevisionIds: Id<"candidateRevisions">[] = [];
     for (const c of candidates) {
       const latest = await ctx.db.query("candidateRevisions").withIndex("by_event_candidate_revision", q =>

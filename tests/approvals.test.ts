@@ -49,6 +49,10 @@ describe("approvals.approve: bilateral, side A then side B", () => {
       approvals: { A: { status: "approved" }, B: { status: "approved" } } });
     expect((await eventRow(t, eventId))!.status).toBe("approved");
     expect(await code(as(t, "a").mutation(fn.approve, await tick(t, eventId)))).toBe("ALREADY_DECIDED");
+    // A later publication never silently replaces an agreed plan.
+    expect(await code(t.mutation(internal.candidates.publish, { eventId, baseVersion: 1, start: false,
+      candidates: withCard("P2", { revision: 2, missAfterKm: 2.4 }) }))).toBe("INVALID_STATE");
+    expect(await read(t, "a", eventId)).toMatchObject({ allRequiredApproved: true, selected: { revision: 1, generation: 1 } });
   });
 
   it("rejects an unselected card, a stale revision, generation or rule version", async () => {
