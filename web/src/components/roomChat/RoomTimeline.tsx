@@ -115,7 +115,7 @@ function Refs({ m }: { m: CallMessage }) {
   );
 }
 
-function Message({ m, myUserId }: { m: CallMessage; myUserId: string | null }) {
+export function Message({ m, myUserId }: { m: CallMessage; myUserId: string | null }) {
   const [original, setOriginal] = useState(false);
   const mine = m.author.kind === "human" && m.author.userId === myUserId;
   const who = m.author.kind === "human" ? (mine ? "You" : m.author.name) : m.author.kind === "agent" ? m.author.role : "System";

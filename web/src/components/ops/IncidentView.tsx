@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useMemo, useState } from "react";
-import { Check, Loader2, Maximize2, Minimize2, ShieldAlert } from "lucide-react";
+import { Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { fmtCountdown, fmtMiss, fmtChance, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { AGENTS, MODELS } from "@/lib/ops/roster";
 import { engine } from "@/lib/ops/engine";
@@ -15,7 +15,8 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import { AgentGraph, GraphLegend } from "./AgentGraph";
 import { CallFeed } from "./AgentTrace";
 import { PcTrend } from "./PcTrend";
-import { Decide, Done, TheirReply, Waiting, optionText, useRoomState } from "./DecisionDock";
+import { Meeting } from "./Meeting";
+import { useRoomState } from "./DecisionDock";
 import { ObjectChip, RichLine } from "./Entity";
 import { RoomCall } from "@/components/rooms/RoomsScreen";
 
@@ -315,7 +316,7 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
   const st = room.state;
   const due = st?.mode === "decide";
   // Decision and the agents' run share the main area; a decision that becomes due brings Decision forward
-  const [view, setView] = useState<"decision" | "run">(st ? "decision" : "run");
+  const [view, setView] = useState<"decision" | "run">("decision");
   const [wasDue, setWasDue] = useState(due);
   if (due !== wasDue) {
     setWasDue(due);
@@ -329,7 +330,7 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
         <div className="flex rounded-full bg-white/[0.05] p-1 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]" role="tablist">
           {(
             [
-              { id: "decision", label: "Decision" },
+              { id: "decision", label: "Meeting" },
               { id: "run", label: "Agent run" },
             ] as const
           ).map((t) => (
@@ -352,7 +353,7 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
             </button>
           ))}
         </div>
-        <span className="ml-auto text-[12px] text-neutral-600">{view === "run" ? "Every model and tool call · newest first · with latency" : "Both sides approve the same selected plan"}</span>
+        <span className="ml-auto text-[12px] text-neutral-600">{view === "run" ? "Every model and tool call · newest first · with latency" : "Shared record of the case · newest at the bottom"}</span>
       </div>
 
       <div className="relative min-h-0 flex-1">
@@ -362,27 +363,17 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
               <CallFeed className="min-h-0 flex-1 [&_.px-3]:px-6" eventId={e.id} />
             </motion.div>
           ) : (
-            // the plans scroll here; the panel's Approve bar stays pinned to the bottom of this area
-            <motion.div key={`decision-${st?.mode ?? "working"}-${e.proposal?.version ?? 0}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="thin-scroll absolute inset-0 overflow-y-auto px-6 pb-5">
-              {st?.mode === "decide" ? (
-                <div className="rounded-[16px] bg-white/[0.02] shadow-[inset_0_0_0_1px_rgba(255,159,64,0.32)]">
-                  <Decide e={e} viewer={room.viewer} now={now} embedded />
-                </div>
-              ) : st?.mode === "waiting" ? (
-                <Card>
-                  <Waiting e={e} other={room.other} mine={st.mine!} now={now} />
-                </Card>
-              ) : st?.mode === "reply" ? (
-                <Card>
-                  <TheirReply e={e} r={st.theirs!} />
-                </Card>
-              ) : st?.mode === "done" ? (
-                <Card>
-                  <Done e={e} />
-                </Card>
-              ) : (
-                <WorkingLine e={e} onRun={() => setView("run")} />
-              )}
+            // the shared meeting: the agents' notes, what people said, every decision, the plans while open, the report
+            <motion.div key="decision" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="absolute inset-0">
+              <Meeting
+                e={e}
+                now={now}
+                room={room}
+                onRun={(agent) => {
+                  useOps.getState().set({ focusAgent: agent });
+                  setView("run");
+                }}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -396,28 +387,7 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
   );
 }
 
-/** Nothing to decide yet: say what the agents are on, and offer their run. */
-function WorkingLine({ e, onRun }: { e: ConjunctionEvent; onRun: () => void }) {
-  const step = STEPS[Math.min(stepOf(e), STEPS.length - 1)];
-  return (
-    <div className="grid h-full min-h-[220px] place-items-center text-center">
-      <div>
-        <div className="mx-auto grid h-10 w-10 place-items-center rounded-full bg-white/[0.04]">
-          {e.agentsWorking ? <Loader2 size={18} className="animate-spin text-[#9cc2ff]" /> : <Check size={18} className="text-green" />}
-        </div>
-        <div className="mt-3 text-[16px] font-medium text-white">{e.agentsWorking ? "The agents are working" : "Waiting for the next step"}</div>
-        <div className="mt-1 text-[13px] text-neutral-500">{step} · the plans appear here when they need your decision</div>
-        <button className="btn btn-ghost-line mt-4 h-8 px-3 text-[12px]" onClick={onRun}>
-          Watch the agent run
-        </button>
-      </div>
-    </div>
-  );
-}
 
-function Card({ children }: { children: React.ReactNode }) {
-  return <div className="overflow-hidden rounded-[14px] bg-white/[0.03] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]">{children}</div>;
-}
 
 
 

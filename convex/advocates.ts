@@ -1,4 +1,4 @@
-import { internalAction, internalMutation, internalQuery, query, mutation, type QueryCtx } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, query, mutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { makeFunctionReference as ref } from "convex/server";
@@ -17,7 +17,147 @@ import {
 } from "./lib/publishCandidates";
 import type { Side } from "./lib/policies";
 import { buildMemoryItem, memorySourceFingerprint } from "./lib/advocateMemory";
-import { countingApprovals, allApproved } from "./lib/approvalState";
+import { countingApprovals, allApproved, assignmentVersionOf } from "./lib/approvalState";
+import { isResolved } from "./lib/decision";
+import { notify } from "./rooms";
+
+const FOLLOWUP_HISTORY_LIMIT = 1000;
+const rationaleStart = ref<"action", { eventId: Id<"events"> }, { status: string; published: number }>("agents/rationale:start");
+const scopeLimit = () => { throw new ConvexError({ code: "LIMIT_EXCEEDED", message: "The coordination scope is too large; narrow the incident history." }); };
+async function fingerprint(value: unknown) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value)));
+  return [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, "0")).join("");
+}
+function storedResponsibility(run: Doc<"agentRuns">) {
+  try { const value = JSON.parse(run.checkedOutput ?? "{}").responsibility; return typeof value === "string" ? value : null; }
+  catch { return null; }
+}
+
+// The private run stores only a digest of public responsibility records, never policy values. Both sides
+// are pinned because an old counterpart assessment is not evidence of the newly responsible company's view.
+async function responsibility(ctx: QueryCtx, event: Doc<"events">, set: Doc<"candidateSets">, reading = false) {
+  if ((!reading && (isResolved(event) || event.tcaMs <= Date.now() || set.state !== "open" || !await openDemo(ctx, event))) || set.reviewRequired) return null;
+  const sides = requiredSides(set);
+  if (!sides.length || event.workflow === "internal_review" || (event.requiredApprovalSides && event.requiredApprovalSides.join() !== sides.join())) return null;
+  const operators = new Map<Id<"users">, Doc<"users">>();
+  const records = [];
+  for (const s of ["A", "B"] as const) {
+    const object = await ctx.db.get(s === "A" ? event.objectAId : event.objectBId);
+    if (!object) return null;
+    const owner = await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", object.objectId)).unique();
+    if ((owner?.companyId ?? null) !== companyOf(set, s)) return null;
+    const assignments = await ctx.db.query("fleetAssignments").withIndex("by_object", q => q.eq("objectId", object.objectId)).take(FOLLOWUP_HISTORY_LIMIT + 1);
+    if (assignments.length > FOLLOWUP_HISTORY_LIMIT) scopeLimit();
+    const users = await Promise.all(assignments.map(async assignment => {
+      const user = await ctx.db.get(assignment.userId);
+      if (assignment.active && user?.role === "operator" && user.companyId === owner?.companyId) operators.set(user._id, user);
+      return { id: assignment._id, userId: assignment.userId, active: assignment.active,
+        role: user?.role ?? null, companyId: user?.companyId ?? null, version: user ? assignmentVersionOf(user) : null };
+    }));
+    records.push({ side: s, objectId: object.objectId, companyId: owner?.companyId ?? null, users: users.sort((a, b) => a.id.localeCompare(b.id)) });
+  }
+  return { operators: [...operators.values()], fingerprint: await fingerprint({ eventId: event._id, demoRunId: event.demoRunId ?? null,
+    workflow: event.workflow ?? null, approvalRuleVersion: event.approvalRuleVersion ?? null, sides, records }) };
+}
+
+async function currentRooms(ctx: QueryCtx, event: Doc<"events">) {
+  const links = await ctx.db.query("roomEvents").withIndex("by_event", q => q.eq("eventId", event._id)).take(FOLLOWUP_HISTORY_LIMIT + 1);
+  if (links.length > FOLLOWUP_HISTORY_LIMIT) scopeLimit();
+  const rooms: Doc<"rooms">[] = [];
+  for (const id of new Set(links.map(link => link.roomId))) {
+    const room = await ctx.db.get(id);
+    if (room?.state === "open" && room.closedAt === null && room.demoRunId === (event.demoRunId ?? null) && room.simulated === event.simulated) rooms.push(room);
+  }
+  return rooms;
+}
+async function followupHistory(ctx: QueryCtx, eventId: Id<"events">) {
+  const rows = await ctx.db.query("log").withIndex("by_event_at", q => q.eq("eventId", eventId)).order("desc").take(FOLLOWUP_HISTORY_LIMIT + 1);
+  if (rows.length > FOLLOWUP_HISTORY_LIMIT) scopeLimit();
+  return rows;
+}
+async function negotiationLog(ctx: MutationCtx, event: Doc<"events">, summary: string, after: NonNullable<Doc<"log">["after"]>) {
+  return ctx.db.insert("log", {
+    eventId: event._id, actor: { kind: "agent", role: "operator_advocate", companyId: null, side: null },
+    action: "negotiation", summary, texts: null, before: null, after,
+    proposalId: null, revision: null, roomId: null, demoRunId: event.demoRunId ?? null, simulated: event.simulated, at: Date.now(),
+  });
+}
+async function announce(ctx: MutationCtx, event: Doc<"events">, operators: Doc<"users">[], rooms: Doc<"rooms">[], text: string) {
+  for (const room of rooms) await ctx.db.insert("messages", {
+    roomId: room._id, eventId: event._id, author: { kind: "agent", role: "operator_advocate", companyId: null }, kind: "negotiation",
+    originalText: text, originalLang: "en", translations: {}, translationStatus: {}, values: [], refs: { eventId: event._id }, form: null,
+    demoRunId: event.demoRunId ?? null, simulated: event.simulated, createdAt: Date.now(),
+  });
+  for (const user of operators) await notify(ctx, user._id, event, text);
+}
+
+/** Reusable post-publication hook; callers that publish in their own transaction can call this helper there. */
+export async function requestPublicationFollowups(ctx: MutationCtx, args: { eventId: Id<"events">; version: number; evidenceKey: string }) {
+  const event = await ctx.db.get(args.eventId);
+  const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", args.eventId)).unique();
+  if (!event || !set || set.version !== args.version || set.evidenceKey !== args.evidenceKey || await currentEvidenceKey(ctx, set) !== args.evidenceKey) return { scheduled: false };
+  const scope = await responsibility(ctx, event, set);
+  if (!scope) return { scheduled: false };
+  const key = await fingerprint({ setId: set._id, version: set.version, evidenceKey: set.evidenceKey });
+  if ((await followupHistory(ctx, event._id)).some(row => row.after?.kind === "candidate_followups" && row.after.key === key && row.after.state === "scheduled")) return { scheduled: false };
+  const rooms = await currentRooms(ctx, event);
+  for (const room of rooms) await ctx.scheduler.runAfter(0, internal.hostTriggers.request, { roomId: room._id, trigger: "candidates_changed" });
+  if (set.candidateRevisionIds.length) await ctx.scheduler.runAfter(0, rationaleStart, { eventId: event._id });
+  else await announce(ctx, event, scope.operators, rooms,
+    "No computed candidate options are available for this incident. Review the missing evidence or constraints and contact the responsible operators through the incident's contact details.");
+  await negotiationLog(ctx, event, set.candidateRevisionIds.length ? "Changed candidate options requested checked explanations and a Coordination Host review."
+    : "No computed candidate options are available; the responsible operators were notified.", {
+    kind: "candidate_followups", key, state: "scheduled", candidateVersion: set.version,
+    outcome: set.candidateRevisionIds.length ? "candidates_changed" : "no_candidates", roomIds: JSON.stringify(rooms.map(room => room._id)),
+  });
+  return { scheduled: true };
+}
+export const publicationFollowups = internalMutation({
+  args: { eventId: v.id("events"), version: v.number(), evidenceKey: v.string() },
+  handler: requestPublicationFollowups,
+});
+export const publicationFollowupFailed = internalMutation({
+  args: { eventId: v.id("events"), version: v.number(), demoRunId: v.union(v.id("demoRuns"), v.null()) },
+  handler: async (ctx, args) => {
+    const event = await ctx.db.get(args.eventId);
+    if (event && (event.demoRunId ?? null) === args.demoRunId) await negotiationLog(ctx, event,
+      "Candidate options were published, but the follow-up agents could not be requested. The existing candidates remain available.",
+      { kind: "candidate_followups", state: "failed", candidateVersion: args.version });
+  },
+});
+
+async function freshAssessment(ctx: QueryCtx, set: Doc<"candidateSets">, s: Side, evidenceKey: string, scope: string | null) {
+  const assessment = scope ? await currentAssessment(ctx, set, s, evidenceKey) : null;
+  if (!assessment?.runId) return null;
+  const run = await ctx.db.get(assessment.runId);
+  const context = run && await ctx.db.query("advocateContexts").withIndex("by_run", q => q.eq("runId", run._id)).unique();
+  const policy = run?.companyId ? await ctx.db.query("policies").withIndex("by_company", q => q.eq("companyId", run.companyId!)).unique() : null;
+  return run && context && storedResponsibility(run) === scope && (policy?.revision ?? 0) === context.policyRevision &&
+    (policy?._id ?? null) === context.policyId && advocateKey(set, s, context.policyRevision) === run.inputKey ? assessment : null;
+}
+
+async function publishNegotiationOutcome(ctx: MutationCtx, event: Doc<"events">, set: Doc<"candidateSets">) {
+  const scope = await responsibility(ctx, event, set);
+  if (!scope || await currentEvidenceKey(ctx, set) !== set.evidenceKey || !set.candidateRevisionIds.length) return;
+  const sides = requiredSides(set);
+  const assessments = await Promise.all(sides.map(s => freshAssessment(ctx, set, s, set.evidenceKey, scope.fingerprint)));
+  if (assessments.some(row => !row)) return;
+  const candidates = await loadCandidates(ctx, set);
+  // Missing or provisional outcomes are not a deadlock. Every current option needs an explicit hard rejection
+  // from at least one required side, and each side must have completed the whole current revision set.
+  if (assessments.some(row => row!.entries.length !== candidates.length || candidates.some(c => !row!.entries.some(e => e.candidateId === c.candidateId && e.revision === c.revision)))) return;
+  if (candidates.some(c => c.burnTimeUtc !== null && Date.parse(c.burnTimeUtc) <= Date.now()) ||
+    candidates.some(c => !assessments.some(row => row!.entries.some(e => e.candidateId === c.candidateId && e.outcome === "infeasible")))) return;
+  const checked = assessments.map((row, index) => ({ side: sides[index], entries: row!.entries }));
+  const key = await fingerprint({ setId: set._id, version: set.version, evidenceKey: set.evidenceKey, responsibility: scope.fingerprint, checked });
+  if ((await followupHistory(ctx, event._id)).some(row => row.after?.kind === "no_mutually_acceptable_option" && row.after.key === key)) return;
+  const categories = [...new Set(checked.flatMap(row => row.entries.filter(e => e.outcome === "infeasible").flatMap(e => e.categories)))].sort();
+  const labels: Record<string, string> = { fuel: "fuel constraints", mission_window: "mission windows", risk: "risk constraints", priority: "mission priority", other: "other operational constraints" };
+  const text = `${sides.length === 1 ? "The Operator Advocate found no acceptable option" : "The Operator Advocates found no mutually acceptable option"} among the current candidates. Each option conflicts with at least one current requirement.${categories.length ? ` Areas raised by the checks: ${categories.map(c => labels[c]).join(", ")}.` : ""} Continue the discussion or contact the responsible operators using the incident's contact details; no plan was approved or scheduled.`;
+  await announce(ctx, event, scope.operators, await currentRooms(ctx, event), text);
+  await negotiationLog(ctx, event, text, { kind: "no_mutually_acceptable_option", key, candidateVersion: set.version,
+    categories: JSON.stringify(categories), assessments: JSON.stringify(checked) });
+}
 
 async function openDemo(ctx: QueryCtx, event: Doc<"events">) {
   if (!event.demoRunId) return true;
@@ -31,6 +171,8 @@ export const begin = internalMutation({
     const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     const event = await ctx.db.get(eventId);
     if (!set || !event || set.state !== "open" || set.candidateRevisionIds.length === 0 || !await openDemo(ctx, event)) return null;
+    const scope = await responsibility(ctx, event, set);
+    if (!scope) return null;
     const facts = await loadFacts(ctx, event);
     if (set.evidenceKey !== inputKey(facts)) return null;
     const companyId = companyOf(set, side);
@@ -40,15 +182,16 @@ export const begin = internalMutation({
     const policyRevision = policyRow?.revision ?? 0;
     const key = advocateKey(set, side, policyRevision);
     const previous = await latestAdvocate(ctx, eventId, companyId);
-    if (previous?.inputKey === key && ["running", "succeeded"].includes(previous.status)) return null;
+    if (previous?.inputKey === key && storedResponsibility(previous) === scope.fingerprint && ["running", "succeeded"].includes(previous.status)) return null;
     if (previous?.status === "running") await supersede(ctx, previous._id);
     const candidates = await loadCandidates(ctx, set);
     const objectId = side === "A" ? facts.objectA.objectId : facts.objectB.objectId;
     const policy = policyRow?.satellites.find(p => p.objectId === objectId) ?? null;
-    const other = await currentAssessment(ctx, set, side === "A" ? "B" : "A", set.evidenceKey);
+    const other = await freshAssessment(ctx, set, side === "A" ? "B" : "A", set.evidenceKey, scope.fingerprint);
     const runId = await ctx.db.insert("agentRuns", {
       eventId, role: "operator_advocate", companyId, inputKey: key, status: "running", stage: "loading",
       lastProgressAt: Date.now(), stalled: false,
+      checkedOutput: JSON.stringify({ responsibility: scope.fingerprint }),
     });
     await ctx.db.insert("advocateContexts", {
       runId, side, policyId: policyRow?._id ?? null, policyRevision,
@@ -72,7 +215,9 @@ export const finish = internalMutation({
     const latest = await latestAdvocate(ctx, run.eventId, run.companyId);
     const policyRow = await ctx.db.query("policies").withIndex("by_company", q => q.eq("companyId", run.companyId!)).unique();
     const facts = event && await loadFacts(ctx, event);
+    const scope = event && set && await responsibility(ctx, event, set);
     if (!context || !set || !facts || set.state !== "open" || latest?._id !== runId ||
+      !scope || storedResponsibility(run) !== scope.fingerprint ||
       set.version !== context.candidateVersion || set.evidenceKey !== inputKey(facts) ||
       (policyRow?.revision ?? 0) !== context.policyRevision || (policyRow?._id ?? null) !== context.policyId ||
       advocateKey(set, context.side, context.policyRevision) !== run.inputKey) {
@@ -84,7 +229,7 @@ export const finish = internalMutation({
     }
     const policy = policyRow?.satellites.find(p => p.objectId === (context.side === "A" ? facts.objectA.objectId : facts.objectB.objectId)) ?? null;
     const evaluations = evaluateCandidates(facts, await loadCandidates(ctx, set), context.side, policy, Date.now());
-    const other = await currentAssessment(ctx, set, context.side === "A" ? "B" : "A", set.evidenceKey);
+    const other = await freshAssessment(ctx, set, context.side === "A" ? "B" : "A", set.evidenceKey, scope.fingerprint);
     const recommendation = checkRecommendation(raw, evaluations, Boolean(policy), other?.entries ?? []);
     await ctx.db.insert("negotiationMessages", {
       eventId: run.eventId, side: context.side, kind: "assessment", runId,
@@ -99,6 +244,7 @@ export const finish = internalMutation({
       if (response && ["running", "succeeded"].includes(response.status)) await supersede(ctx, response._id);
       await ctx.scheduler.runAfter(0, internal.agents.advocate.start, { eventId: run.eventId, side: "B" });
     }
+    await publishNegotiationOutcome(ctx, event!, set);
     return { published: true };
   },
 });
@@ -218,6 +364,15 @@ export const publishFromOrbit = internalAction({
           expectedEvidenceKey: input.evidenceKey, expectedSnapshotId: input.eventSnapshotId, expectedOmmSnapshotId: input.snapshotId,
           expectedDemoRunId: input.demoRunId,
         });
+        if (changed) {
+          // Candidate publication has committed. A failed follow-up dispatch must not report those committed
+          // cards as missing or roll them back; the retryable internal hook records its own deduplication key.
+          try { await ctx.runMutation(internal.advocates.publicationFollowups, { eventId, version, evidenceKey: input.evidenceKey }); }
+          catch {
+            try { await ctx.runMutation(internal.advocates.publicationFollowupFailed, { eventId, version, demoRunId: input.demoRunId }); }
+            catch { console.warn("Candidate options committed; follow-up dispatch and its diagnostic write were unavailable."); }
+          }
+        }
         return { status: "published", version, changed, cards: candidates.length, sharedMoverEventIds: sharedMoverEventIds(candidates, current.sharedMovers) };
       };
       try {
@@ -242,7 +397,8 @@ export const list = query({
   handler: async (ctx, { eventId }) => {
     const { candidateSet: set } = await requireParty(ctx, eventId);
     const key = await currentEvidenceKey(ctx, set);
-    const [a, b] = await Promise.all([currentAssessment(ctx, set, "A", key ?? ""), currentAssessment(ctx, set, "B", key ?? "")]);
+    const event = await ctx.db.get(eventId), scope = event && await responsibility(ctx, event, set, true);
+    const [a, b] = await Promise.all([freshAssessment(ctx, set, "A", key ?? "", scope?.fingerprint ?? null), freshAssessment(ctx, set, "B", key ?? "", scope?.fingerprint ?? null)]);
     // Only the workflow's required sides decide: debris has one Advocate and no assessment for the debris side.
     const required = requiredSides(set).map(s => s === "A" ? a : b);
     const candidates = await loadCandidates(ctx, set);
@@ -276,9 +432,11 @@ export const rerun = mutation({
   handler: async (ctx, { eventId }) => {
     const { user, candidateSet: set, side } = await requireParty(ctx, eventId);
     if (set.state !== "open" || await currentEvidenceKey(ctx, set) !== set.evidenceKey) throw new ConvexError({ code: "INVALID_STATE", message: "Current open candidate evidence is required." });
+    const event = await ctx.db.get(eventId), scope = event && await responsibility(ctx, event, set);
+    if (!scope) throw new ConvexError({ code: "INVALID_STATE", message: "Current responsibility and an active incident are required." });
     const run = await latestAdvocate(ctx, eventId, user.companyId);
-    if (run && ((run.status === "running" && !run.stalled) || run.status === "succeeded")) throw new ConvexError({ code: "INVALID_STATE", message: "Retry only a failed or stalled Advocate." });
-    if (run?.status === "running") await supersede(ctx, run._id);
+    if (run && storedResponsibility(run) === scope.fingerprint && ((run.status === "running" && !run.stalled) || run.status === "succeeded")) throw new ConvexError({ code: "INVALID_STATE", message: "Retry only a failed, stale or stalled Advocate." });
+    if (run && ["running", "succeeded"].includes(run.status)) await supersede(ctx, run._id);
     await ctx.scheduler.runAfter(0, internal.agents.advocate.start, { eventId, side });
     return null;
   },
@@ -572,7 +730,8 @@ export const noteMemory = internalMutation({
       // Do not send a quote to Claude if it changed between recall and this atomic reservation.
       if (!matched) { await supersede(ctx, runId); return false; }
     }
-    await ctx.db.patch(runId, { checkedOutput: JSON.stringify({ memory: sharedMemoryNote(status, pins.map(pin => pin.sourceEventId), writeFailed), memorySources: pins }) });
+    await ctx.db.patch(runId, { checkedOutput: JSON.stringify({ responsibility: storedResponsibility(run),
+      memory: sharedMemoryNote(status, pins.map(pin => pin.sourceEventId), writeFailed), memorySources: pins }) });
     return true;
   },
 });
