@@ -6,7 +6,7 @@ const view=ref<"query">("observer:publicView"), grant=ref<"mutation">("observer:
 async function setup(){
  const t=backend();
  await t.mutation(internal.operators.provision,{key:"a",name:"A",simulated:true,objectIds:[],members:[
-  {tokenIdentifier:"eye",role:"demo_observer",assignedObjectIds:[]},{tokenIdentifier:"other",role:"demo_observer",assignedObjectIds:[]},{tokenIdentifier:"op",role:"operator",assignedObjectIds:[]}]});
+  {tokenIdentifier:"eye",role:"demo_observer",assignedObjectIds:[]},{tokenIdentifier:"other",role:"demo_observer",assignedObjectIds:[]},{tokenIdentifier:"op",role:"operator",assignedObjectIds:[]},{tokenIdentifier:"head",role:"head_of_ops",assignedObjectIds:[]}]});
  const eventId=await insertEvent(t);
  const run=await t.run(async ctx=>{const id=await ctx.db.insert("demoRuns",{scenario:"demo",state:"open",startedBy:null,manifest:{secret:"private-memory"},startedAt:Date.now(),closedAt:null});await ctx.db.patch(eventId,{demoRunId:id});return id;});
  const userId=await t.run(async ctx=>(await ctx.db.query("users").withIndex("by_token_identifier",q=>q.eq("tokenIdentifier","eye")).unique())!._id);
@@ -113,4 +113,111 @@ it.each(["changed", "missing"])("hides %s approval assignment-version pins", asy
   else await ctx.db.patch(approval.userId,{assignmentVersion:99});
  });
  expect((await s.as().query(view,{demoRunId:s.run})).events[0].approval).toMatchObject({approved:0,allRequiredApproved:false});
+});
+
+describe("observer access and allowlist", () => {
+  it("refuses a signed-out caller, a head of operations and an observer granted a different run", async () => {
+    const { t, run, userId, as } = await setup();
+    await t.mutation(grant, { demoRunId: run, userId });
+    await expect(t.query(view, { demoRunId: run })).rejects.toThrow("UNAUTHENTICATED");
+    await expect(as("head").query(view, { demoRunId: run })).rejects.toThrow("FORBIDDEN");
+    const otherRun = await t.run(ctx => ctx.db.insert("demoRuns", {
+      scenario: "demo", state: "open", startedBy: null, manifest: null, startedAt: Date.now(), closedAt: null,
+    }));
+    await expect(as().query(view, { demoRunId: otherRun })).rejects.toThrow("FORBIDDEN");
+    // A grant is per observer and per run: another observer's grant on run 2 admits neither this one there nor itself on run 1.
+    await t.mutation(grant, { demoRunId: otherRun, userId: (await t.run(async ctx =>
+      (await ctx.db.query("users").withIndex("by_token_identifier", q => q.eq("tokenIdentifier", "other")).unique())!._id)) });
+    await expect(as().query(view, { demoRunId: otherRun })).rejects.toThrow("FORBIDDEN");
+    await expect(as("other").query(view, { demoRunId: run })).rejects.toThrow("FORBIDDEN");
+  });
+
+  it("returns only allowlisted keys and no private record, identity or control on a fully populated projection", async () => {
+    const s = await approved();
+    const secrets = await s.t.run(async ctx => {
+      const approval = (await ctx.db.get(s.approvalId))!;
+      const op = (await ctx.db.get(approval.userId))!;
+      await ctx.db.patch(op._id, { name: "SENTINEL-OPERATOR-NAME" });
+      await ctx.db.patch(op.companyId, { contact: "sentinel-ops@example.test" });
+      await ctx.db.patch(s.approvalId, { reason: "SENTINEL-APPROVAL-REASON" });
+      const policyId = await ctx.db.insert("policies", {
+        companyId: op.companyId, revision: 1, updatedAt: Date.now(),
+        satellites: [{
+          objectId: "SENTINEL-POLICY-OBJECT", minFuelReserveKg: 4242.42, currentFuelKg: 1, dryMassKg: 1, ispS: 1,
+          protectedWindows: [], preferredWindows: [], acceptablePc: 0.000123456, missionPriority: "high",
+        }],
+      });
+      const runId = await ctx.db.insert("agentRuns", {
+        eventId: s.eventId, inputKey: "k", status: "succeeded", role: "operator_advocate", companyId: op.companyId,
+        lastProgressAt: Date.now(), stalled: false, checkedOutput: "SENTINEL-PRIVATE-TRACE",
+      });
+      await ctx.db.insert("advocateContexts", {
+        runId, side: "A", policyId, policyRevision: 1, candidateSetId: s.setId, candidateVersion: 1, evidenceKey: "SENTINEL-CONTEXT",
+      });
+      await ctx.db.insert("memoryAssistants", {
+        demoRunId: s.run, companyId: op.companyId, assistantId: "SENTINEL-MEMORY-ASSISTANT", createdAt: Date.now(), closedAt: null,
+      });
+      // A committed schedule with matching evidence, so jobs and verification are filled too.
+      const maneuverId = await ctx.db.insert("maneuvers", {
+        refs: [{ eventId: s.eventId, proposalId: s.proposalId, revision: s.revision, selectionGeneration: 1 }],
+        trajectoryPlanId: null, trajectoryPlanVersion: null,
+        pinned: { snapshotId: "test", evidenceKeys: [], policyRevisions: [], assignmentVersions: [] },
+        intentKey: "intent", status: "committed", filePath: "operators/a/SENTINEL-FILE.json", diff: "SENTINEL-DIFF",
+        commitSha: "abc", writtenBy: "droid", rescreenJobId: "SENTINEL-JOB", error: null, reviewRequired: false,
+        rescreen: {
+          snapshotId: "test", evidenceKeys: [], passed: true, objectsChecked: 10, horizonH: 72, originalMissAfterKm: 1,
+          newConjunctions: [], refusalReason: null,
+        },
+        demoRunId: s.run, updatedAt: Date.now(),
+      });
+      await ctx.db.insert("maneuverEvents", { maneuverId, eventId: s.eventId });
+      const verificationId = await ctx.db.insert("verifications", {
+        eventId: s.eventId, kind: "live", result: "consistent", label: "evidence consistent with plan",
+        expected: { deltaAKm: 0.5, sign: 1 }, observed: { deltaAKm: 0.5, z: 10, epochUtc: "2026-10-25T01:00:00Z" },
+        elementSetCount: 8, series: [], thresholds: { z: 5, minDeltaAKm: 0.05, sizeTolerance: 0.5, minSets: 8 },
+        method: "SENTINEL-METHOD", limitations: [], missing: [], sources: [], demoRunId: s.run, simulated: true, createdAt: Date.now(),
+      });
+      await ctx.db.insert("log", {
+        eventId: s.eventId, actor: { kind: "system" }, action: "verified", summary: "SENTINEL-LOG", texts: null, before: null,
+        after: { verificationId: String(verificationId), intentKey: "intent" }, proposalId: s.proposalId, revision: s.revision,
+        roomId: null, demoRunId: s.run, simulated: true, at: Date.now(),
+      });
+      await ctx.db.insert("scanRuns", {
+        requestedBy: op._id, requestId: "SENTINEL-REQUEST", assignmentVersion: 1, primaryObjectIds: ["SENTINEL-PRIMARY"],
+        snapshotId: "test", fromMs: 0, toMs: 1, status: "completed", phase: "done", progress: 1,
+        counts: { primaryObjects: 1, catalogObjects: 2, primariesCompleted: 1, pairsChecked: 2, eventsFound: 1 },
+        coverage: { complete: true, catalogScope: "all", excludedObjects: 0, reasons: [{ reason: "decayed", count: 1 }], missingPrimaryIds: [] },
+        jobId: "SENTINEL-SCAN-JOB", startedAt: 0, finishedAt: 1, error: null, demoRunId: s.run, updatedAt: Date.now(),
+      });
+      return [String(op._id), String(op.companyId), String(policyId), String(runId), "op"];
+    });
+    const r = await s.as().query(view, { demoRunId: s.run });
+    // Populated: every branch of the projection is exercised, not an empty fixture.
+    expect(r.events[0]).toMatchObject({ selection: { proposalId: s.proposalId }, approval: { allRequiredApproved: true } });
+    expect(r.events[0].jobs).toHaveLength(1);
+    expect(r.events[0].verification).toMatchObject({ result: "consistent" });
+    expect(r.scans).toHaveLength(1);
+
+    const keys = new Set<string>();
+    const walk = (x: unknown): void => {
+      if (Array.isArray(x)) x.forEach(walk);
+      else if (x && typeof x === "object") for (const [k, val] of Object.entries(x)) { keys.add(k); walk(val); }
+    };
+    walk(r);
+    expect([...keys].sort()).toEqual([
+      "approval", "approved", "allRequiredApproved", "burnTimeUtc", "candidateId", "candidates", "catalogObjects",
+      "catalogScope", "commitSha", "complete", "count", "counts", "coverage", "deltaVMs", "demoRunId", "direction",
+      "elementSetCount", "eventId", "events", "eventsFound", "excludedObjects", "horizonH", "jobs", "kind", "label",
+      "maneuverId", "missAfterKm", "missKm", "missingPrimaryIds", "movingObjectId", "name", "objectId", "objects",
+      "objectsChecked", "pairsChecked", "passed", "phase", "primariesCompleted", "primaryObjects", "probability",
+      "progress", "proposalId", "reason", "reasons", "required", "rescreen", "result", "reviewRequired", "revision",
+      "scanId", "scans", "scenario", "selection", "simulated", "state", "status", "tcaUtc", "truncated", "verification",
+    ].sort());
+
+    const text = JSON.stringify(r);
+    expect(text).not.toMatch(/SENTINEL|sentinel|private-memory|4242\.42|0\.000123456/);
+    for (const id of secrets) expect(text).not.toContain(`"${id}"`);
+    // No identity, approval control or per-viewer field ever appears.
+    expect(text).not.toMatch(/userId|companyId|tokenIdentifier|email|canAct|mySide|myTurn|approveUrl|manifest|observerUserId/);
+  });
 });
