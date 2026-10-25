@@ -4,6 +4,7 @@ import type { QueryCtx } from "../_generated/server";
 import { buildFacts, isoUtc } from "./events";
 import { inputKey } from "./analyst";
 import { currentAssessment } from "./coordination";
+import { LEGACY_ASSIGNMENT_VERSION } from "./accounts";
 import { MAX_MESSAGES, type HostContext, type HostTrigger, type Language } from "./host";
 
 type HostEvent = HostContext["events"][number];
@@ -123,7 +124,9 @@ async function recordedApprovals(ctx: QueryCtx, event: Doc<"events">, selection:
     const user = await ctx.db.get(row.userId);
     const assignment = await ctx.db.query("fleetAssignments").withIndex("by_user_object", q =>
       q.eq("userId", row.userId).eq("objectId", objects[index].objectId)).unique();
-    if (!user || user.role !== "operator" || user.companyId !== row.companyId || !assignment?.active) continue;
+    // The approvals module's rule: a changed assignment set since the approval means it no longer counts.
+    if (!user || user.role !== "operator" || user.companyId !== row.companyId || !assignment?.active
+      || row.assignmentVersion !== (user.assignmentVersion ?? LEGACY_ASSIGNMENT_VERSION)) continue;
     const proposal = await ctx.db.get(row.proposalId);
     if (!proposal || proposal.eventId !== event._id || proposal.latestRevision !== row.revision) continue;
     const revision = await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
