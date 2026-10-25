@@ -323,7 +323,9 @@ function parseEvent(v: unknown): ScreenedEvent {
   const what = "event";
   const e = parsePair(v, what);
   parseSpread(e.spread);
-  if (!idList(e.primaries, `${what} (primaries)`).every(p => p === e.objectA || p === e.objectB)) fail(`${what} (primaries)`);
+  const primaries = idList(e.primaries, `${what} (primaries)`);
+  // Every event comes from screening a primary, so at least one side is one.
+  if (primaries.length === 0 || !primaries.every(p => p === e.objectA || p === e.objectB)) fail(`${what} (primaries)`);
   idList(e.attachedObjectIds, `${what} (attachedObjectIds)`);
   return e as unknown as ScreenedEvent;
 }
@@ -345,10 +347,13 @@ function parseCounts(v: unknown): ScreenCounts {
   return c as unknown as ScreenCounts;
 }
 
-function parseScreenResult(v: unknown, expected: { scanId: string; snapshotId: string }): ScreenResult {
+export interface ScreenExpectation { scanId: string; snapshotId: string; evidenceVersion?: string }
+
+function parseScreenResult(v: unknown, expected: ScreenExpectation): ScreenResult {
   const what = "screen result";
   const r = rec(v, what);
   if (r.scanId !== expected.scanId || r.snapshotId !== expected.snapshotId) fail(`${what} for a different scan or snapshot`);
+  if (expected.evidenceVersion !== undefined && r.evidenceVersion !== expected.evidenceVersion) fail(`${what} for a different evidence version`);
   fields(r, {
     evidenceVersion: orNull(isStr), fromUtc: isIso, toUtc: isIso, thresholdKm: isPos, cached: isBool, runtimeS: isNonNeg, method: isStr,
   }, what);
@@ -436,6 +441,9 @@ function parseJob<R>(v: unknown, jobId: string, kind: JobKind, parseResult: (val
   if (status === "completed" && (!hasResult || j.error !== null || j.phase !== "done")) fail("completed job without a result");
   if (status === "failed" && (j.error === null || hasResult || j.phase !== "failed")) fail("failed job without an error");
   if ((status === "queued" || status === "running") && (hasResult || j.error !== null)) fail("unfinished job with a result");
+  // jobs.py stamps startedAt on running and finishedAt on completion or failure.
+  if (status !== "queued" && j.startedAt === null) fail(`${what} (startedAt)`);
+  if ((status === "completed" || status === "failed") === (j.finishedAt === null)) fail(`${what} (finishedAt)`);
   // The job's error carries raw exception text (jobs.py: str(exc)[:500]). Only its code is kept, from a fixed list;
   // the message stored and shown is this client's.
   let error: OrbitJob<R>["error"] = null;
@@ -519,6 +527,8 @@ function parseCandidates(v: unknown, req: CandidatesRequest): CandidatesResponse
     allowed: new Set(req.allowedMovingObjectIds), objects, simulated };
   const candidates = list(r.candidates, MAX_CANDIDATES, `${what} (candidates)`).map(c => parseCandidate(c, ctx, "candidate"));
   if (candidates.some(c => c.kind === "maneuver" && frozen.has(c.movingObjectId as string))) fail("candidate (moving object listed as not movable)");
+  // The grid comes in the service's policy-free order, ranked 1..n (candidates.py).
+  if (candidates.some((c, i) => c.rank !== i + 1)) fail("candidate (rank order)");
   const wait = parseCandidate(r.wait, ctx, "wait candidate");
   if (wait.kind !== "wait" || wait.missBeforeKm !== r.missBeforeKm) fail("wait candidate (kind or miss before)");
   for (const f of list(r.failed, MAX_CANDIDATES, `${what} (failed)`)) fields(rec(f, "failed grid point"), { candidateId: isNonEmpty, reason: isStr }, "failed grid point");
@@ -557,6 +567,8 @@ function parseVerification(v: unknown, req: VerifyRequest): Verification {
     label: isNonEmpty, elementSetCount: isCount, method: isStr, simulated: isBool,
   }, what);
   if (r.label !== VERIFY_LABELS[r.result as keyof typeof VERIFY_LABELS]) fail(`${what} (label does not match the result)`);
+  // app.py derives the kind from the evidence given: a replay request is a replay verdict, anything else is live.
+  if (r.kind !== (req.replay !== undefined ? "replay" : "live")) fail(`${what} (kind does not match the evidence given)`);
   const expected = rec(r.expected, "verification expectation");
   // The service rounds the expected Δa to 4 decimals, so a tiny expectation may read 0 while keeping its sign.
   if (!isNum(expected.deltaAKm) || (expected.sign !== 1 && expected.sign !== -1) ||
@@ -722,7 +734,7 @@ function jobPath(jobId: string) {
 }
 
 /** GET /jobs/{id} for a screening job. One bounded request; the caller schedules the next poll. */
-export async function getScreenJob(jobId: string, expected: { scanId: string; snapshotId: string }): Promise<OrbitJob<ScreenResult>> {
+export async function getScreenJob(jobId: string, expected: ScreenExpectation): Promise<OrbitJob<ScreenResult>> {
   return parseJob(await request("GET", jobPath(jobId), undefined, ORBIT_TIMEOUTS.job), jobId, "screen", v => parseScreenResult(v, expected));
 }
 

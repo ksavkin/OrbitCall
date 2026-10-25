@@ -70,7 +70,7 @@ const doneJob = (result: unknown, over: Record<string, unknown> = {}) => job({
   status: "completed", phase: "done", progress: 1, finishedAt: "2026-10-25T00:00:20Z", resultRef: "jobs/screen-scan-1.json#result",
   counters: counts, coverage: fullCoverage, result, ...over,
 });
-const expectScreen = { scanId: "scan-1", snapshotId: SNAP };
+const expectScreen = { scanId: "scan-1", snapshotId: SNAP, evidenceVersion: EV };
 
 describe("configuration and transport", () => {
   it("refuses to call anything without a URL and token", async () => {
@@ -240,6 +240,22 @@ describe("GET /jobs/{id} for a screen", () => {
     expect(done.result?.events).toEqual([]);
   });
 
+  it("accepts the service's cached answer with docked bodies, co-located pairs and attached objects", async () => {
+    // screen.py: a docked cluster is one event with the other bodies attached; the primary lists its own docked
+    // bodies; a cached answer has runtimeS 0 and the original runtime beside it.
+    const cached = {
+      ...screenResult, cached: true, runtimeS: 0, computedRuntimeS: 18.2,
+      dockedBodies: { [ISS]: [ISS, DOCKED] }, events: [{ ...event, attachedObjectIds: ["48275"] }],
+      coLocated: [{ objectA: ISS, objectB: DEB, minDistanceKm: 0.08 }],
+      counts: { ...counts, eventsFound: 1 }, objects: { ...screenResult.objects, [DEB]: debris },
+    };
+    mockFetch(json(doneJob(cached)));
+    const done = await getScreenJob("screen-scan-1", expectScreen);
+    expect(done.result?.cached).toBe(true);
+    expect(done.result?.events[0].attachedObjectIds).toEqual(["48275"]);
+    expect(done.result?.coLocated).toHaveLength(1);
+  });
+
   it("accepts a result that timed out and says so", async () => {
     const timedOut = { ...fullCoverage, complete: false, timedOut: true };
     mockFetch(json(doneJob({ ...screenResult, coverage: timedOut }, { coverage: timedOut })));
@@ -266,6 +282,11 @@ describe("GET /jobs/{id} for a screen", () => {
   it.each([
     ["a result for another scan", doneJob({ ...screenResult, scanId: "scan-2" })],
     ["a result for another snapshot", doneJob({ ...screenResult, snapshotId: "gp-old" })],
+    ["a result for another evidence version", doneJob({ ...screenResult, evidenceVersion: "ev-6" })],
+    ["an event without a primary", doneJob({ ...screenResult, events: [{ ...event, primaries: [] }] })],
+    ["a running job that never started", job({ startedAt: null })],
+    ["a completed job without a finish time", doneJob(screenResult, { finishedAt: null })],
+    ["a co-located pair whose object has no classification", doneJob({ ...screenResult, coLocated: [{ objectA: ISS, objectB: DEB, minDistanceKm: 0.08 }] })],
     ["completed without a result", job({ status: "completed", phase: "done" })],
     ["failed without an error", job({ status: "failed", phase: "failed" })],
     ["running with a result", job({ result: screenResult })],
@@ -466,6 +487,7 @@ describe("POST /candidates", () => {
     ["a pass flag that disagrees with the miss", { ...response, candidates: [{ ...weak, passesPairThreshold: true }] }],
     ["a candidate not marked indicative", { ...response, candidates: [{ ...maneuver, indicative: false }] }],
     ["a rank that is not a positive integer", { ...response, candidates: [{ ...maneuver, rank: 0 }] }],
+    ["a grid out of rank order", { ...response, candidates: [weak, maneuver] }],
     ["a pair with a SIM object reported as real", { ...response, objectB: "SIM-0001", objects: { ...response.objects, "SIM-0001": sim } }],
     ["objects that omit one of the pair", { ...response, objects: { [ISS]: response.objects[ISS] } }],
   ])("rejects %s", async (_, body) => {
@@ -591,6 +613,7 @@ describe("POST /verify", () => {
     ["an expectation whose sign contradicts the burn direction", { ...consistent, expected: { deltaAKm: -0.09, sign: -1 } }],
     ["an expectation whose sign contradicts its value", { ...consistent, expected: { deltaAKm: 0.09, sign: -1 } }],
     ["a label that contradicts the verdict", { ...consistent, label: "awaiting verification data" }],
+    ["a replay verdict for live evidence", { ...consistent, kind: "replay" }],
     ["an element set count that disagrees with the series", { ...consistent, elementSetCount: 9 }],
     ["a series point without a semi-major axis", { ...consistent, series: [{ epochUtc: "2026-10-24T06:00:00Z" }, base.series[1]] }],
     ["an unlabeled verdict", { ...consistent, simulated: "no" }],
