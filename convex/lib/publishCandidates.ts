@@ -149,6 +149,109 @@ export function sharedMoverEventIds(cards: Candidate[], sharedMovers: SharedMove
 export const sameCards = (cards: Candidate[], current: PublishInput["currentCards"]) =>
   cards.length === current.length && cards.every((c, i) => c.candidateId === current[i].candidateId && c.revision === current[i].revision);
 
+/** Exact, deterministic constraints extracted from original human lines, never from translated/model prose.
+ * Unsupported language stays a clarification; it is not permission to discard a hard constraint. */
+export type DiscussionConstraint =
+  | { objectId: string; kind: "only_mover" | "cannot_move" }
+  | { objectId: string; kind: "after" | "before"; timeMs: number }
+  | { objectId: string; kind: "blocked_window"; startMs: number; endMs: number }
+  | { objectId: string; kind: "min_delta_v" | "max_delta_v"; deltaVMs: number }
+  | { objectId: string; kind: "direction"; direction: "prograde" | "retrograde" };
+
+const UTC = "(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z)";
+const DECIMAL = "(\\d+(?:\\.\\d+)?)";
+const clarify = (): never => { throw new ConvexError({ code: "CLARIFICATION_REQUIRED",
+  message: "Clarify the requested mover, UTC burn window, delta-v in m/s or prograde/retrograde direction. The existing options have not changed." }); };
+function utcMs(text: string): number {
+  const ms = Date.parse(text);
+  if (!Number.isFinite(ms) || wholeSecondUtc(ms) !== text) return clarify();
+  return ms;
+}
+
+/** A deliberately small whole-clause grammar. Partial regex matches would lose negations and exceptions.
+ * Multiple independent clauses use semicolons. Dates must include the date, seconds and UTC Z; relative or
+ * local times, translations, hypotheticals, mixed prose and unsupported constraints require clarification. */
+export function parseDiscussionConstraints(text: string, objectId: string, pair: string[]): DiscussionConstraint[] {
+  if (text.length > 2000 || !pair.includes(objectId)) return clarify();
+  const clauses = text.trim().replace(/[.!]$/, "").split(/\s*;\s*/);
+  if (!clauses.length || clauses.length > 8 || clauses.some(c => !c)) return clarify();
+  return clauses.map(original => {
+    const clause = original.trim().replace(/^(?:please |we |i |our spacecraft )/i, "");
+    let m: RegExpMatchArray | null;
+    if ((m = clause.match(/^move ([A-Za-z0-9-]+) only$/i)) || (m = clause.match(/^only ([A-Za-z0-9-]+) (?:may|can) (?:move|maneuver)$/i))) {
+      // A company states its own restrictions. It cannot impose an exclusive maneuver on someone else's object.
+      if (m[1] !== objectId) return clarify();
+      return { objectId, kind: "only_mover" };
+    }
+    if (/^(?:cannot|can't) (?:move|maneuver)$/i.test(clause)) return { objectId, kind: "cannot_move" };
+    if ((m = clause.match(new RegExp(`^(?:burn after|maneuver after|cannot maneuver before|can't maneuver before) ${UTC}$`, "i")))) {
+      return { objectId, kind: "after", timeMs: utcMs(m[1]) + (/^(?:burn|maneuver) after/i.test(clause) ? 1 : 0) };
+    }
+    if ((m = clause.match(new RegExp(`^(?:burn before|maneuver before|cannot maneuver after|can't maneuver after) ${UTC}$`, "i")))) {
+      return { objectId, kind: "before", timeMs: utcMs(m[1]) - (/^(?:burn|maneuver) before/i.test(clause) ? 1 : 0) };
+    }
+    if ((m = clause.match(new RegExp(`^(?:cannot|can't) maneuver between ${UTC} and ${UTC}$`, "i")))) {
+      const startMs = utcMs(m[1]), endMs = utcMs(m[2]);
+      if (endMs <= startMs) return clarify();
+      return { objectId, kind: "blocked_window", startMs, endMs };
+    }
+    if ((m = clause.match(new RegExp(`^delta-v (at most|at least) ${DECIMAL} m/s$`, "i")))) {
+      const deltaVMs = Number(m[2]);
+      if (!Number.isFinite(deltaVMs) || deltaVMs <= 0) return clarify();
+      return { objectId, kind: m[1].toLowerCase() === "at most" ? "max_delta_v" : "min_delta_v", deltaVMs };
+    }
+    if ((m = clause.match(/^use (prograde|retrograde)(?: direction)?$/i))) {
+      return { objectId, kind: "direction", direction: m[1].toLowerCase() as "prograde" | "retrograde" };
+    }
+    return clarify();
+  });
+}
+
+/** Filter the full numerical grid BEFORE chooseOrder/mapCandidates truncate to four cards. Wait retains its
+ * slot and never counts as approval; constraints concern maneuvers and do not manufacture a safe wait outcome. */
+export function filterDiscussionGrid(response: CandidatesResponse, constraints: DiscussionConstraint[]): CandidatesResponse {
+  return { ...response, candidates: response.candidates.filter(c => constraints.every(rule => {
+    if (rule.kind === "only_mover") return c.movingObjectId === rule.objectId;
+    if (c.movingObjectId !== rule.objectId) return true;
+    switch (rule.kind) {
+      case "cannot_move": return false;
+      case "after": return Date.parse(c.burnTimeUtc!) >= rule.timeMs;
+      case "before": return Date.parse(c.burnTimeUtc!) <= rule.timeMs;
+      case "blocked_window": return Date.parse(c.burnTimeUtc!) < rule.startMs || Date.parse(c.burnTimeUtc!) > rule.endMs;
+      case "max_delta_v": return c.deltaVMs! <= rule.deltaVMs;
+      case "min_delta_v": return c.deltaVMs! >= rule.deltaVMs;
+      case "direction": return c.direction === rule.direction;
+    }
+  })) };
+}
+
+/** Changed discussion is part of the immutable revision's assumptions. A requested card retains its identity
+ * when replaced by a newly calculated burn; earlier published revisions and their decisions stay historical. */
+export function discussionCards(response: CandidatesResponse, input: PublishInput, eventId: string, nowMs: number,
+  constraints: DiscussionConstraint[], targetCandidateId: string | null, discussionKey: string): Candidate[] {
+  const cards = cardsFor(filterDiscussionGrid(response, constraints), input, eventId, nowMs);
+  // Preserve identities assigned by an earlier discussion revision even when a subsequent Host request merely
+  // repeats the same restriction without naming a card. Otherwise each follow-up would create another plan.
+  for (const card of cards) {
+    const current = input.previous.find(p => input.currentCards.some(c => c.candidateId === p.candidateId && c.revision === p.revision) &&
+      p.kind === card.kind && p.movingObjectId === card.movingObjectId && p.burnTimeUtc === card.burnTimeUtc &&
+      p.deltaVMs === card.deltaVMs && p.direction === card.direction);
+    if (current) card.candidateId = current.candidateId;
+  }
+  const target = targetCandidateId && input.previous.filter(c => c.candidateId === targetCandidateId).sort((a, b) => b.revision - a.revision)[0];
+  if (target && !cards.some(c => c.candidateId === target.candidateId)) {
+    const replacement = cards.find(c => c.kind === target.kind);
+    if (replacement) replacement.candidateId = target.candidateId;
+  }
+  return cards.map(card => {
+    const revised = { ...card, assumptions: [...card.assumptions.slice(0, MAX_ASSUMPTIONS - 1), `Discussion input: ${discussionKey}.`] };
+    const previous = input.previous.filter(c => c.candidateId === revised.candidateId).sort((a, b) => b.revision - a.revision)[0];
+    const equal = previous && (Object.keys(revised) as (keyof Candidate)[]).every(k => k === "revision" || JSON.stringify(revised[k]) === JSON.stringify(previous[k]));
+    revised.revision = previous ? previous.revision + (equal ? 0 : 1) : 1;
+    return revised;
+  });
+}
+
 /** A code and message safe to return: orbit errors carry the client's own text; Convex errors carry ours. */
 export function publishFailure(error: unknown): { status: "failed"; code: string; message: string } {
   if (error instanceof OrbitServiceError) return { status: "failed", ...orbitFailure(error) };
