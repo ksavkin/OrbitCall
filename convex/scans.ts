@@ -171,7 +171,8 @@ export const save=internalMutation({args:{...scanArgs,leaseAt:v.number(),job:v.a
     reasons:[...result.coverage.reasons,...[...publicationExclusions].map(([reason,count])=>({reason,count}))],missingPrimaryIds:result.missingPrimaryIds},finishedAt:Date.now(),updatedAt:Math.max(Date.now(),r.updatedAt)});
   // Scheduled, so it runs only if this commit succeeds, and Tiger (or a refused observation) can never undo it.
   // The lease fence above stops a re-delivered save before here; the observation key (event, run, source, metric,
-  // snapshot, scan start) makes any repeat a no-op. At most 1000 events, within the per-mutation scheduling limit.
+  // snapshot, scan start) makes any repeat a no-op. At most 1000 events (cap above), assumed to fit Convex's per-mutation
+  // scheduling limit (1000 per its limits documentation; not checked against the installed package).
   for(const o of observations) await ctx.scheduler.runAfter(0,internal.history.recordObservation,{eventId:o.eventId,observation:{
    observedAt:isoUtc(r.fromMs),source:o.simulated?"simulated":"celestrak_gp",metric:"missKm",value:o.missKm,
    evidenceVersion:r.snapshotId,simulated:o.simulated,runId:o.simulated?r.demoRunId:null}});
