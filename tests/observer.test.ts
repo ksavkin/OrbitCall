@@ -221,3 +221,26 @@ describe("observer access and allowlist", () => {
     expect(text).not.toMatch(/userId|companyId|tokenIdentifier|email|canAct|mySide|myTurn|approveUrl|manifest|observerUserId/);
   });
 });
+
+describe("observer event cap", () => {
+  it("reads at most six whole events and reports a seventh as truncated", async () => {
+    const { t, run, eventId, userId, as } = await setup();
+    await t.mutation(grant, { demoRunId: run, userId });
+    const { redEvent } = await import("../fixtures/events");
+    // Distinct TCAs, so the fixture's same-encounter dedupe keeps each event apart.
+    const addEvent = async (hours: number) => {
+      const id = await insertEvent(t, { ...redEvent, tcaUtc: new Date(Date.parse("2026-11-01T00:00:00Z") + hours * 3600_000).toISOString() });
+      await t.run(ctx => ctx.db.patch(id, { demoRunId: run }));
+      return id;
+    };
+    const ids = [eventId];
+    for (let i = 1; i < 6; i++) ids.push(await addEvent(i));
+    const six = await as().query(view, { demoRunId: run });
+    expect(six.events.map((e: { eventId: string }) => e.eventId)).toEqual(ids);
+    expect(six.truncated).toBe(false);
+    await addEvent(6);
+    const seven = await as().query(view, { demoRunId: run });
+    expect(seven.events).toEqual(six.events);
+    expect(seven.truncated).toBe(true);
+  });
+});
