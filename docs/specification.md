@@ -590,6 +590,7 @@ Counter uses `messages.send`, optionally referencing the selected proposal/revis
 | `summary.edit` | mutation | `{ eventId, proposalId, baseRevision, changes: Partial<Pick<SummaryForm, "movingSide" \| "burnTimeUtc" \| "deltaVMs" \| "direction" \| "note">> }` → `{ accepted: true }` | The backend recomputes the numbers and publishes a new revision; required approvals reset to `pending`. `STALE_REVISION` if `baseRevision` is old |
 | `agents.rerun` | mutation | `{ eventId }` → `null` | Retries a stuck agent step; cannot duplicate a schedule entry or revive approvals [AGT-9] |
 | `call.join` | action | `{ roomId }` → `{ serverUrl, token, roomName, identity, language }` | `operator` with authorized room membership from an assigned linked event; `FEATURE_DISABLED` unless `voice`. Section 5 |
+| `call.hostSpeech.speak` | internal action | `{ roomId, hostRunId, text }` → `{ status: "sent" \| "failed" \| "no_listeners" \| "disabled" \| "rejected", httpStatus?, id?, reason? }` | Server only. `text` must be a summary or clarification of a succeeded host run of this open room; sent to the worker as a LiveKit server data packet (topic `orbit.host-speech`) only while someone is in the call. Writes no table and never approves. Section 5 |
 | `maneuvers.get` | query | `{ eventId }` → `Maneuver \| null` | Diff before approval, re-screen and commit after [ROOM-8, ROOM-9] |
 | `history.series` | query | `{ eventId }` → `{ atUtc, pc: number \| null, missKm, source: SourceName }[]` | Authorized cached Tiger Data observations only, no forecast. A scheduled server action performs the SQL query/export and publishes the versioned cache [ROOM-10] |
 | `verifications.get` | query | `{ eventId }` → `Verification \| null` | [Q-8, VER-2] |
@@ -688,10 +689,10 @@ The room's chat is always there; the call is optional, like a Discord channel.
 2. The client connects with the LiveKit JS client, publishes its microphone, and calls `rooms.setInCall({ roomId, inCall: true })`. Disconnect clears that user's room presence.
 3. The translation worker (Python on DigitalOcean) uses Grok STT, protects values, translates with Claude, restores/checks them, then uses Cartesia for EN/ZH and Grok TTS for RU. It listens only to original human tracks and publishes:
    - `tr:<lang>:<identity>` — the translated voice of each speaker, one track per listener language;
-   - `host:<lang>` — the Coordination Host's voice.
+   - `host:<lang>` — the Coordination Host's voice, from a second worker connection with identity `host`, whose tracks the worker never transcribes. It speaks a checked English text of a succeeded host run (`call.hostSpeech.speak`): English listeners hear it as is, the others a Claude translation with protected values; a language whose translation fails its check is not voiced. Host speech plays regardless of decision turns and writes no phrase rows.
 4. The client plays:
    - the `tr:<myLang>:*` tracks of the other speakers;
-   - the `host:<myLang>` track;
+   - the `host:<myLang>` track, only from the identity `host` or `host-*`;
    - the raw microphone of a speaker only when they speak the viewer's language.
 5. Captions are not read from LiveKit. The worker writes each phrase to Convex as a `voice` message with the original and translations, and the client shows it through `messages.list` [LANG-5].
 6. When the last participant leaves the call, the Coordination Host posts a room summary (`kind: "summary"`) and room members get a notification [ROOM-13]. Each linked incident retains its own selected revision and required approval form. Only `approvals.approve` records approval. Veto and conversational counters do not approve, and neither does speech or the summary.
