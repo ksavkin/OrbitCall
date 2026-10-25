@@ -1,6 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import { query, internalMutation } from "./_generated/server";
 import { requireUser } from "./session";
+import { inputKey } from "./lib/analyst";
+import { loadFacts } from "./lib/events";
 
 // Called observer.publicView because issue #6 allocates this module; the frontend adapter is Round 3.
 // A provisioned observer role alone is insufficient. The server grants one specific run in its scalar manifest.
@@ -22,28 +24,42 @@ export const publicView=query({args:{demoRunId:v.id("demoRuns")},handler:async(c
   const [a,b,selection,proposals,approvals,links,verifications]=await Promise.all([
    ctx.db.get(e.objectAId),ctx.db.get(e.objectBId),ctx.db.query("selections").withIndex("by_event",q=>q.eq("eventId",e._id)).unique(),
    ctx.db.query("proposals").withIndex("by_event",q=>q.eq("eventId",e._id)).take(5),
-   ctx.db.query("approvals").withIndex("by_event_current",q=>q.eq("eventId",e._id).eq("current",true)).take(21),
+   ctx.db.query("approvals").withIndex("by_event_current",q=>q.eq("eventId",e._id).eq("current",true)).order("desc").take(21),
    ctx.db.query("maneuverEvents").withIndex("by_event",q=>q.eq("eventId",e._id)).take(21),
    ctx.db.query("verifications").withIndex("by_event",q=>q.eq("eventId",e._id)).order("desc").take(21),
   ]);
   truncated ||= proposals.length>4 || approvals.length>20 || links.length>20 || verifications.length>20;
+  const set=await ctx.db.query("candidateSets").withIndex("by_event",q=>q.eq("eventId",e._id)).unique();
+  const currentSet=set && set.state!=="closed" && set.evidenceKey===inputKey(await loadFacts(ctx,e)) ? set : null;
   const cards=[];
   for(const p of proposals.slice(0,4)) {
    if(p.demoRunId!==demoRunId) continue;
    const revision=await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision",q=>q.eq("proposalId",p._id).eq("revision",p.latestRevision)).unique();
    const c=revision&&await ctx.db.get(revision.candidateRevisionId);
-   if(c && c.eventId===e._id) cards.push({proposalId:p._id,candidateId:p.candidateId,revision:p.latestRevision,label:p.label,
+   if(c && c.eventId===e._id && revision?.eventId===e._id && c.candidateId===p.candidateId && c.revision===p.latestRevision && currentSet?.candidateRevisionIds.includes(c._id)) cards.push({proposalId:p._id,candidateId:p.candidateId,revision:p.latestRevision,label:p.label,
     kind:c.kind,movingObjectId:c.movingObjectId,burnTimeUtc:c.burnTimeUtc,deltaVMs:c.deltaVMs,direction:c.direction,missAfterKm:c.missAfterKm,simulated:c.simulated});
   }
-  const required=e.requiredApprovalSides??[], valid=new Set<string>();
-  for(const approval of approvals) {
+  const required=e.requiredApprovalSides??[], valid=new Set<string>(), seen=new Set<string>();
+  for(const approval of approvals.slice(0,20)) {
+   // A newer veto/pending row dominates an older current approval, even during a partial migration.
+   if(seen.has(approval.side)) continue;
+   seen.add(approval.side);
+   if(!currentSet || currentSet.reviewRequired || !["bilateral","unilateral_debris"].includes(e.workflow??"") || approvals.length>20) continue;
    if(approval.status!=="approved"||approval.demoRunId!==demoRunId||approval.proposalId!==selection?.proposalId||approval.revision!==selection.revision||
     approval.selectionGeneration!==selection.generation||approval.approvalRuleVersion!==e.approvalRuleVersion||!required.includes(approval.side)) continue;
    const approver=await ctx.db.get(approval.userId), object=approval.side==="A"?a:b;
    if(!approver||approver.role!=="operator"||approver.companyId!==approval.companyId||!object)continue;
    const owner=await ctx.db.query("satelliteOwners").withIndex("by_object",q=>q.eq("objectId",object.objectId)).unique();
    const assignment=await ctx.db.query("fleetAssignments").withIndex("by_user_object",q=>q.eq("userId",approver._id).eq("objectId",object.objectId)).unique();
-   if(owner?.companyId===approval.companyId&&assignment?.active)valid.add(approval.side);
+   const company=approval.side==="A"?currentSet.companyAId:currentSet.companyBId;
+   if(owner?.companyId!==approval.companyId || company!==approval.companyId || !assignment?.active) continue;
+   if(approval.trajectoryPlanId) {
+    const plan=await ctx.db.get(approval.trajectoryPlanId);
+    if(!plan || plan.demoRunId!==demoRunId || plan.planVersion!==approval.trajectoryPlanVersion ||
+     ["superseded","review_required"].includes(plan.state) || !plan.affectedEventIds.includes(e._id) ||
+     !plan.eventRefs.some(r=>r.eventId===e._id && r.proposalId===approval.proposalId && r.revision===approval.revision && r.selectionGeneration===approval.selectionGeneration)) continue;
+   } else if(approval.trajectoryPlanVersion!==null) continue;
+   valid.add(approval.side);
   }
   const selected=cards.find(c=>c.proposalId===selection?.proposalId && c.revision===selection.revision)??null;
   const jobs=[];
