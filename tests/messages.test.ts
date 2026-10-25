@@ -164,6 +164,37 @@ describe("messages", () => {
       .toEqual([{ id: hostRunId, roomId, trigger: "final_message", status: "running" }]);
   });
 
+  it("does not start a second host run for the host's own agent lines", async () => {
+    const { t, roomId } = await seed();
+    await as(t, "ana").mutation(send, { roomId, text: "We can move 0.2 m/s" });
+    const [job] = await hostRequests(t);
+    const args = job.args[0] as { roomId: Id<"rooms">; trigger: "final_message" };
+    const hostRunId = await t.mutation(internal.hostTriggers.request, args);
+    // Host and second-model lines carry no company, so they never change the host's input version (lib/hostContext.ts).
+    await t.run(async ctx => {
+      for (const role of ["coordination_host", "second_model"] as const) {
+        await ctx.db.insert("messages", {
+          roomId, eventId: null, author: { kind: "agent", role, companyId: null }, kind: "text", originalText: `${role} line`,
+          originalLang: "en", translations: {}, translationStatus: {}, values: [], refs: {}, form: null,
+          demoRunId: null, simulated: false, createdAt: Date.now(),
+        });
+      }
+    });
+    expect(await hostRequests(t)).toHaveLength(1);
+    expect(await t.mutation(internal.hostTriggers.request, args)).toBe(hostRunId);
+    expect(await t.run(async ctx => (await ctx.db.query("hostRuns").collect()).length)).toBe(1);
+  });
+
+  it("turns a request queued before the room closed into a no-op", async () => {
+    const { t, roomId, crossId } = await seed();
+    await as(t, "ana").mutation(send, { roomId, text: "agreed" });
+    const [job] = await hostRequests(t);
+    await t.run(ctx => ctx.db.patch(crossId, { status: "approved" }));
+    await t.mutation(closeIfResolved, { eventId: crossId });
+    expect(await t.mutation(internal.hostTriggers.request, job.args[0] as { roomId: Id<"rooms">; trigger: "final_message" })).toBeNull();
+    expect(await t.run(async ctx => (await ctx.db.query("hostRuns").collect()).length)).toBe(0);
+  });
+
   it("schedules no host request for a rejected send or a system line", async () => {
     const { t, roomId, crossId, eastId } = await seed();
     const before = (await hostRequests(t)).length;
