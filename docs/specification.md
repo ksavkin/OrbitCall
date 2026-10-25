@@ -184,8 +184,11 @@ interface EventRow {
 interface ReferenceCheck {
   source: "socrates";
   referenceRunUtc: ISODate;          // the SOCRATES run the event was compared with
-  status: "matched"                  // same canonical pair, reference TCA within 60 s of ours
-        | "data_differs"             // same pair, but their element-set epochs differ from ours by more than 45 s
+  // Checked in this order, as GET /validation does (contract.md: matchToleranceS 60, epochToleranceS 45):
+  status: "data_differs"             // same canonical pair, but either object's element-set epoch differs from ours by
+                                     // more than 45 s (SOCRATES epoch = its TCA − DSE); not a confirmation, not a miss
+        | "matched"                  // same pair and same element sets (both epochs within 45 s), TCA within 60 s
+        | "tca_mismatch"             // same pair and same element sets, but TCA more than 60 s apart: a real disagreement
         | "not_listed";              // the pair is not in that SOCRATES run
   referenceTcaUtc: ISODate | null;   // null when not_listed
   referenceMissKm: number | null;
@@ -195,7 +198,7 @@ interface ReferenceCheck {
 }
 ```
 
-A reference match is provenance, not a confidence score. "Not in SOCRATES" is not an error: their run may be older than our snapshot, or the pair may fall outside their thresholds.
+A reference match is provenance, not a confidence score. "Not in SOCRATES" is not an error: their run may be older than our snapshot, or the pair may fall outside their thresholds. In real mode our OMM snapshot (gp-20261024T2134Z) is about 20 h newer than the SOCRATES run (socrates-20261024T0147Z), so most listed pairs come out `data_differs`; that is expected, and why `/validation` is measured on the TLE snapshot closest to the SOCRATES run.
 
 ### 2.3 Room, proposals, approvals
 
