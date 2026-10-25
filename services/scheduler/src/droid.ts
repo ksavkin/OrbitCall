@@ -31,7 +31,10 @@ export async function runDroid(input: Parameters<Provider>[0], sessionFactory = 
     const mcpTools = await session.listMcpTools();
     if (mcpTools.length !== 1 || mcpTools[0].serverName !== serverName || mcpTools[0].name !== toolName || !mcpTools[0].isEnabled) return fail("FACTORY_TOOL_CONTRACT", "Factory did not expose the restricted schedule tool.");
     const tools = await session.listTools();
-    const allowed = tools.filter(t => t.source === "mcp");
+    // Droid 0.249.0 omits the optional source field. Bind the tool to the exact
+    // server/name identity already verified above, never to an arbitrary MCP tool.
+    const expectedToolId = `${serverName}___${toolName}`;
+    const allowed = tools.filter(t => t.id === expectedToolId && (t.source === undefined || t.source === "mcp"));
     if (allowed.length !== 1) return fail("FACTORY_TOOL_CONTRACT", "Factory tool discovery is ambiguous.");
     await session.updateSettings({ disabledToolIds: tools.filter(t => t.id !== allowed[0].id).map(t => t.id) });
     const checked = await session.listTools();
