@@ -8,6 +8,7 @@ import { findObject, findEncounter, ingestEncounter, isoUtc } from "./lib/events
 import { ommSnapshotId } from "./lib/publishCandidates";
 import { startScreen, getScreenJob, orbitFailure, type OrbitJob, type ScreenResult } from "./lib/orbitClient";
 import { internal } from "./_generated/api";
+import { sourceName } from "./lib/validators";
 
 // Round 2: durable request reservation and bounded polling. Round 3: each encounter a committed scan publishes is
 // queued as one observation for the Tiger history (history.recordObservation, roadmap §10, spec §3.4).
@@ -169,19 +170,32 @@ export const save=internalMutation({args:{...scanArgs,leaseAt:v.number(),job:v.a
   await ctx.db.patch(scanId,{status:"completed",phase:"done",progress:1,jobId:job.jobId,counts:result.counts,
    coverage:{complete:result.coverage.complete,catalogScope:result.coverage.catalogScope,excludedObjects:result.coverage.excludedObjects,
     reasons:[...result.coverage.reasons,...[...publicationExclusions].map(([reason,count])=>({reason,count}))],missingPrimaryIds:result.missingPrimaryIds},finishedAt:Date.now(),updatedAt:Math.max(Date.now(),r.updatedAt)});
-  // Scheduled, so it runs only if this commit succeeds, and Tiger (or a refused observation) can never undo it.
-  // The lease fence above stops a re-delivered save before here; the observation key (event, run, source, metric,
-  // snapshot, scan start) makes any repeat a no-op. At most 1000 events (cap above), assumed to fit Convex's per-mutation
-  // scheduling limit (1000 per its limits documentation; not checked against the installed package).
-  for(const o of observations) await ctx.scheduler.runAfter(0,internal.history.recordObservation,{eventId:o.eventId,observation:{
-   observedAt:isoUtc(r.fromMs),source:o.simulated?"simulated":"celestrak_gp",metric:"missKm",value:o.missKm,
-   evidenceVersion:r.snapshotId,simulated:o.simulated,runId:o.simulated?r.demoRunId:null}});
+  // save schedules one follow-up mutation, not one job per observation. A scan can publish up to 1000 events, which
+  // is Convex's per-mutation scheduling limit; scheduling them here would throw and roll the whole commit back, and
+  // the scan would loop. recordHistory runs only after this commit, so a refused observation can no longer undo the
+  // scan. The lease fence above stops a re-delivered save before here; the observation key (event, run, source,
+  // metric, snapshot, scan start) makes any repeat a no-op.
+  if(observations.length) await ctx.scheduler.runAfter(0,internal.scans.recordHistory,{observations:observations.map(o=>({
+   eventId:o.eventId,observation:{observedAt:isoUtc(r.fromMs),source:o.simulated?"simulated" as const:"celestrak_gp" as const,metric:"missKm",
+    value:o.missKm,evidenceVersion:r.snapshotId,simulated:o.simulated,runId:o.simulated?r.demoRunId:null}}))});
  } else {
   const counts={...r.counts}; for(const k of Object.keys(counts) as (keyof typeof counts)[]) if(Number.isFinite(job.counters[k])) counts[k]=job.counters[k];
   await ctx.db.patch(scanId,{status:"running",phase:job.phase,progress:job.progress,jobId:job.jobId,counts,updatedAt:Math.max(Date.now(),r.updatedAt)});
   await ctx.scheduler.runAfter(5000,runRef,{scanId});
  }
 }});
+// Split from save so the per-observation jobs are not part of the scan-commit transaction.
+export const recordHistory=internalMutation({
+ args:{observations:v.array(v.object({eventId:v.id("events"),observation:v.object({
+  observedAt:v.string(),source:sourceName,metric:v.string(),value:v.union(v.number(),v.null()),
+  evidenceVersion:v.string(),simulated:v.boolean(),runId:v.union(v.id("demoRuns"),v.null()),
+ })}))},
+ returns:v.null(),
+ handler:async(ctx,{observations})=>{
+  for(const item of observations) await ctx.scheduler.runAfter(0,internal.history.recordObservation,item);
+  return null;
+ },
+});
 export const run=internalAction({args:runArgs,handler:async(ctx,{scanId,recovery})=>{
  const claimed=await ctx.runMutation(claimRef,{scanId,...(recovery ? {recovery} : {})}) as {run:Doc<"scanRuns">;leaseAt:number}|null; if(!claimed) return;
  const {run:r,leaseAt}=claimed;
