@@ -211,8 +211,12 @@ export const finish = internalMutation({
     // Delivery begins after this transaction commits. The voice entry rechecks the succeeded run,
     // open room/demo and current listeners; a provider failure cannot undo the written conversation.
     // Worker delivery IDs dedupe the same run/text, including a repeated scheduled delivery.
-    if (checked && hostOutput) for (const text of new Set(checkedTexts(hostOutput))) {
-      if (text.trim()) await ctx.scheduler.runAfter(0, speakRef, { roomId: run.roomId, hostRunId, text });
+    if (checked && hostOutput && checkedTexts(hostOutput).some(text => text.trim())) {
+      const room = (await ctx.db.get(run.roomId))!;
+      const expectedInputVersion = (await buildHostContext(ctx, room, run.trigger)).inputVersion;
+      for (const text of new Set(checkedTexts(hostOutput))) {
+        if (text.trim()) await ctx.scheduler.runAfter(0, speakRef, { roomId: run.roomId, hostRunId, text, expectedInputVersion });
+      }
     }
     return null;
   },

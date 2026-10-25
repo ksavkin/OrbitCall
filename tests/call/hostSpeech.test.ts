@@ -5,6 +5,7 @@ import { anyApi } from "convex/server";
 import schema from "../../convex/schema";
 import { checkedTexts, HOST_SPEECH_TOPIC } from "../../convex/call/hostSpeech";
 import { STALE_MS } from "../../convex/call/presence";
+import { buildHostContext } from "../../convex/lib/hostContext";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 const api = anyApi as any; // codegen needs a deployment; functions are addressed by path, as tests/call/call.test.ts does
@@ -35,7 +36,7 @@ function stubFetch(status = 200) {
 const decode = (part: string) => JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
 
 interface Seed {
-  t: T; roomId: string; hostRunId: string; demoRunId: string | null; userIds: string[];
+  t: T; roomId: string; hostRunId: string; demoRunId: string | null; userIds: string[]; expectedInputVersion: string;
 }
 
 async function seed(opts: { status?: "running" | "succeeded" | "failed" | "superseded"; demo?: boolean; inCall?: "call" | "room" | "none" } = {}): Promise<Seed> {
@@ -63,13 +64,14 @@ async function seed(opts: { status?: "running" | "succeeded" | "failed" | "super
       await ctx.db.insert("call_presence", { roomId: String(roomId), userId: "u-en", inRoom: true, inCall: true, updatedAt: new Date(now).toISOString() });
     }
     await ctx.db.insert("roomMembers", { roomId, userId, companyId, inRoom: true, inCall: inCall === "room", updatedAt: now });
-    return { roomId: String(roomId), hostRunId: String(hostRunId), demoRunId: demoRunId && String(demoRunId), userIds: [String(userId)] };
+    const expectedInputVersion = (await buildHostContext(ctx, (await ctx.db.get(roomId))!, "summary_requested")).inputVersion;
+    return { roomId: String(roomId), hostRunId: String(hostRunId), demoRunId: demoRunId && String(demoRunId), userIds: [String(userId)], expectedInputVersion };
   });
   return { t, ...ids };
 }
 
 const speak = (s: Seed, text = SUMMARY, over: Record<string, unknown> = {}) =>
-  s.t.action(api.call.hostSpeech.speak, { roomId: s.roomId, hostRunId: s.hostRunId, text, ...over });
+  s.t.action(api.call.hostSpeech.speak, { roomId: s.roomId, hostRunId: s.hostRunId, text, expectedInputVersion: s.expectedInputVersion, ...over });
 
 describe("checked host text", () => {
   it("is the run's summaries and clarification questions, in that order; requested revisions are never spoken", () => {
