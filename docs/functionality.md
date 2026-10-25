@@ -303,7 +303,7 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 - **ROOM-9** Sees the maneuver diff (what will change in the schedule) before approving.
 - **ROOM-10** Sees a chart of historical supplied Pc or miss distance with source timestamps. It contains observations only, without a forecast curve or predicted trend.
 - **ROOM-12** Sees the facts, hard constraints and preferences the agents understood from shared discussion, plus shareable policy outcomes/categories under POL-2, and an explanation of each proposal revision. Can correct those interpretations in the conversation; private policy values are not added to the shared view.
-- **ROOM-13** When a call ends, or when someone asks, the Coordination Host posts a room summary and can read it aloud. Room members receive a notification. Each linked incident shows its own selected candidate revision and approval form. Only its required operators can approve it (ROOM-7, ROOM-14). An accepted edit publishes a checked new revision and resets that incident's affected approvals (ROOM-11). A summary never approves a plan.
+- **ROOM-13** When the last operator leaves the call, or when someone asks, the Coordination Host posts a room summary and can read it aloud. Room members receive a notification. Each linked incident shows its own selected candidate revision and approval form. Only its required operators can approve it (ROOM-7, ROOM-14). An accepted edit publishes a checked new revision and resets that incident's affected approvals (ROOM-11). A summary never approves a plan.
 
 ---
 

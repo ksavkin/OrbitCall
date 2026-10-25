@@ -1,7 +1,8 @@
 // POST /call/phrase: the translation worker writes each phrase here (spec §5 step 5; Convex is the source of truth,
 // livekit-lessons R6). Only the worker calls it: header `x-call-service-token` must equal env CALL_SERVICE_TOKEN.
 // A phrase is upserted by segId while it is recognized, translated and voiced; a higher `rev` wins, an older or equal
-// one is ignored (R10). Route line for convex/http.ts:
+// one is ignored (R10). The write that first makes a phrase final asks the room's Coordination Host for a
+// final_message run (issue #6). Route line for convex/http.ts:
 //   http.route({ path: "/call/phrase", method: "POST", handler: phrase });
 
 import { ConvexError, v } from "convex/values";
@@ -9,6 +10,7 @@ import { makeFunctionReference } from "convex/server";
 import { httpAction, internalMutation } from "../_generated/server";
 import { lang, phraseErrors, protectedValue, translations, translationStatus } from "../schema/call";
 import { callError, nowIso } from "./core";
+import { requestHost } from "./presence";
 
 export const MAX_TEXT = 2000;
 export const MAX_VALUES = 64;
@@ -28,6 +30,9 @@ const phraseArgs = {
 };
 type Phrase = { [K in keyof typeof phraseArgs]: (typeof phraseArgs)[K]["type"] };
 
+// The worker posts rev 1 pending, rev 2 final, rev 3 only when a voice failed afterwards (orbit_voice/pipeline.py).
+const isFinal = (p: Pick<Phrase, "rev" | "translationStatus">) => p.rev >= 2 && !Object.values(p.translationStatus).includes("pending");
+
 export const upsertPhrase = internalMutation({
   args: phraseArgs,
   handler: async (ctx, p) => {
@@ -46,11 +51,14 @@ export const upsertPhrase = internalMutation({
     if (!existing) {
       const at = nowIso();
       await ctx.db.insert("call_phrases", { ...fields, createdAt: at, updatedAt: at });
-      return true;
+    } else {
+      if (existing.roomId !== p.roomId || existing.speaker.identity !== p.speakerIdentity) callError("VALIDATION", "segId belongs to another speaker or room");
+      if (p.rev <= existing.rev) return false; // an older or repeated revision never overwrites a newer one
+      await ctx.db.patch(existing._id, { ...fields, updatedAt: nowIso() });
     }
-    if (existing.roomId !== p.roomId || existing.speaker.identity !== p.speakerIdentity) callError("VALIDATION", "segId belongs to another speaker or room");
-    if (p.rev <= existing.rev) return false; // an older or repeated revision never overwrites a newer one
-    await ctx.db.patch(existing._id, { ...fields, updatedAt: nowIso() });
+    // Once per phrase: revs arrive in any order, so only the applied write that turns it final asks the host; a later
+    // rev 3 (voice failure) or a late rev 1 does not. Scheduled, never inline: the phrase stands whatever the host does.
+    if (isFinal(p) && !(existing && isFinal(existing))) await requestHost(ctx, p.roomId, "final_message");
     return true;
   },
 });
