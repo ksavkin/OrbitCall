@@ -1,0 +1,44 @@
+name: Web checks
+
+on:
+  pull_request:
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    env:
+      # NEXT_PUBLIC_CONVEX_URL stays unset: the app builds without a backend and falls back to
+      # synthetic mode. Offline mode serves the committed snapshots instead of CelesTrak/weather APIs.
+      ORBITCALL_OFFLINE: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      # tsc needs the generated LayoutProps/RouteContext globals in .next/types.
+      - run: npx next typegen
+      - run: npx tsc --noEmit
+      - run: npx eslint src
+      - run: npm run build
