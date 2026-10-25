@@ -1525,7 +1525,12 @@ export class GlobeScene {
     // same pixel-size rule as the instanced shader, so the swap is seamless
     const u = this.satMat.uniforms;
     const dist = this.camera.position.distanceTo(p);
-    const scale = ((u.uPxFocus.value as number) * (u.uPxScale.value as number) * dist) / 4;
+    // Following holds the model large up close (~0.06 units away). Zooming out from there must
+    // shrink it like a real object down to the normal marker size, or it dwarfs the planet.
+    const focusPx = this.following
+      ? Math.max(18, (u.uPxFocus.value as number) * Math.min(1, 0.06 / Math.max(dist, 1e-6)))
+      : (u.uPxFocus.value as number);
+    const scale = (focusPx * (u.uPxScale.value as number) * dist) / 4;
     const sun = u.uSunDir.value as THREE.Vector3;
     const along = p.dot(sun);
     const perp = this.tmp2.copy(sun).multiplyScalar(along).sub(p).length();
