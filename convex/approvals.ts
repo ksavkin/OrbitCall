@@ -8,7 +8,7 @@ import { isResolved } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
 import { workflow } from "./lib/validators";
-import { closeRoomIfResolved, notify } from "./rooms";
+import { closeRoomIfResolved, notify, roomOfEvent } from "./rooms";
 import { scheduleConfig } from "./lib/scheduleClient";
 import { planFor, syncPlans } from "./trajectoryPlans";
 
@@ -115,6 +115,22 @@ export async function noteActor(ctx: MutationCtx, event: Doc<"events">, actor: I
   await ctx.db.patch(existing._id, { lastUpdateSummary: summary, lastUpdateAt: Date.now(), unread: false });
 }
 
+type Values = Record<string, number | string | null>;
+
+/**
+ * One shared audit row for a human decision on a card revision (LOG-2, LOG-3): who, for which side, when, and the
+ * numbers before and after. Selection, approval and veto write it in their own transaction, before any reset the
+ * decision causes. Like a notice it names the card, its revision and side only: never a veto reason (LOG-1, POL-2).
+ */
+export async function logDecision(ctx: MutationCtx, event: Doc<"events">, user: Doc<"users">, side: Side,
+  action: "selected" | "approved" | "vetoed", target: { proposalId: Id<"proposals">; revision: number }, summary: string,
+  before: Values, after: Values) {
+  await ctx.db.insert("log", { eventId: event._id,
+    actor: { kind: "human", userId: user._id, companyId: user.companyId, name: user.name ?? "Operator", side },
+    action, summary, texts: null, before, after, proposalId: target.proposalId, revision: target.revision,
+    roomId: (await roomOfEvent(ctx, event))?._id ?? null, demoRunId: event.demoRunId ?? null, simulated: event.simulated, at: Date.now() });
+}
+
 const planName = async (ctx: MutationCtx, proposalId: Id<"proposals">, revision: number) =>
   `${(await ctx.db.get(proposalId))?.label ?? "The plan"} revision ${revision}`;
 
@@ -146,6 +162,14 @@ export const approve = mutation({
       counted = await countingApprovals(ctx, d.event, d.selection);
     }
     const all = allApproved(d.event, counted);
+    // Logged before consensus closes the room, so the row still names it.
+    if (inserted) {
+      const status = d.event.status ?? "new";
+      await logDecision(ctx, d.event, d.user, d.side, "approved", args,
+        `Side ${d.side} approved ${await planName(ctx, args.proposalId, args.revision)}.${all ? " The plan is agreed." : ""}`,
+        { status }, { status: all ? "approved" : status, selectionGeneration: args.selectionGeneration,
+          approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanVersion: plan?.planVersion ?? null });
+    }
     if (all) {
       // spec §4.1 step 5; the room closes on consensus in the same mutation (rooms.closeRoomIfResolved).
       await ctx.db.patch(d.event._id, { status: "approved", situation: undefined });
@@ -187,6 +211,10 @@ export const veto = mutation({
     await requireTurn(ctx, d);
     // The version this veto rejects; the selection advance below supersedes it and resets the other affected events.
     const vetoed = await planFor(ctx, d.event, d.selection);
+    // The reason stays in the approval row: it is free text and may echo private policy.
+    const plan = await planName(ctx, args.proposalId, args.revision);
+    await logDecision(ctx, d.event, d.user, d.side, "vetoed", args, `Side ${d.side} vetoed ${plan}.`,
+      { status: d.event.status ?? "new", generation: args.selectionGeneration }, { status: "agents", generation: args.selectionGeneration + 1 });
     await advanceSelection(ctx, d.event, { proposalId: args.proposalId, revision: args.revision }, { kind: "human", userId: d.user._id }, "vetoed");
     // History only: a veto never counts as an approval state of the new generation.
     await ctx.db.insert("approvals", {
@@ -196,8 +224,6 @@ export const veto = mutation({
       demoRunId: d.event.demoRunId ?? null, current: false, at: Date.now(),
     });
     await ctx.db.patch(d.event._id, { status: "agents", situation: undefined });
-    // The reason stays in the approval row: it is free text and may echo private policy.
-    const plan = await planName(ctx, args.proposalId, args.revision);
     const summary = `Side ${d.side} vetoed ${plan}. Approvals were reset and the incident is back with the agents.`;
     await notifySides(ctx, d.event, d.event.requiredApprovalSides!, d.user._id, summary);
     await noteActor(ctx, d.event, d.user._id, summary);

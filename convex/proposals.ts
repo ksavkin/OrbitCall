@@ -5,7 +5,7 @@ import { advanceSelection, classifyIfUnset, countingApprovals, currentEvidence, 
 import { isResolved } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
-import { noteActor, notifySides } from "./approvals";
+import { logDecision, noteActor, notifySides } from "./approvals";
 
 // The Decision Center's plan cards and the shared selection (user-flow "App navigation and the decision flow",
 // spec §3.4 proposals.list and rooms.select, ROOM-5, ROOM-11). The spec names the mutation rooms.select; as with
@@ -93,6 +93,9 @@ export const select = mutation({
     }
     // Re-clicking the current card must not advance the generation, or it would reset approvals for no change.
     if (row?.proposalId === proposalId && row.revision === revision) return null;
+    // The expectedGeneration check above makes the next generation known before the selection advances.
+    await logDecision(ctx, event, user, side, "selected", { proposalId, revision }, `Side ${side} selected ${proposal.label} revision ${revision}.`,
+      { generation: expectedGeneration }, { generation: expectedGeneration + 1 });
     await advanceSelection(ctx, event, { proposalId, revision }, { kind: "human", userId: user._id }, "selection_changed");
     // Every operator of a required side hears of a changed selection, including the selector's colleagues: it opens
     // (or restarts) the decision, side A first. The selector's existing row gets the same summary and stays read;
