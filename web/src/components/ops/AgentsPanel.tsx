@@ -3,6 +3,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Maximize2, Minimize2, Workflow, X } from "lucide-react";
 import { useMemo } from "react";
+import { useLive, useRealMode } from "@/lib/backend/live";
+import { isLiveSpan, isOther, stageLabel } from "@/lib/backend/spans";
 import { fmtUsd } from "@/lib/ops/format";
 import { AGENT_ORDER, AGENTS, TOOLS } from "@/lib/ops/roster";
 import { useOps, type AgentView } from "@/lib/ops/store";
@@ -20,20 +22,46 @@ const VIEWS: { id: AgentView; label: string }[] = [
 
 function useRunStats() {
   const spans = useOps((s) => s.spans);
+  const real = useRealMode();
   const now = useNow(1000);
   return useMemo(() => {
     const running = new Set(spans.filter((s) => s.status === "running").map((s) => s.agent));
     const perMin = now ? spans.filter((s) => now - s.t0 < 60_000).length : 0;
-    const cost = spans.reduce((a, s) => a + (s.costUsd ?? 0), 0);
-    const unpriced = spans.some((s) => s.costUsd === null);
-    return { running: running.size, perMin, cost, unpriced };
-  }, [spans, now]);
+    // backend runs record no cost (costUsd is null): "—", never a sum
+    const cost = real ? null : spans.reduce((a, s) => a + (s.costUsd ?? 0), 0);
+    const unpriced = !real && spans.some((s) => s.costUsd === null);
+    // what each unfinished backend run is doing: "Analyst · Model call", "Host · stalled"
+    const live = spans.filter(isLiveSpan).filter((s) => s.output.runStatus === "running");
+    const stages = live.map((s) =>
+      [isOther(s.agent) ? "Other agent" : AGENTS[s.agent].short, s.output.stage && stageLabel(s.output.stage), s.output.stalled && "stalled"]
+        .filter(Boolean)
+        .join(" · "),
+    );
+    const stalled = new Set(live.filter((s) => s.output.stalled).map((s) => s.agent)).size;
+    return { running: running.size, perMin, cost, unpriced, stages, stalled };
+  }, [spans, now, real]);
 }
 
 function Header({ expanded }: { expanded: boolean }) {
   const dev = useOps((s) => s.dev);
+  const real = useRealMode();
+  const failed = useLive((s) => real && !!s.errors.agents);
   const focusAgent = useOps((s) => s.focusAgent);
   const st = useRunStats();
+  const stages = st.stages.length ? (
+    <span className="block">
+      {st.stages.map((line, i) => (
+        <span key={i} className="block">
+          {line}
+        </span>
+      ))}
+    </span>
+  ) : null;
+  const runningCount = (
+    <span className={st.running ? "text-blue" : ""}>
+      <span className={st.running ? "text-blue" : "text-fg"}>{st.running}</span> running
+    </span>
+  );
   return (
     <div className="flex items-center gap-2 px-3 pb-2 pt-3">
       <Workflow size={14} className="text-blue" />
@@ -47,15 +75,26 @@ function Header({ expanded }: { expanded: boolean }) {
             <span className="text-fg">{Object.keys(TOOLS).length}</span> tools
           </span>
         )}
-        <span className={st.running ? "text-blue" : ""}>
-          <span className={st.running ? "text-blue" : "text-fg"}>{st.running}</span> running
-        </span>
+        {stages ? <Tooltip label={stages}>{runningCount}</Tooltip> : runningCount}
+        {st.stalled > 0 && (
+          <Tooltip label={stages}>
+            <span className="text-orange">{st.stalled} stalled</span>
+          </Tooltip>
+        )}
         <Tooltip label="Steps started in the last minute">
           <span>
             <span className="text-fg">{st.perMin}</span>/min
           </span>
         </Tooltip>
-        <Tooltip label={st.unpriced ? "Claude at list price. Grok steps aren't priced yet." : "Claude at list price per token"}>
+        <Tooltip
+          label={
+            st.cost === null
+              ? "Backend runs don't record cost"
+              : st.unpriced
+                ? "Claude at list price. Grok steps aren't priced yet."
+                : "Claude at list price per token"
+          }
+        >
           <span className="text-fg">
             {fmtUsd(st.cost)}
             {st.unpriced && <span className="text-faint">*</span>}
@@ -65,7 +104,7 @@ function Header({ expanded }: { expanded: boolean }) {
       <Tooltip label={expanded ? "Collapse" : "Expand"} hint={expanded ? "Esc" : undefined}>
         <button
           className="icon-btn -mr-1 h-6 w-6"
-          disabled={!dev}
+          disabled={(!dev && !real) || failed}
           onClick={() => {
             sfx.whoosh();
             useOps.getState().set({ agentsExpanded: !expanded });
@@ -142,9 +181,32 @@ function NoBackend() {
   );
 }
 
+/** spans.list or agentLogs.list failed for this case (FORBIDDEN, LIMIT_EXCEEDED, ...). Retry remounts every sync. */
+function RunsError({ message }: { message: string }) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+      <Workflow size={18} className="text-faint" />
+      <div className="mt-2 text-[12px] font-medium">Agent runs unavailable</div>
+      <p className="mt-1 max-w-[240px] text-[11px] leading-[1.5] text-muted">{message}</p>
+      <button
+        className="btn mt-3 h-7 px-3 text-[11px]"
+        onClick={() => {
+          sfx.click();
+          useLive.setState((s) => ({ epoch: s.epoch + 1 }));
+        }}
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
 /** Right-hand agents window on the Conjunctions screen. */
 export function AgentsPanel() {
   const dev = useOps((s) => s.dev);
+  // real mode reads the open case's backend runs (components/live/sync/AgentsSync.tsx); NoBackend is for no client at all
+  const real = useRealMode();
+  const error = useLive((s) => (real ? s.errors.agents : undefined));
   const view = useOps((s) => s.agentView);
   return (
     <motion.aside
@@ -155,7 +217,9 @@ export function AgentsPanel() {
       className="glass pointer-events-auto absolute bottom-[42px] right-2.5 top-[58px] z-20 flex w-[372px] flex-col overflow-hidden rounded-[14px]"
     >
       <Header expanded={false} />
-      {!dev ? (
+      {error ? (
+        <RunsError message={error} />
+      ) : !dev && !real ? (
         <NoBackend />
       ) : (
         <>
@@ -206,7 +270,9 @@ export function AgentsPanel() {
 
 /** Full-screen agent operations view: big graph, live step, trace and log side by side. */
 export function AgentsExpanded() {
-  const open = useOps((s) => s.agentsExpanded && s.dev && (s.tab === "orbit" || s.tab === "decision"));
+  const real = useRealMode();
+  const failed = useLive((s) => real && !!s.errors.agents);
+  const open = useOps((s) => s.agentsExpanded && (s.dev || (real && !failed)) && (s.tab === "orbit" || s.tab === "decision"));
   return (
     <AnimatePresence>
       {open && (
