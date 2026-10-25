@@ -49,6 +49,17 @@ describe("proposals.select", () => {
     expect(await t.run(ctx => ctx.db.system.query("_scheduled_functions").collect())).toEqual([]);
     await as(t, "a").mutation(fn.select, { eventId, proposalId: P2, revision: 1, expectedGeneration: 1 });
     expect((await selection(t, eventId))!.generation).toBe(1);
+    expect(await pick(t, "a", eventId, "P4")).toBe(2);
+  });
+
+  it("lets only the side in turn change the selection while a decision is open", async () => {
+    const { t, eventId } = await seed();
+    await pick(t, "a", eventId, "P2");
+    // A is in turn: B can discuss but not reselect.
+    expect(await code(pick(t, "b", eventId, "P4"))).toBe("INVALID_STATE");
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    // Now B is in turn, so B may move the selection (which resets A's approval) and A may not.
+    expect(await code(pick(t, "a", eventId, "P1"))).toBe("INVALID_STATE");
     expect(await pick(t, "b", eventId, "P4")).toBe(2);
   });
 

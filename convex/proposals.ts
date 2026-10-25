@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireParty, requireReader } from "./lib/operatorAccess";
 import { advanceSelection, classifyIfUnset } from "./lib/approvals";
-import { isResolved } from "./lib/decision";
+import { decisionTurn, isResolved } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
 
@@ -65,9 +65,12 @@ export const select = mutation({
   returns: v.null(),
   handler: async (ctx, { eventId, proposalId, revision, expectedGeneration }) => {
     if (!Number.isSafeInteger(revision) || revision < 1 || !Number.isSafeInteger(expectedGeneration) || expectedGeneration < 0) throw invalid();
-    const { user, candidateSet: set } = await requireParty(ctx, eventId);
+    const { user, candidateSet: set, side } = await requireParty(ctx, eventId);
     const event = await classifyIfUnset(ctx, (await ctx.db.get(eventId))!);
     if (set.state !== "open" || isResolved(event)) throw new ConvexError({ code: "INVALID_STATE", message: "This plan is decided; its selection can no longer change." });
+    // While a decision is open only the side in turn acts, selection included (voice selects, user-flow points 6-7).
+    const { deciding, turn } = await decisionTurn(ctx, event);
+    if (deciding && turn !== side) throw new ConvexError({ code: "INVALID_STATE", message: `It is side ${turn}'s turn to decide.` });
     const row = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     if ((row?.generation ?? 0) !== expectedGeneration) throw new ConvexError({ code: "STALE_REVISION", message: "Selection changed; reload it before selecting." });
     const proposal = await ctx.db.get(proposalId);
