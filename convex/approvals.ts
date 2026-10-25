@@ -34,7 +34,12 @@ async function requirePreview(ctx: MutationCtx, args: Args) {
   const stored = await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
     q.eq("proposalId", args.proposalId).eq("revision", args.revision)).unique();
   const card = stored && await ctx.db.get(stored.candidateRevisionId);
-  if (card?.kind === "maneuver" && stored!.schedulePreviewHash === null) {
+  // A wait card inside a shared plan signs the plan's burn, so it waits for the same diff (recorded on every part).
+  const inPlan = async () => {
+    const event = await ctx.db.get(args.eventId), selection = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", args.eventId)).unique();
+    return !!event && !!selection && !!await planFor(ctx, event, selection);
+  };
+  if (stored && stored.schedulePreviewHash === null && (card?.kind === "maneuver" || (card?.kind === "wait" && await inPlan()))) {
     throw error("INVALID_STATE", "Factory is still preparing this plan's schedule diff; approve once it is shown.");
   }
 }

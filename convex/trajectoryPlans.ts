@@ -133,7 +133,8 @@ async function resetEvent(ctx: MutationCtx, eventId: Id<"events">, reason: Extra
   const s = await selectionOf(ctx, eventId);
   await advanceSelection(ctx, event, s?.proposalId && s.revision !== null ? { proposalId: s.proposalId, revision: s.revision } : null,
     { kind: "agents" }, reason);
-  if (event.active && (reason === "trajectory_refused" || event.status === "approved")) {
+  // An event that already went to monitoring on its wait card decides again: the shared burn now moves past it.
+  if (event.active && (reason === "trajectory_refused" || event.status === "approved" || event.status === "monitoring")) {
     await ctx.db.patch(eventId, { status: reason === "trajectory_refused" ? "agents" : "proposal", situation: undefined });
   }
 }
