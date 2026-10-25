@@ -200,7 +200,7 @@ export function parseDiscussionConstraints(text: string, objectId: string, pair:
       if (!Number.isFinite(deltaVMs) || deltaVMs <= 0) return clarify();
       return { objectId, kind: m[1].toLowerCase() === "at most" ? "max_delta_v" : "min_delta_v", deltaVMs };
     }
-    if ((m = clause.match(/^(?:use|prefer) (prograde|retrograde)(?: direction)?$/i))) {
+    if ((m = clause.match(/^use (prograde|retrograde)(?: direction)?$/i))) {
       return { objectId, kind: "direction", direction: m[1].toLowerCase() as "prograde" | "retrograde" };
     }
     return clarify();
