@@ -31,6 +31,8 @@ TCA means **Time of Closest Approach**, the instant the two objects reach their 
 
 If the user has no assigned satellites, show an assignment empty state and disable Run Scan. Do not substitute a global queue.
 
+Before the first scan, My Incidents is empty and offers Run Scan; it never fills with reference pairs (decision of October 25, 2026). Run Scan appears on both the Orbit and Conjunctions screens. Signed out, it stays visible but explains that scanning needs a provisioned account, and starts nothing.
+
 ## 3. Run Scan: my fleet against the catalog
 
 ```mermaid
@@ -51,9 +53,10 @@ flowchart TD
 2. Pin the fleet assignment version, catalog snapshot and window from scan start to start + 72 hours. "All other satellites" means all other objects available in this snapshot, including debris and other assigned fleet members. Disclose excluded objects, propagation failures and the actual catalog scope. This is not a claim to cover every object in space.
 3. Screen each assigned object against the other usable catalog objects. Skip self-pairs and deduplicate unordered pairs. Public-source fetch cadence remains separate from manual screening and the five-minute monitoring cycle.
 4. Create or update canonical conjunction events and attach matching supplied probability data. Screening computes encounter geometry, not a new Pc. A scan can find a close approach with no supplied probability.
-5. Stream scan state (queued, running, completed, failed), phase and measured counters. The radar sweep visualizes actual work. Repeated clicks reuse the active run. Shared work across users may be cached by snapshot, assignment version and time window without leaking other fleets.
-6. Publish results to every authorized assigned dispatcher for the involved object(s). A Russia-based user's object approaching a US-based user's object creates one canonical event visible in both relevant personal queues. Related pair events can share a coordination room with 2-4 operators. A China-based operator joins when a linked incident concerns their fleet. Room membership grants only the intentionally shared context, not another company's private policy or unrelated incident access.
-7. Zero detections reads "No close approaches found within this scan's scope and 72-hour window", with source and coverage. An incomplete or failed scan never produces a safe/clear badge. Previous results remain visible with their scan time.
+5. Check every published event against the SOCRATES reference list (`matching_sources` phase). The event shows one of three states with their numbers next to ours: **Matched in SOCRATES** (same pair, TCA within 60 s), **Data differs** (same pair, different element-set epochs, so the numbers are not comparable) or **Not in SOCRATES**. This shows the screening works on real data. It is provenance, not a confidence score, and "Not in SOCRATES" is not an error.
+6. Stream scan state (queued, running, completed, failed), phase and measured counters. The radar sweep visualizes actual work. Repeated clicks reuse the active run. Shared work across users may be cached by snapshot, assignment version and time window without leaking other fleets.
+7. Publish results to every authorized assigned dispatcher for the involved object(s). A Russia-based user's object approaching a US-based user's object creates one canonical event visible in both relevant personal queues. Related pair events can share a coordination room with 2-4 operators. A China-based operator joins when a linked incident concerns their fleet. Room membership grants only the intentionally shared context, not another company's private policy or unrelated incident access.
+8. Zero detections reads "No close approaches found within this scan's scope and 72-hour window", with source and coverage. An incomplete or failed scan never produces a safe/clear badge. Previous results remain visible with their scan time.
 
 Routine monitoring continues every five minutes over cached inputs. A manual scan is a refresh of fleet screening, not the only way to receive an updated alert. Validation may separately use a broader reference scope. Catalog-context pairs never enter My Incidents unless a fleet member is involved.
 
@@ -64,6 +67,7 @@ The working queue uses **severity first, then earliest closest approach within e
 - Red: usable current supplied Pc > 1e-4 with future closest approach less than 72 hours away.
 - Yellow: usable supplied Pc from 1e-5 through 1e-4, or > 1e-4 at 72 hours or later. Other events with usable Pc follow.
 - Within each severity: ascending closest-approach time, then emergency-reportable flag, then descending Pc, then stable event ID. A cross-source match is provenance, not a numerical confidence score.
+- Probability is shown as a decimal with two significant digits at 0.0001 and above (`0.0013`) and in scientific notation below (`1.3 × 10⁻⁷`), with "1 in N" in the tooltip. SOCRATES values keep their `max_prob` label.
 - Missing or stale evidence goes into a separate always-visible **Data needs review** section, sorted by closest-approach time, then miss distance, then event ID. It is not zero risk and is not buried below the known-Pc queue. Source freshness limits are versioned backend configuration per source; the UI displays the reason and epochs.
 - A previously red event whose evidence goes stale retains its last-known severity visibly marked stale and moves to Data needs review. An explicit source emergency flag remains visible. Do not silently clear risk or infer a fresh red classification from unknown Pc.
 - Active decisions appear in the working queue. Scheduled/monitoring and awaiting-verification cases remain in a visible follow-up section. Verified/no-action historical cases remain accessible through history and inbox. `reviewRequired` is visible in follow-up and the notification area and never disappears because a maneuver was scheduled.
