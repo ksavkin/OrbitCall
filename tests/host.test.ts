@@ -393,3 +393,40 @@ describe("Coordination Host action", () => {
     expect(span).toMatchObject({ status: "failed", errorCode: "INVALID_INPUT", attempt });
   });
 });
+
+describe("Host understood extraction", () => {
+  const source = { ...hostContext.messages[0], text: "We prefer Thursday. We cannot maneuver Wednesday." };
+  const context = { ...hostContext, messages: [source] };
+  const item = { eventId: "evt-1", kind: "constraint", hard: true, text: "We cannot maneuver Wednesday.", sourceMessageId: source.messageId, correctsId: null };
+  const result = (understood: unknown) => ({ inputVersion: context.inputVersion, clarifications: [], requestedRevisions: [], summaries: [], understood });
+  it("accepts optional original-language excerpts and preserves legacy output", () => {
+    expect(checkHostOutput(raw(result([item])), context).understood).toEqual([item]);
+    const chinese = { ...source, language: "zh" as const, text: "我们不能在星期三机动。" };
+    expect(checkHostOutput(raw(result([{ ...item, text: chinese.text }])), { ...context, messages: [chinese] }).understood![0].text).toBe(chinese.text);
+    expect(checkHostOutput(raw(), hostContext)).toEqual(output);
+  });
+  it.each([
+    { ...item, kind: "preference" },
+    { ...item, text: "The maneuver is forbidden on Thursday." },
+    { ...item, sourceMessageId: "missing" },
+    { ...item, kind: "correction" },
+    { ...item, kind: "correction", correctsId: "unknown" },
+  ])("rejects an ungrounded understanding %#", bad => {
+    expect(codeOf(() => checkHostOutput(raw(result([bad])), context))).toBe("CONSTRAINT_CHECK_FAILED");
+  });
+  it("grounds corrections to one active understanding of the same event", () => {
+    const prior = { understoodId: "understood-1", eventId: "evt-1", kind: "constraint" as const, hard: true,
+      text: item.text, sourceMessageId: "old-message", side: "A" as const };
+    const correction = { ...item, kind: "correction", hard: false, text: "We prefer Thursday.", correctsId: prior.understoodId };
+    const c = { ...context, understood: [prior] };
+    expect(checkHostOutput(raw(result([correction])), c).understood).toEqual([correction]);
+    expect(codeOf(() => checkHostOutput(raw(result([correction, correction])), c))).toBe("CONSTRAINT_CHECK_FAILED");
+    expect(codeOf(() => checkHostOutput(raw(result([{ ...correction, eventId: "evt-2" }])), c))).toBe("CONSTRAINT_CHECK_FAILED");
+    expect(JSON.parse(hostPrompt(c).user).understood).toEqual([prior]);
+  });
+  it("never turns quoted assent into an approval", () => {
+    const approval = { ...source, text: "I approve this maneuver." };
+    expect(codeOf(() => checkHostOutput(raw(result([{ ...item, text: approval.text }])), { ...context, messages: [approval] })))
+      .toBe("CONSTRAINT_CHECK_FAILED");
+  });
+});
