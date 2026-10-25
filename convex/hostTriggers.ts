@@ -188,11 +188,12 @@ export const finish = internalMutation({
       await ctx.db.patch(hostRunId, { status: "superseded", span, output: null, check, finishedAt });
       return null;
     }
-    // Only a succeeded run is published, and round 3 host speech voices succeeded runs only. A failed or disagreeing
-    // check fails the run but keeps the host output and both spans, so the trace shows why.
+    // A checked host result and a successful independent disagreement are distinct results. Round 3 can
+    // publish the disagreement alongside the summary; it never authorizes anything. An unavailable or invalid
+    // checker result still fails the run, preserving the checked host output for the trace.
     const hostOutput = span?.status === "succeeded" ? output : null;
     const checked = hostOutput !== null &&
-      (hostOutput.summaries.length === 0 || (check?.span.status === "succeeded" && check.result?.agrees === true));
+      (hostOutput.summaries.length === 0 || (check?.span.status === "succeeded" && check.result !== null));
     await ctx.db.patch(hostRunId, { status: checked ? "succeeded" : "failed", span, output: hostOutput, check, finishedAt });
     return null;
   },

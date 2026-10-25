@@ -580,7 +580,7 @@ describe("Rationale checks of host summaries", () => {
     for (const e of events) expect(row.check!.result!.reason).toContain(`${e.eventId}: ${agreement.reason}`);
   });
 
-  it("fails the run but keeps its output when one check disagrees", async () => {
+  it("keeps a successful host result and the independent disagreement without authorizing anything", async () => {
     const t = backend();
     const room = await threeEventRoom(t);
     const calls = stubProviders({ host: summarizeAll, check: sent => sent.candidates[0].candidateId === flagged
@@ -590,13 +590,16 @@ describe("Rationale checks of host summaries", () => {
     await execute(t, hostRunId);
     expect(calls.check).toHaveLength(3);
     const row = (await t.run(ctx => ctx.db.get(hostRunId)))!;
-    expect(row.status).toBe("failed");
+    expect(row.status).toBe("succeeded");
     expect(row.span).toMatchObject({ status: "succeeded" });
     expect(row.output!.summaries).toHaveLength(3);
     expect(row.check!.span.status).toBe("succeeded");
     expect(row.check!.result).toMatchObject({ agrees: false, flaggedCandidateIds: [flagged] });
     expect(row.check!.result!.reason).toContain("The burn time is misstated.");
     expect(row.check!.result!.reason.length).toBeLessThanOrEqual(1000);
+    expect(await request(t, room.roomId)).toBe(hostRunId);
+    expect(await t.run(ctx => ctx.db.query("approvals").collect())).toEqual([]);
+    expect(await t.run(ctx => ctx.db.query("selections").collect())).toEqual([]);
   });
 
   it("fails the run when a check call fails, with the first failure on the merged span", async () => {
