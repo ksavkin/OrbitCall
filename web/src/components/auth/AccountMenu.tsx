@@ -17,7 +17,7 @@ export function AccountMenu() {
   const setProfileOpen = useSession((s) => s.setProfileOpen);
   const signOut = useSession((s) => s.signOut);
 
-  useEffect(() => restoreSession(), []);
+  useEffect(() => void restoreSession(), []);
   useEffect(() => {
     if (!open) return;
     const close = (ev: PointerEvent) => !box.current?.contains(ev.target as Node) && setOpen(false);
@@ -25,6 +25,8 @@ export function AccountMenu() {
     return () => window.removeEventListener("pointerdown", close);
   }, [open]);
 
+  const known = useSession((s) => s.userId !== undefined);
+  if (!known) return <span className="h-7 w-[92px]" />;
   if (!me)
     return (
       <Link href="/signin" className="btn h-7 gap-1.5 px-2.5 text-[12px] text-white" onClick={() => sfx.click()}>
@@ -74,15 +76,12 @@ export function AccountMenu() {
                 setProfileOpen(true);
               }}
             />
-            <Link href="/signin" className="block" onClick={() => setOpen(false)}>
-              <MenuItem icon={<UserRound size={13} />} label="Switch account" />
-            </Link>
             <MenuItem
               icon={<LogOut size={13} />}
               label="Sign out"
               onClick={() => {
                 setOpen(false);
-                signOut();
+                void signOut();
               }}
             />
           </motion.div>

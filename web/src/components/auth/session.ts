@@ -3,7 +3,8 @@
 import { create } from "zustand";
 
 // Who is at this screen, in the shapes of `users.me` and `fleet.listMine` (spec §3.1, §3.2). Until Auth0 and
-// those queries are deployed, sign-in picks one of the fixture accounts below; the screens read this store
+// those queries are deployed, a server-checked demo login maps to one of the fixture accounts below (profile
+// data only: no credentials live here); the screens read this store
 // either way, so wiring the real queries replaces the source, not the UI.
 //
 // Access is the gate on everything that spends model or screening credits (Run scan, cases). Anyone may sign
@@ -41,7 +42,7 @@ const sat = (objectId: string, name: string, norad: number, orbit: string, incid
   scanCoverage: incidents ? "complete" : "not_scanned",
 });
 
-/** Demo accounts: three dispatchers with four simulated spacecraft each, and a new sign-up without access. */
+/** Demo accounts: three dispatchers with four simulated spacecraft each, and a sign-up without access. Logins for them are server-side. */
 export const DEMO_ACCOUNTS: { me: Me; fleet: FleetSatellite[] }[] = [
   {
     me: {
@@ -107,53 +108,40 @@ export const DEMO_ACCOUNTS: { me: Me; fleet: FleetSatellite[] }[] = [
 
 export const ACCESS_EMAIL = "bazarkua@oregonstate.edu";
 
-const KEY = "orbitcall.account";
-
 interface Session {
-  /** null while signed out. */
-  userId: string | null;
+  /** null while signed out; undefined until the server has answered. */
+  userId: string | null | undefined;
   profileOpen: boolean;
-  signIn: (userId: string) => void;
-  signOut: () => void;
+  signIn: (username: string, password: string) => Promise<string | null>;
+  signOut: () => Promise<void>;
   setProfileOpen: (v: boolean) => void;
 }
 
-function saved(): string | null | undefined {
-  try {
-    const v = localStorage.getItem(KEY);
-    return v === null ? undefined : v === "" ? null : v;
-  } catch {
-    return undefined;
-  }
-}
-
-function save(v: string | null) {
-  try {
-    localStorage.setItem(KEY, v ?? "");
-  } catch {
-    /* storage blocked: the session lasts for this page only */
-  }
-}
-
-// The demo starts signed in as the US dispatcher; signing out or switching is remembered in this browser.
+// Who is signed in comes from the server (/api/session reads a signed httpOnly cookie); the browser never
+// holds a password or decides on its own that someone is signed in.
 export const useSession = create<Session>((set) => ({
-  userId: "demo-us",
+  userId: undefined,
   profileOpen: false,
-  signIn: (userId) => {
-    save(userId);
-    set({ userId, profileOpen: false });
+  signIn: async (username, password) => {
+    const res = await fetch("/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password }) }).catch(() => null);
+    const data = (await res?.json().catch(() => null)) as { accountId?: string; error?: string } | null;
+    if (!res?.ok || !data?.accountId) return data?.error ?? "Could not reach the server. Try again.";
+    set({ userId: data.accountId, profileOpen: false });
+    return null;
   },
-  signOut: () => {
-    save(null);
+  signOut: async () => {
+    await fetch("/api/session", { method: "DELETE" }).catch(() => null);
     set({ userId: null, profileOpen: false });
   },
   setProfileOpen: (profileOpen) => set({ profileOpen }),
 }));
 
-/** Read the remembered account once on the client (after hydration, so server and client render the same). */
-export function restoreSession() {
-  const v = saved();
-  if (v !== undefined && DEMO_ACCOUNTS.some((a) => a.me.userId === v || v === null)) useSession.setState({ userId: v });
+/** Ask the server who is signed in (once per page load). */
+export async function restoreSession() {
+  const res = await fetch("/api/session").catch(() => null);
+  const data = (await res?.json().catch(() => null)) as { accountId?: string | null } | null;
+  const id = data?.accountId ?? null;
+  useSession.setState({ userId: DEMO_ACCOUNTS.some((a) => a.me.userId === id) ? id : null });
 }
 
 export function useMe(): Me | null {
