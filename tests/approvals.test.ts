@@ -335,7 +335,7 @@ describe("approval inbox notices", () => {
 
     const reason = "Our fuel floor is 3.1 kg on SIM-1002.";
     await as(t, "b").mutation(fn.veto, { ...await tick(t, eventId), reason });
-    const vetoed = "Side B vetoed P2 revision 1. Approvals were reset and the agents are reworking the options.";
+    const vetoed = "Side B vetoed P2 revision 1. Approvals were reset and the incident is back with the agents.";
     expect(await shown(t, "a", eventId)).toMatchObject({ unread: true, lastUpdateSummary: vetoed });
     expect(await shown(t, "a2", eventId)).toMatchObject({ unread: true, lastUpdateSummary: vetoed });
     const after = await notices(t, eventId);

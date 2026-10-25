@@ -151,7 +151,7 @@ export const veto = mutation({
     // The reason stays in the approval row: it is free text and may echo private policy.
     const plan = await planName(ctx, args.proposalId, args.revision);
     await notifySides(ctx, d.event, d.event.requiredApprovalSides!, d.user._id,
-      `Side ${d.side} vetoed ${plan}. Approvals were reset and the agents are reworking the options.`);
+      `Side ${d.side} vetoed ${plan}. Approvals were reset and the incident is back with the agents.`);
     return null;
   },
 });
