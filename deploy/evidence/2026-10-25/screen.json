@@ -1,0 +1,24 @@
+{
+  "scanId": "ops-20261025T092812Z",
+  "snapshotId": "gp-20261024T2134Z",
+  "evidenceVersion": "ops-20261025T092812Z",
+  "fromUtc": "2026-10-25T09:28:12Z",
+  "toUtc": "2026-10-28T09:28:12Z",
+  "runtimeS": 202.1,
+  "counts": {
+    "primaryObjects": 4,
+    "catalogObjects": 19468,
+    "primariesCompleted": 4,
+    "pairsChecked": 42978,
+    "eventsFound": 474
+  },
+  "coverage": {
+    "complete": true,
+    "timedOut": false,
+    "catalogScope": "pinned CelesTrak GP snapshot gp-20261024T2134Z: 19468 objects (groups: active, cosmos-2251-debris, fengyun-1c-debris, iridium-33-debris, stations); 0 records skipped at load. Not every object in space.",
+    "excludedObjects": 0,
+    "reasons": []
+  },
+  "jobId": "ops-20261025T092812Z",
+  "convexCheck": "Passed ops:checkOrbit in prod basic-wildcat-552"
+}
