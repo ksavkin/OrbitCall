@@ -27,8 +27,8 @@ export class QueryBoundary extends Component<
   }
 }
 
-/** First line of an error, without Convex's request-id prefix, for a one-line display. */
+/** First line of an error, without Convex's bracketed prefixes ("[CONVEX Q(…)]", "[Request ID: …]"), for one line. */
 export function briefError(e: Error): string {
   const line = e.message.split("\n").find((l) => l.trim().length > 0) ?? "Unknown error";
-  return line.replace(/^\[[^\]]*\]\s*/, "").slice(0, 140);
+  return line.replace(/^(\[[^\]]*\]\s*)+/, "").slice(0, 140);
 }

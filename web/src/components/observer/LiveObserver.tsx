@@ -205,7 +205,7 @@ function Failed({ now, error, stage, onRetry }: { now: number; error: Error; sta
     );
   }
   // an unexpected error has no message for people: its first line, without Convex's bracketed request prefixes
-  const body = code === "UNKNOWN" ? `The backend answered: ${briefError(error).replace(/^(\[[^\]]*\]\s*)+/, "")}` : message;
+  const body = code === "UNKNOWN" ? `The backend answered: ${briefError(error)}` : message;
   return (
     <Centered now={now} link={{ text: code === "FORBIDDEN" ? "Not authorized" : "Not connected", on: false }} k={`failed-${stage}`}>
       <Note
