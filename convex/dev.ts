@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import { v, ConvexError } from "convex/values";
 import { redEvent, missingProbability, missingMetadata } from "../fixtures/events";
 import { putFixture } from "./lib/events";
+import { ensureAssignment } from "./lib/accounts";
 import { advocateCandidates, advocateEvent, policyA, policyB } from "../fixtures/policies";
 
 // Internal, opt-in development seeding. Never seeds private policies or real operator data.
@@ -40,8 +41,7 @@ export const prepareAdvocateFixture = internalMutation({
       const user = await ctx.db.query("users").withIndex("by_token_identifier", q => q.eq("tokenIdentifier", tokenIdentifier)).unique();
       if (user && user.companyId !== companyId) throw new ConvexError({ code: "INVALID_STATE", message: "Fixture user conflicts with existing data." });
       const userId = user?._id ?? await ctx.db.insert("users", { tokenIdentifier, companyId, role: "operator" });
-      const assignment = await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", userId).eq("objectId", policy.objectId)).unique();
-      if (!assignment) await ctx.db.insert("fleetAssignments", { userId, objectId: policy.objectId, active: true });
+      await ensureAssignment(ctx, userId, policy.objectId);
     }
     const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     return { eventId, version: set?.version ?? null };

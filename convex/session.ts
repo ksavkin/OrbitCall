@@ -1,16 +1,11 @@
-import { ConvexError } from "convex/values";
-import { query, type QueryCtx } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
+import { mutation, query, type QueryCtx } from "./_generated/server";
+import { contactPatch, lang } from "./lib/accounts";
 
-// Session reads over the tables that already exist (users, companies, fleetAssignments).
-// The spec names these users.me and companies.getMySettings; issue #6 places them in this file,
-// so the client calls api.session.me and api.session.getMySettings.
-//
-// Fields the current tables do not store come back as null, never as a guessed value
-// (spec §0: unavailable is null). They are listed in UNSTORED so the schema task can add them.
-export const UNSTORED = {
-  me: ["language", "dispatcherCountry", "company.country", "assignmentVersion"],
-  settings: ["language", "contact"],
-} as const;
+// Session reads and company settings. The spec names these users.me, companies.getMySettings and
+// companies.updateMySettings; issue #6 places them in this file, so the client calls
+// api.session.me, api.session.getMySettings and api.session.updateMySettings.
+// A value that is not stored reads as null, never as a guess (spec §0).
 
 /** Resolves the signed-in caller. No identity: UNAUTHENTICATED. No provisioned row: FORBIDDEN. */
 export async function requireUser(ctx: QueryCtx) {
@@ -25,6 +20,12 @@ export async function requireUser(ctx: QueryCtx) {
   return { identity, user, company };
 }
 
+async function requireSettingsOperator(ctx: QueryCtx) {
+  const session = await requireUser(ctx);
+  if (session.user.role !== "operator") throw new ConvexError({ code: "FORBIDDEN", message: "Company settings are available to operators." });
+  return session;
+}
+
 export const me = query({
   args: {},
   handler: async ctx => {
@@ -35,13 +36,15 @@ export const me = query({
     const assignedObjectIds = assignments.filter(a => a.active).map(a => a.objectId).sort();
     return {
       userId: user._id,
-      name: identity.name ?? identity.nickname ?? identity.email ?? null,
+      // Stored display name first, then the Auth0 profile name, else unavailable.
+      name: user.name ?? identity.name ?? null,
       role: user.role,
-      language: null,
-      dispatcherCountry: null,
-      company: { companyId: company._id, name: company.name, country: null, simulated: company.simulated },
+      language: user.language ?? null,
+      dispatcherCountry: user.dispatcherCountry ?? null,
+      company: { companyId: company._id, name: company.name, country: company.country ?? null, simulated: company.simulated },
       assignedObjectIds,
-      assignmentVersion: null,
+      // Per-user counter; null for a legacy row that provisioning has not touched since the field was added.
+      assignmentVersion: user.assignmentVersion ?? null,
     };
   },
 });
@@ -50,8 +53,23 @@ export const me = query({
 export const getMySettings = query({
   args: {},
   handler: async ctx => {
-    const { user } = await requireUser(ctx);
-    if (user.role !== "operator") throw new ConvexError({ code: "FORBIDDEN", message: "Company settings are available to operators." });
-    return { language: null, contact: null };
+    const { company } = await requireSettingsOperator(ctx);
+    return { language: company.language ?? null, contact: company.contact ?? null };
+  },
+});
+
+/** Partial update of the caller's own company settings. Omitted: unchanged. Blank contact: cleared. */
+export const updateMySettings = mutation({
+  args: { language: v.optional(lang), contact: v.optional(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, { language, contact }) => {
+    const { company } = await requireSettingsOperator(ctx);
+    const contactChange = contactPatch(contact);
+    const patch = {
+      ...(language === undefined ? {} : { language }),
+      ...(contactChange === null ? {} : { contact: "clear" in contactChange ? undefined : contactChange.contact }),
+    };
+    if (Object.keys(patch).length) await ctx.db.patch(company._id, patch);
+    return null;
   },
 });
