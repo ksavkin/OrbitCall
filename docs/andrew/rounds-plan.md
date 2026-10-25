@@ -226,6 +226,15 @@ Only follow up on the schema request. Check the landed tables against the fields
 
 ## Round 2 (starts after round 1 and the schema task are on `main`)
 
+### Multi-party rooms (rounds 2 and 3)
+
+Rooms have no fixed operator cap (roadmap §2, §16). Events stay pairs; a moved spacecraft links its events through one trajectory plan (spec §2.5, §4.1).
+
+- R2-B builds `HostContext` from every linked event in the room, not only the focused one. `MAX_EVENTS` in `convex/lib/host.ts` is 24: four assigned spacecraft for each of six companies. The demo fleets alone (three or four dispatchers, four spacecraft each) can exceed the old 10. A room with more events fails the host run visibly. Never drop events to fit.
+- R2-A checks shared movers before publishing. If a candidate moves a spacecraft that is also in another linked event, publish it against that spacecraft's trajectory plan, so one revision invalidates approvals in every affected event. Do not publish two independent maneuvers for the same spacecraft.
+- The schema task needs a `trajectoryPlans` table in the spec §2.5 shape. If round 1.5 has not added it, raise it on #6 before round 2 starts.
+- R3-B speaks per-event summaries for every linked event in the room, in each listener's language.
+
 ### R2-A: Publish candidates into the advocate tables
 
 Branch `andrew-r2-publish-candidates`. Files: `convex/advocates.ts`, `convex/lib/publishCandidates.ts`, `tests/advocateCandidates.test.ts`, and `convex/candidates.ts` if the debris decision adds it.
