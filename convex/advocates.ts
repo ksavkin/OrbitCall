@@ -1,4 +1,5 @@
-import { internalAction, internalMutation, internalQuery, query, mutation } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, query, mutation, type QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { v, ConvexError } from "convex/values";
 import { side } from "./lib/policyValidators";
@@ -10,8 +11,8 @@ import { requireParty } from "./lib/operatorAccess";
 import { runFlags, stageOf, supersede } from "./lib/runs";
 import { getCandidates, orbitConfigured } from "./lib/orbitClient";
 import {
-  cardsFor, evidenceVersionOf, geometryMatches, publishFailure, wholeSecondUtc,
-  type PublishInput, type PublishOutcome, type SkipReason,
+  cardsFor, evidenceVersionOf, geometryMatches, ommSnapshotId, publishFailure, sameCards, sharedMoverEventIds, wholeSecondUtc,
+  type PublishInput, type PublishOutcome, type SharedMover, type SkipReason,
 } from "./lib/publishCandidates";
 import type { Side } from "./lib/policies";
 
@@ -134,29 +135,53 @@ export const publishInput = internalQuery({
     }
     const snapshot = await ctx.db.get(event.snapshotId);
     if (!snapshot) return { skipped: "NOT_FOUND" };
+    const ommId = ommSnapshotId(snapshot);
+    if (!ommId) return { skipped: "OMM_SNAPSHOT_UNKNOWN" };
     // Every stored revision, not only the current set's, so a returning card gets a new revision instead of a rollback.
     const previous = await ctx.db.query("candidateRevisions").withIndex("by_event_candidate_revision", q => q.eq("eventId", eventId)).collect();
+    const currentCards = set ? (await loadCandidates(ctx, set)).map(({ candidateId, revision }) => ({ candidateId, revision })) : [];
+    const allowedMovingObjectIds = counterpartSide ? objectIds : [activeSide === "A" ? objectIds[0] : objectIds[1]];
     return { input: {
-      facts, snapshotId: snapshot.snapshotId, evidenceVersion: evidenceVersionOf(facts), activeSide, counterpartSide,
-      allowedMovingObjectIds: counterpartSide ? objectIds : [activeSide === "A" ? objectIds[0] : objectIds[1]],
-      baseVersion: set?.version ?? null, previous,
+      facts, evidenceKey: inputKey(facts), eventSnapshotId: snapshot.snapshotId, snapshotId: ommId,
+      evidenceVersion: evidenceVersionOf(facts), activeSide, counterpartSide, allowedMovingObjectIds,
+      baseVersion: set?.version ?? null, previous, currentCards,
+      sharedMovers: await linkedMovers(ctx, eventId, allowedMovingObjectIds, nowMs),
     } };
   },
 });
 
-// Orbit /candidates, then the card mapper, then candidates.publish on the set version read before the call. Any
-// failure (orbit, geometry, a concurrent publication) returns a sanitized outcome and leaves the previous set and
-// runs as they were. A spacecraft that also moves in another linked event of the same room is coordinated by its
-// trajectoryPlans row (the scheduler's task); this publishes only this event's own set and touches no other event.
+// Movers of this event that are also objects of another active event linked in the same open room.
+async function linkedMovers(ctx: QueryCtx, eventId: Id<"events">, movers: string[], nowMs: number): Promise<SharedMover[]> {
+  const linked = new Map<string, Set<string>>();
+  for (const link of await ctx.db.query("roomEvents").withIndex("by_event", q => q.eq("eventId", eventId)).collect()) {
+    if ((await ctx.db.get(link.roomId))?.state !== "open") continue;
+    for (const other of await ctx.db.query("roomEvents").withIndex("by_room", q => q.eq("roomId", link.roomId)).collect()) {
+      const event = other.eventId === eventId ? null : await ctx.db.get(other.eventId);
+      if (!event?.active || event.tcaMs <= nowMs) continue;
+      for (const object of await Promise.all([ctx.db.get(event.objectAId), ctx.db.get(event.objectBId)])) {
+        if (object && movers.includes(object.objectId)) linked.set(object.objectId, (linked.get(object.objectId) ?? new Set()).add(event._id));
+      }
+    }
+  }
+  return movers.filter(id => linked.has(id)).map(objectId => ({ objectId, eventIds: [...linked.get(objectId)!].sort() }));
+}
+
+const isStale = (error: unknown) => error instanceof ConvexError && error.data?.code === "STALE_REVISION";
+
+// Orbit /candidates, then the card mapper, then candidates.publish pinned to the set version, evidence key and
+// snapshot read before the call. Any failure (missing data, orbit, geometry, evidence that moved on, a concurrent
+// publication) returns a sanitized outcome and leaves the previous set and runs as they were. A mover shared with
+// another linked event is published here with a note on its cards; the single burn for both events is coordinated
+// by that spacecraft's trajectoryPlans row (the scheduler's task), and no other event's set is touched.
 export const publishFromOrbit = internalAction({
   args: { eventId: v.id("events") },
   handler: async (ctx, { eventId }): Promise<PublishOutcome> => {
     if (!orbitConfigured()) return { status: "skipped", reason: "ORBIT_NOT_CONFIGURED" };
     const nowMs = Date.now();
-    const loaded = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs });
-    if ("skipped" in loaded) return { status: "skipped", reason: loaded.skipped };
-    const { input } = loaded;
     try {
+      const loaded = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs });
+      if ("skipped" in loaded) return { status: "skipped", reason: loaded.skipped };
+      const { input } = loaded;
       const response = await getCandidates({
         snapshotId: input.snapshotId, evidenceVersion: input.evidenceVersion,
         objectA: input.facts.objectA.objectId, objectB: input.facts.objectB.objectId,
@@ -166,9 +191,24 @@ export const publishFromOrbit = internalAction({
       if (!geometryMatches(response, input.facts)) {
         return { status: "failed", code: "GEOMETRY_MISMATCH", message: "The orbit service computed a different encounter than the stored event." };
       }
-      const candidates = cardsFor(response, input, eventId, nowMs);
-      const { version, changed } = await ctx.runMutation(internal.candidates.publish, { eventId, baseVersion: input.baseVersion, candidates });
-      return { status: "published", version, changed, cards: candidates.length };
+      const publish = async (current: PublishInput): Promise<PublishOutcome> => {
+        const candidates = cardsFor(response, current, eventId, nowMs);
+        const { version, changed } = await ctx.runMutation(internal.candidates.publish, {
+          eventId, baseVersion: current.baseVersion, candidates,
+          expectedEvidenceKey: input.evidenceKey, expectedSnapshotId: input.eventSnapshotId,
+        });
+        return { status: "published", version, changed, cards: candidates.length, sharedMoverEventIds: sharedMoverEventIds(candidates, current.sharedMovers) };
+      };
+      try {
+        return await publish(input);
+      } catch (error) {
+        if (!isStale(error)) throw error;
+        // One retry, only when a concurrent publication already wrote these same cards on the same evidence.
+        const fresh = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs });
+        if ("skipped" in fresh || fresh.input.evidenceKey !== input.evidenceKey || fresh.input.eventSnapshotId !== input.eventSnapshotId ||
+          !sameCards(cardsFor(response, fresh.input, eventId, nowMs), fresh.input.currentCards)) throw error;
+        return await publish(fresh.input);
+      }
     } catch (error) {
       return publishFailure(error);
     }
