@@ -101,6 +101,28 @@ export const authorize = internalMutation({
   },
 });
 
+// Open runs are few (reset closes the previous one), so a short newest-first scan finds the grant.
+const MAX_OPEN_RUNS = 20;
+
+/**
+ * The open run this observer is granted, newest first, or null while none is (spec §1 and §3.1 `demo.myRun`). The large display
+ * subscribes to it, so a reset and a new grant move the screen to the new run without a new link.
+ */
+export const myRun = query({
+  args: {},
+  returns: v.union(v.object({ demoRunId: v.id("demoRuns"), scenario: v.string() }), v.null()),
+  handler: async (ctx) => {
+    const { user } = await requireUser(ctx);
+    if (user.role !== "demo_observer") {
+      throw new ConvexError({ code: "FORBIDDEN", message: "Only a demonstration observer has a run to watch." });
+    }
+    const open = await ctx.db.query("demoRuns").withIndex("by_state", q => q.eq("state", "open")).order("desc")
+      .take(MAX_OPEN_RUNS);
+    const run = open.find(r => r.closedAt === null && r.manifest?.observerUserId === String(user._id));
+    return run ? { demoRunId: run._id, scenario: run.scenario } : null;
+  },
+});
+
 export const publicView = query({
   args: { demoRunId: v.id("demoRuns") },
   returns: publicViewResult,
