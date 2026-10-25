@@ -88,6 +88,16 @@ export async function notifySides(ctx: MutationCtx, event: Doc<"events">, sides:
   for (const user of await sideOperators(ctx, event, sides, actor)) await notify(ctx, user._id, event, summary);
 }
 
+/**
+ * Writes the same new summary onto the actor's existing inbox row and leaves it read. A person who has no row yet
+ * does not gain one: the row is created only when someone else notifies them. One row per person per event.
+ */
+export async function noteActor(ctx: MutationCtx, event: Doc<"events">, actor: Id<"users">, summary: string) {
+  const existing = await ctx.db.query("inbox").withIndex("by_user_event", q => q.eq("userId", actor).eq("eventId", event._id)).unique();
+  if (!existing) return;
+  await ctx.db.patch(existing._id, { lastUpdateSummary: summary, lastUpdateAt: Date.now(), unread: false });
+}
+
 const planName = async (ctx: MutationCtx, proposalId: Id<"proposals">, revision: number) =>
   `${(await ctx.db.get(proposalId))?.label ?? "The plan"} revision ${revision}`;
 
@@ -121,10 +131,20 @@ export const approve = mutation({
       const plan = await planName(ctx, args.proposalId, args.revision);
       const required = d.event.requiredApprovalSides!;
       const next = turnOf(d.event, counted);
-      // Consensus: every required side hears it. Otherwise only the side whose turn it now is.
-      if (all) await notifySides(ctx, d.event, required, d.user._id, required.length > 1
-        ? `Both sides approved ${plan}. The plan is agreed.` : `Side ${d.side} approved ${plan}. The plan is agreed.`);
-      else if (next) await notifySides(ctx, d.event, [next], d.user._id, `Side ${d.side} approved ${plan}. It is your turn to decide.`);
+      // Consensus: every required side hears that the plan is agreed. Otherwise the approver's side hears that it
+      // is waiting, and the side now in turn hears that the decision is theirs. The actor's existing row gets the
+      // same summary as their side and stays read; a missing row is not created.
+      if (all) {
+        const summary = required.length > 1
+          ? `Both sides approved ${plan}. The plan is agreed.` : `Side ${d.side} approved ${plan}. The plan is agreed.`;
+        await notifySides(ctx, d.event, required, d.user._id, summary);
+        await noteActor(ctx, d.event, d.user._id, summary);
+      } else if (next) {
+        const waiting = `Side ${d.side} approved ${plan}. Waiting for side ${next}.`;
+        await notifySides(ctx, d.event, [d.side], d.user._id, waiting);
+        await noteActor(ctx, d.event, d.user._id, waiting);
+        await notifySides(ctx, d.event, [next], d.user._id, `Side ${d.side} approved ${plan}. It is your turn to decide.`);
+      }
     }
     return { allRequiredApproved: all, requiredApprovalSides: d.event.requiredApprovalSides! };
   },
@@ -150,8 +170,9 @@ export const veto = mutation({
     await ctx.db.patch(d.event._id, { status: "agents", situation: undefined });
     // The reason stays in the approval row: it is free text and may echo private policy.
     const plan = await planName(ctx, args.proposalId, args.revision);
-    await notifySides(ctx, d.event, d.event.requiredApprovalSides!, d.user._id,
-      `Side ${d.side} vetoed ${plan}. Approvals were reset and the incident is back with the agents.`);
+    const summary = `Side ${d.side} vetoed ${plan}. Approvals were reset and the incident is back with the agents.`;
+    await notifySides(ctx, d.event, d.event.requiredApprovalSides!, d.user._id, summary);
+    await noteActor(ctx, d.event, d.user._id, summary);
     return null;
   },
 });

@@ -4,7 +4,7 @@ import type { Id } from "../convex/_generated/dataModel";
 import { FIXTURE_NOW } from "../fixtures/events";
 import { advocateCandidates, advocateEvent } from "../fixtures/policies";
 import { insertEvent, type Backend } from "./helpers";
-import { as, code, fn, pick, proposalId, seed, selection, tick, userId, withCard } from "./decision";
+import { as, code, companyA, fn, pick, proposalId, seed, selection, tick, token, userId, withCard } from "./decision";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -109,17 +109,36 @@ const notices = (t: Backend, eventId: Id<"events">) => t.run(async ctx => {
 });
 const later = (ms = 1000) => vi.setSystemTime(Date.now() + ms);
 
+async function withSecondA(t: Backend) {
+  const base = companyA();
+  await t.mutation(internal.operators.provision, { ...base, members: [...base.members,
+    { tokenIdentifier: token("a2"), role: "operator" as const, assignedObjectIds: ["SIM-1001"], name: "A2" }] });
+}
+async function foreignOnSameObject(t: Backend) {
+  await t.run(async ctx => {
+    const c = (await ctx.db.query("users").withIndex("by_token_identifier", q => q.eq("tokenIdentifier", token("c"))).unique())!;
+    await ctx.db.insert("fleetAssignments", { userId: c._id, objectId: "SIM-1001", active: true });
+  });
+}
+
 describe("selection inbox notices", () => {
-  it("notifies the other required operators of a changed selection, never the selector, a re-click or a refused call", async () => {
+  it("notifies every required operator of a changed selection and refreshes the selector's row as read", async () => {
     const { t, eventId } = await seed();
+    await withSecondA(t);
+    await foreignOnSameObject(t);
     await pick(t, "a", eventId, "P2");
     const first = "Side A selected P2 revision 1 for decision. Side A decides first.";
     expect(await as(t, "b").query(api.inbox.get, { eventId })).toMatchObject({ unread: true, lastUpdateSummary: first });
+    // A's colleague receives the selection notice. A had no row, so none is created. Another company's operator
+    // assigned to the same object receives nothing.
+    expect(await as(t, "a2").query(api.inbox.get, { eventId })).toMatchObject({ unread: true, lastUpdateSummary: first });
     const before = await notices(t, eventId);
-    expect(Object.keys(before)).toEqual(["b"]);
+    expect(before.a).toBeUndefined();
+    expect(before.c).toBeUndefined();
+    expect(Object.keys(before).sort()).toEqual(["a2", "b"]);
 
     later();
-    // Re-clicking the current card and an off-turn selection leave the inbox untouched.
+    // Re-clicking the current card and an off-turn or stale selection leave the inbox untouched.
     await as(t, "a").mutation(fn.select, { eventId, proposalId: await proposalId(t, eventId, "P2"), revision: 1, expectedGeneration: 1 });
     expect(await code(pick(t, "b", eventId, "P4"))).toBe("INVALID_STATE");
     expect(await code(as(t, "a").mutation(fn.select, { eventId, proposalId: await proposalId(t, eventId, "P3"), revision: 1, expectedGeneration: 0 })))
@@ -129,14 +148,16 @@ describe("selection inbox notices", () => {
     await as(t, "a").mutation(fn.approve, await tick(t, eventId));
     const approved = await notices(t, eventId);
     later();
-    // B in turn moves the selection: A's approval resets, A hears both facts in one notice.
+    // B in turn moves the selection: A's approval resets, and every required operator ends on that notice.
     await pick(t, "b", eventId, "P4");
-    expect(await as(t, "a").query(api.inbox.get, { eventId })).toMatchObject({ unread: true,
-      lastUpdateSummary: "Side B selected P4 revision 1 for decision. Earlier approvals were reset. Side A decides first." });
+    const moved = "Side B selected P4 revision 1 for decision. Earlier approvals were reset. Side A decides first.";
+    expect(await as(t, "a").query(api.inbox.get, { eventId })).toMatchObject({ unread: true, lastUpdateSummary: moved });
+    expect(await as(t, "a2").query(api.inbox.get, { eventId })).toMatchObject({ unread: true, lastUpdateSummary: moved });
     const after = await notices(t, eventId);
-    // The selector's own notice is not replaced.
-    expect(after.b).toEqual(approved.b);
-    expect(after.b.summary).toBe("Side A approved P2 revision 1. It is your turn to decide.");
+    // B already had a row. It takes the new summary and stays read.
+    expect(after.b).toMatchObject({ unread: false, summary: moved });
+    expect(after.b.at).toBeGreaterThan(approved.b.at);
+    expect(after.c).toBeUndefined();
     for (const name of ["unassigned", "head", "eye", "c"]) expect(after[name]).toBeUndefined();
   });
 });

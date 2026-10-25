@@ -266,13 +266,20 @@ describe("approvals and the coordination room", () => {
   });
 });
 
-// Inbox notices from approve and veto (issue #6 round 3). a2 is a second operator assigned to A's object, so a
-// notice reaches the actor's colleagues but never the actor. Recipients are read through inbox.get, as the UI does.
+// Inbox notices from approve and veto (issue #6 round 3). Every operator of a required side ends on the new state.
+// Colleagues receive it unread. The actor's existing row gets the same summary and stays read. a2 is a second
+// operator on A's object. c is another company's operator with an active assignment on that same object.
 const NOT_NOTIFIED = ["unassigned", "head", "eye", "c"];
 async function withSecondA(t: Backend) {
   const base = companyA();
   await t.mutation(internal.operators.provision, { ...base, members: [...base.members,
     { tokenIdentifier: token("a2"), role: "operator" as const, assignedObjectIds: ["SIM-1001"], name: "A2" }] });
+}
+async function foreignOnSameObject(t: Backend) {
+  await t.run(async ctx => {
+    const c = (await ctx.db.query("users").withIndex("by_token_identifier", q => q.eq("tokenIdentifier", token("c"))).unique())!;
+    await ctx.db.insert("fleetAssignments", { userId: c._id, objectId: "SIM-1001", active: true });
+  });
 }
 /** Every inbox row of the event, by user name. */
 const notices = (t: Backend, eventId: Id<"events">) => t.run(async ctx => {
@@ -288,6 +295,7 @@ describe("approval inbox notices", () => {
   it("tells the side in turn after an approval and every required side on consensus, once", async () => {
     const { t, eventId } = await seed();
     await withSecondA(t);
+    await foreignOnSameObject(t);
     await pick(t, "a", eventId, "P2");
     later();
     const before = await notices(t, eventId);
@@ -298,10 +306,14 @@ describe("approval inbox notices", () => {
 
     await as(t, "a").mutation(fn.approve, await tick(t, eventId));
     const turn = "Side A approved P2 revision 1. It is your turn to decide.";
+    const waiting = "Side A approved P2 revision 1. Waiting for side B.";
     expect(await shown(t, "b", eventId)).toMatchObject({ unread: true, lastUpdateSummary: turn });
+    expect(await shown(t, "a2", eventId)).toMatchObject({ unread: true, lastUpdateSummary: waiting });
     const afterA = await notices(t, eventId);
-    // Only the next side hears of A's approval; A's colleague keeps the selection notice, the approver gets nothing.
-    expect(afterA.a2).toEqual(before.a2);
+    // A's colleague hears that A is waiting. A had no inbox row, so none is created. c still has none.
+    expect(afterA.a2.summary).toBe(waiting);
+    expect(afterA.a2.unread).toBe(true);
+    expect(afterA.a2.at).toBeGreaterThan(before.a2.at);
     expect(afterA.a).toBeUndefined();
     for (const name of NOT_NOTIFIED) expect(afterA[name]).toBeUndefined();
 
@@ -315,7 +327,9 @@ describe("approval inbox notices", () => {
     expect(await shown(t, "a", eventId)).toMatchObject({ unread: true, lastUpdateSummary: agreed });
     expect(await shown(t, "a2", eventId)).toMatchObject({ unread: true, lastUpdateSummary: agreed });
     const final = await notices(t, eventId);
-    expect(final.b).toEqual(afterA.b);
+    // B already had a row. It now says the plan is agreed, and it stays read.
+    expect(final.b).toMatchObject({ unread: false, summary: agreed });
+    expect(final.b.at).toBeGreaterThan(afterA.b.at);
     for (const name of NOT_NOTIFIED) expect(final[name]).toBeUndefined();
 
     later();
@@ -326,6 +340,7 @@ describe("approval inbox notices", () => {
   it("tells every required side of a veto without its reason", async () => {
     const { t, eventId } = await seed();
     await withSecondA(t);
+    await foreignOnSameObject(t);
     await pick(t, "a", eventId, "P2");
     await as(t, "a").mutation(fn.approve, await tick(t, eventId));
     later();
@@ -339,7 +354,9 @@ describe("approval inbox notices", () => {
     expect(await shown(t, "a", eventId)).toMatchObject({ unread: true, lastUpdateSummary: vetoed });
     expect(await shown(t, "a2", eventId)).toMatchObject({ unread: true, lastUpdateSummary: vetoed });
     const after = await notices(t, eventId);
-    expect(after.b).toEqual(before.b);
+    // B's own row takes the same summary and stays read. The reason is not in it.
+    expect(after.b).toMatchObject({ unread: false, summary: vetoed });
+    expect(after.b.at).toBeGreaterThan(before.b.at);
     for (const name of NOT_NOTIFIED) expect(after[name]).toBeUndefined();
     for (const row of Object.values(after)) expect(row.summary).not.toMatch(/fuel|3\.1/);
   });
