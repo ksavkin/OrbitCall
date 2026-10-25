@@ -15,6 +15,29 @@ const runRef = ref<"action">("scans:run"), claimRef = ref<"mutation">("scans:cla
 const saveRef = ref<"mutation">("scans:save"), failRef = ref<"mutation">("scans:failRun");
 const pending = (r: Doc<"scanRuns">) => r.status === "queued" || r.status === "running";
 function fail(code: string, message: string): never { throw new ConvexError({ code, message }); }
+// SIM IDs have no run field in the frozen catalog schema. Only active, tagged incidents can establish
+// their current run; an assignment by itself never authorizes adopting another demonstration's objects.
+async function simulationRun(ctx: QueryCtx, objectId: string): Promise<Id<"demoRuns"> | null> {
+ const object=await findObject(ctx,objectId);if(!object)return null;
+ const [a,b]=await Promise.all([
+  ctx.db.query("events").withIndex("by_pair_tca",q=>q.eq("objectAId",object._id)).filter(q=>q.and(q.eq(q.field("active"),true),q.eq(q.field("simulated"),true))).take(201),
+  ctx.db.query("events").withIndex("by_object_b_tca",q=>q.eq("objectBId",object._id)).filter(q=>q.and(q.eq(q.field("active"),true),q.eq(q.field("simulated"),true))).take(201),
+ ]);
+ if(a.length>200||b.length>200)fail("LIMIT_EXCEEDED","Too many active incidents to establish a simulation's run safely.");
+ const ids=[...new Set([...a,...b].flatMap(e=>e.demoRunId?[e.demoRunId]:[]))];
+ const open=[];
+ for(const id of ids){const run=await ctx.db.get(id);if(run?.state==="open"&&run.closedAt===null)open.push(id);}
+ return open.length===1?open[0]:null;
+}
+async function fleetRun(ctx: QueryCtx, ids: string[]) {
+ let demoRunId:Id<"demoRuns">|null=null;
+ for(const id of ids.filter(id=>id.startsWith("SIM-"))){
+  const run=await simulationRun(ctx,id);
+  if(!run||(demoRunId!==null&&demoRunId!==run))return {valid:false,demoRunId:null};
+  demoRunId=run;
+ }
+ return {valid:true,demoRunId};
+}
 async function validScope(ctx: QueryCtx, r: Doc<"scanRuns">) {
  const user = await ctx.db.get(r.requestedBy);
  if (!user || user.role !== "operator" || (user.assignmentVersion ?? 1) !== r.assignmentVersion) return false;
@@ -24,7 +47,8 @@ async function validScope(ctx: QueryCtx, r: Doc<"scanRuns">) {
   const o = await ctx.db.query("satelliteOwners").withIndex("by_object",q=>q.eq("objectId",id)).unique();
   if (!a?.active || o?.companyId !== user.companyId) return false;
  }
- return true;
+ const run=await fleetRun(ctx,r.primaryObjectIds);
+ return run.valid&&run.demoRunId===r.demoRunId;
 }
 async function failStored(ctx: MutationCtx, r: Doc<"scanRuns">, code: string, message: string) {
  await ctx.db.patch(r._id,{status:"failed",phase:"failed",error:{code,message},finishedAt:Date.now(),updatedAt:Math.max(Date.now(),r.updatedAt)});
@@ -38,6 +62,8 @@ export const startMine = mutation({
   const ids=scope.objects.map(o=>o.objectId).filter(id=>owned.has(id));
   if (!ids.length) fail("EMPTY_FLEET","Assign a satellite before scanning.");
   if (ids.length>50) fail("LIMIT_EXCEEDED","A scan supports at most 50 assigned satellites.");
+  const run=await fleetRun(ctx,ids);
+  if(!run.valid)fail("INVALID_STATE","Every assigned simulated satellite must belong to the same unambiguous open demonstration.");
   const existing=await ctx.db.query("scanRuns").withIndex("by_user_request",q=>q.eq("requestedBy",scope.user._id).eq("requestId",requestId)).unique();
   if (existing) {
    if (!await validScope(ctx,existing)) fail("STALE_ASSIGNMENT","Responsibility changed; start a new scan.");
@@ -61,7 +87,7 @@ export const startMine = mutation({
    primaryObjectIds:ids,snapshotId:ommSnapshotId(snapshot)!,fromMs,toMs:fromMs+72*3600000,status:"queued",phase:"queued",progress:null,
    counts:{primaryObjects:ids.length,catalogObjects:0,primariesCompleted:0,pairsChecked:0,eventsFound:0},
    coverage:{complete:false,catalogScope:"Not screened yet",excludedObjects:0,reasons:[],missingPrimaryIds:[]},
-   jobId:null,startedAt:null,finishedAt:null,error:null,demoRunId:null,updatedAt:Date.now()});
+   jobId:null,startedAt:null,finishedAt:null,error:null,demoRunId:run.demoRunId,updatedAt:Date.now()});
   await ctx.scheduler.runAfter(0,runRef,{scanId}); return {scanId,reused:false};
  }
 });
@@ -107,19 +133,35 @@ export const save=internalMutation({args:{...scanArgs,leaseAt:v.number(),job:v.a
   if(!source) fail("NOT_READY","The pinned catalog provenance is unavailable.");
   // Keep source reference encounters intact. The frozen schema has no separate numerical/reference measurements;
   // matching existing records is preferable to overwriting supplied probability with a nonexistent computed Pc.
+  const simulationRuns=new Map<string,Id<"demoRuns">|null>(),publicationExclusions=new Map<string,number>();
+  const omit=(reason:string)=>publicationExclusions.set(reason,(publicationExclusions.get(reason)??0)+1);
   for(const e of result.events) {
    if(!e.primaries.some(id=>r.primaryObjectIds.includes(id) && [e.objectA,e.objectB].includes(id)) ||
     Date.parse(e.tcaUtc)<r.fromMs || Date.parse(e.tcaUtc)>r.toMs) fail("INVALID_RESPONSE","Event is outside the scanned fleet or window.");
+   const simIds=[e.objectA,e.objectB].filter(id=>id.startsWith("SIM-"));
+   if(simIds.length>0&&!e.simulated)fail("INVALID_RESPONSE","A simulated encounter was mislabeled as real.");
+   if(e.simulated){
+    let belongs=!!r.demoRunId&&simIds.length>0;
+    for(const id of simIds){
+     if(!simulationRuns.has(id))simulationRuns.set(id,await simulationRun(ctx,id));
+     belongs=belongs&&simulationRuns.get(id)===r.demoRunId;
+    }
+    if(!belongs){omit("publication_excluded_unrelated_simulated_encounters");continue;}
+   }
    const a=await findObject(ctx,e.objectA), b=await findObject(ctx,e.objectB);
    const prior=a&&b&&(await findEncounter(ctx,a._id,b._id,Date.parse(e.tcaUtc))??await findEncounter(ctx,b._id,a._id,Date.parse(e.tcaUtc)));
-   if(prior) continue;
+   if(prior){
+    if(prior.simulated!==e.simulated||(prior.demoRunId??null)!==(e.simulated?r.demoRunId:null))omit("publication_excluded_conflicting_encounters");
+    continue;
+   }
    const object=(id:string,stored:Doc<"spaceObjects">|null)=>({objectId:id,name:stored?.name??result.objects[id]?.name??id,country:stored?.country??null,launchDate:stored?.launchDate??null});
-   await ingestEncounter(ctx,{snapshotId:source._id,objectA:object(e.objectA,a),objectB:object(e.objectB,b),tcaUtc:e.tcaUtc,
+   const {eventId}=await ingestEncounter(ctx,{snapshotId:source._id,objectA:object(e.objectA,a),objectB:object(e.objectB,b),tcaUtc:e.tcaUtc,
     missKm:e.missKm,relSpeedKmS:e.relSpeedKmS,pcValue:null,simulated:e.simulated});
+   if(e.simulated&&r.demoRunId)await ctx.db.patch(eventId,{demoRunId:r.demoRunId});
   }
   await ctx.db.patch(scanId,{status:"completed",phase:"done",progress:1,jobId:job.jobId,counts:result.counts,
    coverage:{complete:result.coverage.complete,catalogScope:result.coverage.catalogScope,excludedObjects:result.coverage.excludedObjects,
-    reasons:result.coverage.reasons,missingPrimaryIds:result.missingPrimaryIds},finishedAt:Date.now(),updatedAt:Math.max(Date.now(),r.updatedAt)});
+    reasons:[...result.coverage.reasons,...[...publicationExclusions].map(([reason,count])=>({reason,count}))],missingPrimaryIds:result.missingPrimaryIds},finishedAt:Date.now(),updatedAt:Math.max(Date.now(),r.updatedAt)});
  } else {
   const counts={...r.counts}; for(const k of Object.keys(counts) as (keyof typeof counts)[]) if(Number.isFinite(job.counters[k])) counts[k]=job.counters[k];
   await ctx.db.patch(scanId,{status:"running",phase:job.phase,progress:job.progress,jobId:job.jobId,counts,updatedAt:Math.max(Date.now(),r.updatedAt)});
@@ -130,7 +172,7 @@ export const run=internalAction({args:runArgs,handler:async(ctx,{scanId,recovery
  const claimed=await ctx.runMutation(claimRef,{scanId,...(recovery ? {recovery} : {})}) as {run:Doc<"scanRuns">;leaseAt:number}|null; if(!claimed) return;
  const {run:r,leaseAt}=claimed;
  try {
-  if(!r.jobId) await startScreen({scanId:String(scanId),snapshotId:r.snapshotId,primaryObjectIds:r.primaryObjectIds,fromUtc:isoUtc(r.fromMs),toUtc:isoUtc(r.toMs)});
+  if(!r.jobId) await startScreen({scanId:String(scanId),snapshotId:r.snapshotId,primaryObjectIds:r.primaryObjectIds,fromUtc:isoUtc(r.fromMs),toUtc:isoUtc(r.toMs),...(r.demoRunId?{runId:String(r.demoRunId)}:{})});
   const job=await getScreenJob(`screen-${scanId}`,{scanId:String(scanId),snapshotId:r.snapshotId});
   await ctx.runMutation(saveRef,{scanId,leaseAt,job});
  } catch(error) {await ctx.runMutation(failRef,{scanId,leaseAt,...orbitFailure(error)});}

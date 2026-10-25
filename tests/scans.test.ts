@@ -110,3 +110,101 @@ it("does not use simulated snapshot provenance for a real fleet scan",async()=>{
  await as().mutation(start,{requestId:"catalog"});await t.finishAllScheduledFunctions(vi.runAllTimers);
  expect(vi.mocked(startScreen).mock.calls[0][0].snapshotId).toBe("gp-20261024T2134Z");
 });
+
+async function demoFleet({keepReal=false}={}){
+ const s=await setup();
+ const data=await s.t.run(async ctx=>{
+  const user=(await ctx.db.query("users").withIndex("by_token_identifier",q=>q.eq("tokenIdentifier","a")).unique())!;
+  const demoRunId=await ctx.db.insert("demoRuns",{scenario:"operator-launch",state:"open",startedBy:user._id,manifest:null,startedAt:Date.now(),closedAt:null});
+  await ctx.db.insert("spaceObjects",catalogObject("SIM-8000"));
+  await ctx.db.insert("satelliteOwners",{objectId:"SIM-8000",companyId:user.companyId});
+  await ctx.db.insert("fleetAssignments",{objectId:"SIM-8000",userId:user._id,active:true});
+  if(!keepReal){const a=(await ctx.db.query("fleetAssignments").withIndex("by_user_object",q=>q.eq("userId",user._id).eq("objectId","100")).unique())!;await ctx.db.patch(a._id,{active:false});}
+  const snapshotId=(await ctx.db.query("snapshots").first())!._id;
+  return {demoRunId,snapshotId};
+ });
+ const {eventId}=await s.t.mutation(internal.events.ingest,{snapshotId:data.snapshotId,objectA:catalogObject("SIM-8000"),objectB:catalogObject("200"),tcaUtc:new Date(FIXTURE_NOW+2*3600000).toISOString(),missKm:0.2,relSpeedKmS:5,pcValue:0.001,simulated:true});
+ await s.t.run(ctx=>ctx.db.patch(eventId,{demoRunId:data.demoRunId}));
+ return {...s,...data,eventId};
+}
+function simulatedAnswer(){
+ answers();const original=vi.mocked(getScreenJob).getMockImplementation()!;
+ vi.mocked(getScreenJob).mockImplementation(async(...args)=>{const job=await original(...args);job.result!.counts.primaryObjects=vi.mocked(startScreen).mock.calls[0][0].primaryObjectIds.length;job.result!.counts.primariesCompleted=job.result!.counts.primaryObjects;job.result!.events[0]={...job.result!.events[0],objectA:"SIM-8000",objectB:"300",primaries:["SIM-8000"],simulated:true};return job;});
+}
+it("binds a launch fleet scan and new simulated incidents to the open run",async()=>{
+ const {t,as,demoRunId}=await demoFleet({keepReal:true});simulatedAnswer();
+ const {scanId}=await as().mutation(start,{requestId:"demo"});
+ expect(await t.run(ctx=>ctx.db.query("scanRuns").withIndex("by_demo_run",q=>q.eq("demoRunId",demoRunId)).collect())).toMatchObject([{_id:scanId,demoRunId}]);
+ await t.finishAllScheduledFunctions(vi.runAllTimers);
+ expect(vi.mocked(startScreen).mock.calls[0][0]).toMatchObject({primaryObjectIds:["100","SIM-8000"],runId:String(demoRunId)});
+ expect(await as().query(get,{scanId})).toMatchObject({status:"completed",demoRunId});
+ const events=await t.run(ctx=>ctx.db.query("events").withIndex("by_demo_run",q=>q.eq("demoRunId",demoRunId)).collect());
+ expect(events).toHaveLength(2);expect(events.every(e=>e.simulated)).toBe(true);
+});
+it.each(["unbound","closed","ambiguous"])("refuses a %s simulated fleet before scheduling",async kind=>{
+ const {t,as,demoRunId,eventId}=await demoFleet();
+ await t.run(async ctx=>{
+  if(kind==="unbound")await ctx.db.patch(eventId,{demoRunId:undefined});
+  if(kind==="closed")await ctx.db.patch(demoRunId,{state:"closed",closedAt:Date.now()});
+  if(kind==="ambiguous"){
+   const other=await ctx.db.insert("demoRuns",{scenario:"other",state:"open",startedBy:null,manifest:null,startedAt:Date.now(),closedAt:null});
+   const {_id,_creationTime,...e}=(await ctx.db.get(eventId))!;await ctx.db.insert("events",{...e,demoRunId:other,tcaMs:e.tcaMs+600000});
+  }
+ });
+ await expect(as().mutation(start,{requestId:"bad-demo"})).rejects.toThrow(/unambiguous open/);
+ expect(await t.run(ctx=>ctx.db.query("scanRuns").collect())).toHaveLength(0);
+ expect(startScreen).not.toHaveBeenCalled();
+});
+it("stops a queued demo scan when its run closes even without assignment changes",async()=>{
+ const {t,as,demoRunId}=await demoFleet();simulatedAnswer();const {scanId}=await as().mutation(start,{requestId:"reset"});
+ await t.run(ctx=>ctx.db.patch(demoRunId,{state:"closed",closedAt:Date.now()}));
+ await t.finishAllScheduledFunctions(vi.runAllTimers);
+ expect(startScreen).not.toHaveBeenCalled();
+ expect(await t.run(ctx=>ctx.db.get(scanId))).toMatchObject({status:"failed",demoRunId});
+});
+it("does not publish an in-flight scan after the demo closes",async()=>{
+ const {t,as,demoRunId}=await demoFleet();simulatedAnswer();const original=vi.mocked(getScreenJob).getMockImplementation()!;
+ vi.mocked(getScreenJob).mockImplementation(async(...args)=>{const job=await original(...args);await t.run(ctx=>ctx.db.patch(demoRunId,{state:"closed",closedAt:Date.now()}));return job;});
+ const {scanId}=await as().mutation(start,{requestId:"reset-in-flight"});await t.finishAllScheduledFunctions(vi.runAllTimers);
+ expect(await t.run(ctx=>ctx.db.get(scanId))).toMatchObject({status:"failed"});
+ expect(await t.run(ctx=>ctx.db.query("events").collect())).toHaveLength(1);
+});
+it("excludes unrelated simulated catalog remnants from real scans without altering measured counts",async()=>{
+ const {t,as}=await setup();answers();const original=vi.mocked(getScreenJob).getMockImplementation()!;
+ vi.mocked(getScreenJob).mockImplementation(async(...args)=>{const job=await original(...args);job.result!.events[0].objectB="SIM-9999";job.result!.events[0].simulated=true;return job;});
+ const {scanId}=await as().mutation(start,{requestId:"real"});await t.finishAllScheduledFunctions(vi.runAllTimers);
+ expect(await as().query(get,{scanId})).toMatchObject({status:"completed",demoRunId:null,counts:{eventsFound:1},coverage:{complete:true,excludedObjects:0,reasons:[{reason:"publication_excluded_unrelated_simulated_encounters",count:1}]}});
+ expect(await t.run(ctx=>ctx.db.query("events").collect())).toHaveLength(0);
+ expect(await t.run(ctx=>ctx.db.query("spaceObjects").withIndex("by_object_id",q=>q.eq("objectId","SIM-9999")).unique())).toBeNull();
+});
+it.each(["foreign_open","foreign_closed"])("excludes a %s counterpart from this demonstration",async state=>{
+ const {t,as,demoRunId,snapshotId}=await demoFleet();simulatedAnswer();
+ const foreign=await t.run(ctx=>ctx.db.insert("demoRuns",{scenario:"foreign",state:state==="foreign_open"?"open":"closed",startedBy:null,manifest:null,startedAt:Date.now(),closedAt:state==="foreign_open"?null:Date.now()}));
+ const {eventId}=await t.mutation(internal.events.ingest,{snapshotId,objectA:catalogObject("SIM-9000"),objectB:catalogObject("900"),tcaUtc:new Date(FIXTURE_NOW+2*3600000).toISOString(),missKm:0.2,relSpeedKmS:5,pcValue:0.001,simulated:true});await t.run(ctx=>ctx.db.patch(eventId,{demoRunId:foreign}));
+ const original=vi.mocked(getScreenJob).getMockImplementation()!;vi.mocked(getScreenJob).mockImplementation(async(...args)=>{const job=await original(...args);job.result!.events[0].objectB="SIM-9000";return job;});
+ const {scanId}=await as().mutation(start,{requestId:"isolated"});await t.finishAllScheduledFunctions(vi.runAllTimers);
+ expect(await as().query(get,{scanId})).toMatchObject({status:"completed",demoRunId,counts:{eventsFound:1},coverage:{reasons:[{reason:"publication_excluded_unrelated_simulated_encounters",count:1}]}});
+ expect(await t.run(ctx=>ctx.db.query("events").collect())).toHaveLength(2);
+});
+it("keeps real encounters untagged when a mixed real/demo fleet is screened",async()=>{
+ const {t,as,demoRunId}=await demoFleet({keepReal:true});simulatedAnswer();
+ const original=vi.mocked(getScreenJob).getMockImplementation()!;
+ vi.mocked(getScreenJob).mockImplementation(async(...args)=>{const job=await original(...args);job.result!.events.push({...job.result!.events[0],objectA:"100",objectB:"200",primaries:["100"],simulated:false});job.result!.counts.eventsFound=2;return job;});
+ await as().mutation(start,{requestId:"mixed"});await t.finishAllScheduledFunctions(vi.runAllTimers);
+ const events=await t.run(ctx=>ctx.db.query("events").collect());
+ expect(events).toHaveLength(3);
+ expect(events.filter(e=>e.simulated).every(e=>e.demoRunId===demoRunId)).toBe(true);
+ expect(events.filter(e=>!e.simulated)).toHaveLength(1);
+ expect(events.find(e=>!e.simulated)).not.toHaveProperty("demoRunId");
+});
+it("preserves a matching closed-run encounter instead of adopting it into the new run",async()=>{
+ const {t,as,demoRunId,snapshotId}=await demoFleet();simulatedAnswer();
+ const closed=await t.run(ctx=>ctx.db.insert("demoRuns",{scenario:"old",state:"closed",startedBy:null,manifest:null,startedAt:Date.now(),closedAt:Date.now()}));
+ const {eventId}=await t.mutation(internal.events.ingest,{snapshotId,objectA:catalogObject("SIM-8000"),objectB:catalogObject("300"),tcaUtc:new Date(FIXTURE_NOW+3600000).toISOString(),missKm:0.2,relSpeedKmS:5,pcValue:0.001,simulated:true});
+ await t.run(ctx=>ctx.db.patch(eventId,{demoRunId:closed,active:false}));
+ const before=await t.run(ctx=>ctx.db.get(eventId));
+ const {scanId}=await as().mutation(start,{requestId:"preserve-closed"});await t.finishAllScheduledFunctions(vi.runAllTimers);
+ expect(await as().query(get,{scanId})).toMatchObject({status:"completed",demoRunId,coverage:{reasons:[{reason:"publication_excluded_conflicting_encounters",count:1}]}});
+ expect(await t.run(ctx=>ctx.db.get(eventId))).toEqual(before);
+ expect(await t.run(ctx=>ctx.db.query("events").collect())).toHaveLength(2);
+});
