@@ -1,14 +1,14 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowRight, Check, CheckCheck, CircleDot, Radar, X } from "lucide-react";
+import { ArrowRight, Check, CheckCheck, Radar, X } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
-import { fmtMiss, fmtMs, fmtUsd, fmtWhen } from "@/lib/ops/format";
+import { fmtMiss, fmtMs, fmtOdds, fmtUsd, fmtWhen } from "@/lib/ops/format";
 import { runScan } from "@/lib/ops/scenarios";
 import { useOps } from "@/lib/ops/store";
-import type { ConjunctionEvent, Party, Reply } from "@/lib/ops/types";
+import type { ConjunctionEvent, Proposal, Reply } from "@/lib/ops/types";
 import { sfx } from "@/lib/sound";
-import { Flag } from "@/components/ui/OwnerBadge";
+import { ObjectChip } from "./Entity";
 
 // The end of the loop: green edge glow and one card that says who decided what, what was
 // done, what was checked, and what happens next. Everything comes from the run itself.
@@ -79,13 +79,14 @@ export function ResolutionOverlay() {
               animate={{ opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
               exit={{ opacity: 0, scale: 0.97, y: 10 }}
               transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-              className="glass glass-strong relative w-[620px] max-w-[calc(100vw-32px)] overflow-hidden rounded-[18px]"
+              className="relative w-[780px] max-w-[calc(100vw-32px)] overflow-hidden rounded-[20px] bg-[rgba(4,4,5,0.95)] text-neutral-200 backdrop-blur-2xl"
               style={{ boxShadow: "0 0 0 1px rgba(61,220,151,0.4), 0 30px 80px -20px rgba(0,0,0,0.9), 0 0 60px -14px rgba(61,220,151,0.5)" }}
             >
               <Header ev={ev} onClose={close} />
-              <div className="thin-scroll max-h-[min(62vh,560px)] space-y-3 overflow-y-auto px-5 pb-4">
+              <div className="thin-scroll max-h-[min(72vh,720px)] space-y-6 overflow-y-auto px-6 pb-5">
+                <Problem ev={ev} />
+                <Story ev={ev} replies={replies.filter((r) => r.eventId === ev.id)} />
                 <Verdict ev={ev} revisions={stats.revisions} />
-                <Parties ev={ev} replies={replies.filter((r) => r.eventId === ev.id)} />
                 <Checks ev={ev} />
                 <Next ev={ev} />
               </div>
@@ -155,9 +156,94 @@ function Header({ ev, onClose }: { ev: ConjunctionEvent; onClose: () => void }) 
 function Section({ title, children, delay }: { title: string; children: React.ReactNode; delay: number }) {
   return (
     <motion.section initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay, duration: 0.3 }}>
-      <div className="eyebrow mb-1.5">{title}</div>
+      <div className="mb-2.5 border-b border-white/[0.06] pb-2 text-[12.5px] font-semibold text-neutral-200">{title}</div>
       {children}
     </motion.section>
+  );
+}
+
+const nameOf = (ev: ConjunctionEvent, side: "a" | "b") =>
+  (ev.parties?.find((p) => p.role === side)?.operator ?? (side === "a" ? ev.a.operator : ev.b.operator)).replace(/\s*\(synthetic\)/i, "");
+
+const planText = (ev: ConjunctionEvent, p: Proposal) =>
+  p.action === "wait" ? "Both wait for the next conjunction message" : `${p.mover === "a" ? ev.a.name : ev.b.name} ${p.action === "raise" ? "raises" : "lowers"} its orbit by ${p.dvMs} m/s`;
+
+/** What was wrong, in one paragraph a dispatcher can repeat. */
+function Problem({ ev }: { ev: ConjunctionEvent }) {
+  const debris = ev.b.kind === "debris";
+  return (
+    <Section title="The problem" delay={0.1}>
+      <p className="text-[14px] leading-[1.7] text-neutral-300">
+        <ObjectChip e={ev} side="a" /> ({nameOf(ev, "a")}) and <ObjectChip e={ev} side="b" /> ({debris ? "debris, no operator" : nameOf(ev, "b")}) were predicted to pass{" "}
+        <span className="tnum font-semibold text-white">{fmtMiss(ev.missM)}</span> apart on <span className="tnum font-semibold text-white">{fmtWhen(ev.tca)}</span>, crossing at{" "}
+        <span className="tnum font-semibold text-white">{ev.relVelKms.toFixed(1)} km/s</span>. The chance of collision was{" "}
+        <span className="tnum font-semibold text-red">{fmtOdds(ev.pc)}</span> ({ev.pcSource}), above the 1 in 10,000 line where operators act, and the two orbit sources disagreed by{" "}
+        <span className="tnum font-semibold text-white">{fmtMiss(ev.uncertaintyM)}</span>.
+      </p>
+    </Section>
+  );
+}
+
+/** How the decision was reached: every plan version, who answered what, and why it changed. */
+function Story({ ev, replies }: { ev: ConjunctionEvent; replies: Reply[] }) {
+  const versions = ev.proposals?.length ? ev.proposals : ev.proposal ? [ev.proposal] : [];
+  const final = ev.proposal?.version;
+  return (
+    <Section title="How it was resolved" delay={0.2}>
+      <ol className="relative space-y-4 pl-6">
+        <span className="absolute bottom-2 left-[7px] top-2 w-px bg-white/[0.08]" />
+        {versions.map((p, i) => {
+          const answers = replies.filter((r) => r.version === p.version);
+          const agreed = p.version === final;
+          return (
+            <motion.li key={p.version} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.25 + i * 0.08 }} className="relative">
+              <span
+                className="absolute -left-6 top-[3px] grid h-[15px] w-[15px] place-items-center rounded-full text-[8px] font-bold"
+                style={{ background: agreed ? "var(--green)" : "#262626", color: agreed ? "#000" : "#a3a3a3", boxShadow: "0 0 0 3px rgba(4,4,5,1)" }}
+              >
+                {agreed ? <Check size={9} strokeWidth={3.5} /> : p.version}
+              </span>
+              <div className="text-[11.5px] font-medium text-neutral-500">
+                Plan v{p.version} · {i === 0 ? "proposed by the agents" : p.reason ?? "revised by the agents"}
+              </div>
+              <div className="mt-0.5 text-[14px] font-semibold text-white">
+                {planText(ev, p)}
+                {p.burnAt && <span className="tnum font-normal text-neutral-400"> · burn {fmtWhen(p.burnAt)}</span>}
+                <span className="tnum font-normal text-neutral-400"> · miss {fmtMiss(p.missBeforeM)} → </span>
+                <span className="tnum text-white">{fmtMiss(p.missAfterM)}</span>
+              </div>
+              <p className="mt-1 text-[13px] leading-[1.6] text-neutral-400">{p.rationale}</p>
+              {answers.length > 0 && (
+                <ul className="mt-2 space-y-1.5">
+                  {answers.map((r, k) => (
+                    <li key={k} className="text-[13px] leading-[1.55]">
+                      <span className="font-medium text-neutral-200">{nameOf(ev, r.side)}</span>{" "}
+                      <span style={{ color: ANSWER[r.decision].color }}>{ANSWER[r.decision].label}</span>
+                      {r.note && <span className="text-neutral-300">: “{r.note}”</span>}
+                      {r.original && <span className="block text-[12px] text-neutral-500">Said in {r.lang}: “{r.original}”</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {agreed && (
+                <div className="mt-1.5 text-[12.5px] font-medium text-green">
+                  {ev.b.kind === "debris" ? "Approved by the only operator: debris has no operator." : "Both sides approved this version."}
+                </div>
+              )}
+            </motion.li>
+          );
+        })}
+      </ol>
+      {(ev.parties ?? []).some((p) => p.role === "affected") && (
+        <p className="mt-3 text-[13px] text-neutral-400">
+          {(ev.parties ?? [])
+            .filter((p) => p.role === "affected")
+            .map((p) => p.operator.replace(/\s*\(synthetic\)/i, ""))
+            .join(", ")}{" "}
+          operates a satellite near the new path and was notified before the burn.
+        </p>
+      )}
+    </Section>
   );
 }
 
@@ -167,7 +253,7 @@ function Verdict({ ev, revisions }: { ev: ConjunctionEvent; revisions: number })
   const who = p.mover === "a" ? ev.a.name : p.mover === "b" ? ev.b.name : "Nobody";
   const verb = p.action === "raise" ? "raised" : p.action === "lower" ? "lowered" : "waited";
   return (
-    <Section title="Verdict" delay={0.15}>
+    <Section title="Final plan" delay={0.35}>
       <div className="rounded-[12px] bg-[rgba(61,220,151,0.06)] p-3 shadow-[inset_0_0_0_1px_rgba(61,220,151,0.22)]">
         <div className="text-[14px] font-semibold tracking-[-0.01em]">
           {who} {verb}
@@ -191,72 +277,11 @@ function Verdict({ ev, revisions }: { ev: ConjunctionEvent; revisions: number })
   );
 }
 
-function Parties({ ev, replies }: { ev: ConjunctionEvent; replies: Reply[] }) {
-  const parties: Party[] = ev.parties ?? [];
-  return (
-    <Section title="Parties" delay={0.25}>
-      <div className="divide-y divide-white/[0.05] overflow-hidden rounded-[12px] bg-white/[0.03] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]">
-        {parties.map((p, i) => {
-          const answers = p.role === "affected" ? [] : replies.filter((r) => r.side === p.role);
-          return (
-            <motion.div
-              key={p.id}
-              initial={{ opacity: 0, x: -6 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.3 + i * 0.08 }}
-              className="flex items-start gap-2.5 px-3 py-2.5"
-            >
-              <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-[7px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)]">
-                {p.country ? <Flag code={p.country} h={28} /> : <CircleDot size={13} className="text-muted" />}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-[12px] font-medium">{p.operator.replace(/\s*\(synthetic\)/i, "")}</span>
-                  <span className="shrink-0 text-[10px] text-muted">
-                    {p.role === "affected" ? "Affected operator" : `Side ${p.role.toUpperCase()}`}
-                    {p.language ? ` · ${p.language}` : ""}
-                  </span>
-                </div>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {p.role === "affected" ? (
-                    <Pill color="var(--green)">Notified before the burn · acknowledged</Pill>
-                  ) : answers.length ? (
-                    answers.map((r, k) => (
-                      <Pill key={k} color={ANSWER[r.decision].color}>
-                        {r.version ? `v${r.version} ` : ""}
-                        {ANSWER[r.decision].label}
-                        {r.note ? ` · “${r.note}”` : ""}
-                      </Pill>
-                    ))
-                  ) : (
-                    <Pill color="var(--muted)">No answer recorded</Pill>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          );
-        })}
-      </div>
-    </Section>
-  );
-}
-
-function Pill({ color, children }: { color: string; children: React.ReactNode }) {
-  return (
-    <span
-      className="max-w-full truncate rounded-full px-2 py-0.5 text-[10.5px] font-medium"
-      style={{ color, background: `color-mix(in srgb, ${color} 11%, transparent)`, boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${color} 22%, transparent)` }}
-    >
-      {children}
-    </span>
-  );
-}
-
 function Checks({ ev }: { ev: ConjunctionEvent }) {
   const checks = ev.outcome?.checks ?? [];
   if (!checks.length) return null;
   return (
-    <Section title="Done and verified" delay={0.4}>
+    <Section title="Done and verified" delay={0.45}>
       <ul className="space-y-1.5">
         {checks.map((c, i) => (
           <motion.li
