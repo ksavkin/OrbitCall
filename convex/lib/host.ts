@@ -451,6 +451,7 @@ export async function traceSpan<T>(
   let usage: AgentSpan["usage"] = null;
   const measured = (call: ModelCall) => { model = call.model; usage = call.usage; };
   try {
+    if (!Number.isInteger(start.attempt) || start.attempt < 1) throw new AnalystError("INVALID_INPUT", "The attempt must be a positive integer.");
     const value = await work(measured);
     return { span: { ...start, model, startedAt, finishedAt: Date.now(), status: "succeeded", usage, errorCode: null, errorMessage: null }, value };
   } catch (error) {

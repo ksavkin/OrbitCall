@@ -291,8 +291,8 @@ describe("Gemini transport", () => {
 });
 
 describe("Coordination Host action", () => {
-  const run = (context: HostContext = hostContext) =>
-    backend().action(internal.coordinationHost.run, { context, attempt: 1 });
+  const run = (context: HostContext = hostContext, attempt = 1) =>
+    backend().action(internal.coordinationHost.run, { context, attempt });
 
   it("returns a succeeded span with usage and the checked output", async () => {
     const fetch = vi.fn().mockResolvedValue(geminiResponse(raw()));
@@ -355,4 +355,12 @@ describe("Coordination Host action", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it.each([0, -1, 1.5])("fails without calling the model for attempt %s", async attempt => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const { span, output: checked } = await run(hostContext, attempt);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(checked).toBeNull();
+    expect(span).toMatchObject({ status: "failed", errorCode: "INVALID_INPUT", attempt });
+  });
 });

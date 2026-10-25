@@ -126,7 +126,16 @@ describe("Grok transport", () => {
 });
 
 describe("Rationale check action", () => {
-  const run = (value: CheckInput = input) => backend().action(internal.rationaleCheck.run, { input: value, attempt: 2 });
+  const run = (value: CheckInput = input, attempt = 2) => backend().action(internal.rationaleCheck.run, { input: value, attempt });
+
+  it.each([0, 2.5])("fails without calling the model for attempt %s", async attempt => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const { span, result } = await run(input, attempt);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toBeNull();
+    expect(span).toMatchObject({ status: "failed", errorCode: "INVALID_INPUT", attempt });
+  });
 
   it("returns a succeeded span with usage and the result", async () => {
     const fetch = vi.fn().mockResolvedValue(grokResponse(raw(agreement)));
