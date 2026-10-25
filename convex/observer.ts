@@ -3,19 +3,93 @@ import { query, internalMutation } from "./_generated/server";
 import { requireUser } from "./session";
 import { inputKey } from "./lib/analyst";
 import { loadFacts } from "./lib/events";
+import { eventStatus } from "./lib/validators";
+import { maneuverStatus } from "./schema/schedule";
+import { verificationResult } from "./schema/records";
+import { scanPhase, scanStatus } from "./schema/scans";
 
 // Called observer.publicView because issue #6 allocates this module; the frontend adapter is Round 3.
 // A provisioned observer role alone is insufficient. The server grants one specific run in its scalar manifest.
-export const authorize=internalMutation({args:{demoRunId:v.id("demoRuns"),userId:v.id("users")},handler:async(ctx,{demoRunId,userId})=>{
+// The observer projection's allowlist (spec §3.1 demo.publicView: shared globe/scan/proposal/job/results only).
+// The returns validator is the enforcement: every field the observer may see is listed here, and the handler
+// picks each one by name, so a new column on any source table can never reach the large display by accident.
+const observerCard = v.object({
+  proposalId: v.id("proposals"),
+  candidateId: v.string(),
+  revision: v.number(),
+  label: v.string(),
+  kind: v.union(v.literal("maneuver"), v.literal("wait")),
+  movingObjectId: v.union(v.string(), v.null()),
+  burnTimeUtc: v.union(v.string(), v.null()),
+  deltaVMs: v.union(v.number(), v.null()),
+  direction: v.union(v.literal("prograde"), v.literal("retrograde"), v.null()),
+  missAfterKm: v.union(v.number(), v.null()),
+  simulated: v.boolean(),
+});
+const observerJob = v.object({
+  maneuverId: v.id("maneuvers"),
+  status: maneuverStatus,
+  reviewRequired: v.boolean(),
+  rescreen: v.union(v.object({ passed: v.boolean(), objectsChecked: v.number(), horizonH: v.number() }), v.null()),
+  commitSha: v.union(v.string(), v.null()),
+});
+const observerVerification = v.object({
+  kind: v.union(v.literal("live"), v.literal("replay")),
+  result: verificationResult,
+  label: v.string(),
+  simulated: v.boolean(),
+  elementSetCount: v.number(),
+});
+const observerEvent = v.object({
+  eventId: v.id("events"),
+  objects: v.array(v.union(v.object({ objectId: v.string(), name: v.string() }), v.null())),
+  tcaUtc: v.string(),
+  missKm: v.number(),
+  probability: v.union(v.number(), v.null()),
+  status: eventStatus,
+  simulated: v.boolean(),
+  candidates: v.array(observerCard),
+  selection: v.union(observerCard, v.null()),
+  // Counts only: who signed is shared in the room record, not on the public display.
+  approval: v.object({ approved: v.number(), required: v.number(), allRequiredApproved: v.boolean() }),
+  jobs: v.array(observerJob),
+  verification: v.union(observerVerification, v.null()),
+});
+const observerScan = v.object({
+  scanId: v.id("scanRuns"),
+  status: scanStatus,
+  phase: scanPhase,
+  progress: v.union(v.number(), v.null()),
+  counts: v.object({
+    primaryObjects: v.number(), catalogObjects: v.number(), primariesCompleted: v.number(),
+    pairsChecked: v.number(), eventsFound: v.number(),
+  }),
+  coverage: v.object({
+    complete: v.boolean(), catalogScope: v.string(), excludedObjects: v.number(),
+    reasons: v.array(v.object({ reason: v.string(), count: v.number() })),
+    missingPrimaryIds: v.array(v.string()),
+  }),
+});
+const publicViewResult = v.object({
+  demoRunId: v.id("demoRuns"),
+  scenario: v.string(),
+  state: v.union(v.literal("open"), v.literal("closed")),
+  events: v.array(observerEvent),
+  scans: v.array(observerScan),
+  truncated: v.boolean(),
+});
+
+export const authorize=internalMutation({args:{demoRunId:v.id("demoRuns"),userId:v.id("users")},returns:v.null(),handler:async(ctx,{demoRunId,userId})=>{
  const [run,user]=await Promise.all([ctx.db.get(demoRunId),ctx.db.get(userId)]);
  if(!run || run.state!=="open" || !user || user.role!=="demo_observer") throw new ConvexError({code:"FORBIDDEN",message:"An open run and a provisioned observer are required."});
  await ctx.db.patch(demoRunId,{manifest:{...run.manifest,observerUserId:String(userId)}});
+ return null;
 }});
-export const publicView=query({args:{demoRunId:v.id("demoRuns")},handler:async(ctx,{demoRunId})=>{
+export const publicView=query({args:{demoRunId:v.id("demoRuns")},returns:publicViewResult,handler:async(ctx,{demoRunId})=>{
  const {user}=await requireUser(ctx), run=await ctx.db.get(demoRunId);
  if(user.role!=="demo_observer" || !run || run.manifest?.observerUserId!==String(user._id)) throw new ConvexError({code:"FORBIDDEN",message:"This observer is not authorized for that demonstration."});
  const base={demoRunId,scenario:run.scenario,state:run.state};
- if(run.state==="closed" || run.closedAt!==null) return {...base,events:[],scans:[],truncated:false};
+ if(run.state==="closed" || run.closedAt!==null) return {demoRunId:base.demoRunId,scenario:base.scenario,state:base.state,events:[],scans:[],truncated:false};
  const rows=await ctx.db.query("events").withIndex("by_demo_run",q=>q.eq("demoRunId",demoRunId)).take(101);
  const scans=await ctx.db.query("scanRuns").withIndex("by_demo_run",q=>q.eq("demoRunId",demoRunId)).take(21);
  let truncated=rows.length>100 || scans.length>20;
@@ -78,5 +152,7 @@ export const publicView=query({args:{demoRunId:v.id("demoRuns")},handler:async(c
    approval:{approved:selected?valid.size:0,required:required.length,allRequiredApproved:!!selected&&e.workflow!=="internal_review"&&required.length>0&&required.every(s=>valid.has(s))},
    jobs,verification:verification?{kind:verification.kind,result:verification.result,label:verification.label,simulated:verification.simulated,elementSetCount:verification.elementSetCount}:null});
  }
- return {...base,events,scans:scans.slice(0,20).map(s=>({scanId:s._id,status:s.status,phase:s.phase,progress:s.progress,counts:s.counts,coverage:s.coverage})),truncated};
+ return {demoRunId:base.demoRunId,scenario:base.scenario,state:base.state,events,truncated,scans:scans.slice(0,20).map(s=>({scanId:s._id,status:s.status,phase:s.phase,progress:s.progress,
+  counts:{primaryObjects:s.counts.primaryObjects,catalogObjects:s.counts.catalogObjects,primariesCompleted:s.counts.primariesCompleted,pairsChecked:s.counts.pairsChecked,eventsFound:s.counts.eventsFound},
+  coverage:{complete:s.coverage.complete,catalogScope:s.coverage.catalogScope,excludedObjects:s.coverage.excludedObjects,reasons:s.coverage.reasons.map(r=>({reason:r.reason,count:r.count})),missingPrimaryIds:[...s.coverage.missingPrimaryIds]}}))};
 }});
