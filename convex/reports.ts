@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { makeFunctionReference } from "convex/server";
 import { action, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireFleetScope } from "./fleetQuery";
 import { findObject, isoUtc } from "./lib/events";
 
@@ -56,7 +56,7 @@ async function report(ctx: QueryCtx, args: { periodStart: string; periodEnd: str
     if (!a || !b || !snapshot) fail("NOT_READY", "An incident has incomplete source records; export was not produced.");
     if (a.objectId.startsWith("SIM-") || b.objectId.startsWith("SIM-")) continue;
     let coordinated = false, scheduled = false;
-    const evidence: Doc<"verifications">[] = [];
+    const evidence: { row: Doc<"verifications">; intentKey: string; proposalId: Id<"proposals">; revision: number }[] = [];
     for (const member of group) {
       const approvals = await ctx.db.query("approvals").withIndex("by_event_current", q => q.eq("eventId", member._id)).take(101);
       const logs = await ctx.db.query("log").withIndex("by_event_at", q => q.eq("eventId", member._id)).take(501);
@@ -66,15 +66,22 @@ async function report(ctx: QueryCtx, args: { periodStart: string; periodEnd: str
         fail("LIMIT_EXCEEDED", "Incident history exceeds the report limit; no partial totals were returned.");
       coordinated ||= approvals.some(x => x.demoRunId === null && (x.status === "approved" || x.status === "vetoed")) ||
         logs.some(x => !x.simulated && x.demoRunId === null && x.actor.kind === "human" && ["message", "countered", "approved", "vetoed"].includes(x.action));
+      const plans = new Map<string, { proposalId: Id<"proposals">; revision: number }>();
       for (const link of links) {
-        const m = await ctx.db.get(link.maneuverId);
-        scheduled ||= !!m && m.status === "committed" && m.demoRunId === null;
+        const m = await ctx.db.get(link.maneuverId), signed = m?.refs.find(r => r.eventId === member._id);
+        if (m && signed && m.status === "committed" && m.demoRunId === null) {
+          scheduled = true; plans.set(m.intentKey, { proposalId: signed.proposalId, revision: signed.revision });
+        }
       }
-      evidence.push(...verifications.filter(x => x.kind === "live" && !x.simulated && x.demoRunId === null));
+      for (const row of verifications.filter(x => x.kind === "live" && !x.simulated && x.demoRunId === null)) {
+        const audit = logs.find(l => l.action === "verified" && !l.simulated && l.demoRunId === null &&
+          l.after?.verificationId === String(row._id) && typeof l.after.intentKey === "string" &&
+          plans.get(l.after.intentKey)?.proposalId === l.proposalId && plans.get(l.after.intentKey)?.revision === l.revision);
+        if (audit && typeof audit.after?.intentKey === "string") evidence.push({ row, intentKey: audit.after.intentKey, ...plans.get(audit.after.intentKey)! });
+        else missing.set("verificationPlanLink", "Some verification records lack an audit link to a committed proposal revision and are excluded from observation totals.");
+      }
     }
-    const latest = evidence.sort((x, y) => y.createdAt - x.createdAt || y._creationTime - x._creationTime)[0];
-    // The frozen verification table has no proposal/evidence pin. Preserve that uncertainty in exports.
-    if (latest) missing.set("verificationPlanLink", "Stored verification records do not identify the exact proposal revision or evidence generation they assessed.");
+    const latest = evidence.sort((x, y) => y.row.createdAt - x.row.createdAt || y.row._creationTime - x.row._creationTime)[0];
     for (const s of snapshot.sources) {
       if (s.name === "simulated") continue;
       const prior = sources.get(s.name) ?? { source: s.name, fromUtc: null, toUtc: null };
@@ -89,7 +96,7 @@ async function report(ctx: QueryCtx, args: { periodStart: string; periodEnd: str
     const status = e.status ?? "new";
     records.push({ eventId: e._id, supportingEventIds: group.map(x => x._id), objectA: a.objectId, objectB: b.objectId,
       tcaUtc: isoUtc(e.tcaMs), missKm: e.missKm, suppliedProbability: e.pcValue, status, coordinated, scheduled,
-      verification: latest?.result ?? null, unresolved: !["verified", "no_action_needed"].includes(status) });
+      verification: latest?.row.result ?? null, verificationIntentKey: latest?.intentKey ?? null, verificationProposalId: latest?.proposalId ?? null, verificationRevision: latest?.revision ?? null, unresolved: !["verified", "no_action_needed"].includes(status) });
   }
   return { companyId: scope.company._id, companyName: scope.company.name, periodStart: isoUtc(from), periodEnd: isoUtc(to),
     periodBasis: "Encounter time in [periodStart, periodEnd); current stored lifecycle and evidence.",
@@ -112,7 +119,7 @@ export function csvCell(value: unknown): string {
   return '"' + s.replaceAll('"', '""') + '"';
 }
 export function reportCsv(r: Report): string {
-  const keys = ["eventId", "objectA", "objectB", "tcaUtc", "missKm", "suppliedProbability", "status", "coordinated", "scheduled", "verification", "unresolved"] as const;
+  const keys = ["eventId", "objectA", "objectB", "tcaUtc", "missKm", "suppliedProbability", "status", "coordinated", "scheduled", "verification", "verificationIntentKey", "verificationProposalId", "verificationRevision", "unresolved"] as const;
   const metadata = [
     ["Report", "OrbitCall draft; not a regulatory filing"], ["Company", r.companyName],
     ["Period start", r.periodStart], ["Period end (exclusive)", r.periodEnd], ["Basis", r.periodBasis],

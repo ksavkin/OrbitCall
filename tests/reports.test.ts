@@ -73,3 +73,15 @@ it("excludes simulated coordination attached to a real event",async()=>{
  await t.run(async ctx=>{const row=(await ctx.db.query("log").first())!;await ctx.db.patch(row._id,{simulated:false});});
  expect((await as("a").query(preview,period)).eventsWithCoordination).toBe(1);
 });
+it("counts observed evidence only with a matching committed-plan audit reference",async()=>{
+ const {t,as,eventId}=await setup();
+ const ids=await t.run(async ctx=>{
+  const proposalId=await ctx.db.insert("proposals",{eventId,candidateId:"P1",label:"P1",latestRevision:1,demoRunId:null,createdAt:Date.now()});
+  const verificationId=await ctx.db.insert("verifications",{eventId,kind:"live",result:"consistent",label:"evidence consistent with plan",expected:{deltaAKm:0.5,sign:1},observed:{deltaAKm:0.5,z:10,epochUtc:"2026-10-25T01:00:00Z"},elementSetCount:8,series:[],thresholds:{z:5,minDeltaAKm:0.05,sizeTolerance:0.5,minSets:8},method:"fixture",limitations:[],missing:[],sources:[],demoRunId:null,simulated:false,createdAt:Date.now()});
+  const maneuverId=await ctx.db.insert("maneuvers",{refs:[{eventId,proposalId,revision:1,selectionGeneration:1}],trajectoryPlanId:null,trajectoryPlanVersion:null,pinned:{snapshotId:"test",evidenceKeys:[],policyRevisions:[],assignmentVersions:[]},status:"committed",filePath:"operators/a/schedule.json",diff:"diff",commitSha:"abc",writtenBy:"droid",rescreenJobId:null,rescreen:null,error:null,reviewRequired:false,demoRunId:null,updatedAt:Date.now(),intentKey:"current"});
+  await ctx.db.insert("maneuverEvents",{maneuverId,eventId});return {proposalId,verificationId};
+ });
+ let r=await as("a").query(preview,period);expect(r.eventsWithObservedExecution).toBe(0);expect(r.missingFields.some((x:{field:string})=>x.field==="verificationPlanLink")).toBe(true);
+ await t.run(ctx=>ctx.db.insert("log",{eventId,actor:{kind:"system"},action:"verified",summary:"Evidence",texts:null,before:null,after:{verificationId:String(ids.verificationId),intentKey:"current"},proposalId:ids.proposalId,revision:1,roomId:null,demoRunId:null,simulated:false,at:Date.now()}));
+ r=await as("a").query(preview,period);expect(r.eventsWithObservedExecution).toBe(1);expect(r.records[0]).toMatchObject({verification:"consistent",verificationIntentKey:"current",verificationRevision:1});
+});
