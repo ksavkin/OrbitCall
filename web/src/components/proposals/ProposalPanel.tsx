@@ -26,20 +26,8 @@ function partyOf(e: ConjunctionEvent, side: "a" | "b"): Party | undefined {
   return e.parties?.find((p) => p.role === side);
 }
 
-export function ProposalPanel({
-  e,
-  viewer,
-  now,
-  embedded = false,
-  readOnly = false,
-}: {
-  e: ConjunctionEvent;
-  viewer: "a" | "b";
-  now: number;
-  embedded?: boolean;
-  /** Observer and waiting views: the same cards, no controls (canAct: false). */
-  readOnly?: boolean;
-}) {
+/** The plan choice and the three acts, shared by the panel and the meeting message. */
+function usePlanChoice(e: ConjunctionEvent, viewer: "a" | "b", readOnly: boolean) {
   const autopilot = useOps((s) => s.autopilot && s.actAs !== viewer);
   const cards = cardsOf(e);
   // Approval needs an explicit shared selection; previewing or being first in the list is not one.
@@ -88,6 +76,25 @@ export function ProposalPanel({
     sfx.click();
     engine.decide(e.id, viewer, { decision: "countered", via: "message", note });
   };
+
+  return { autopilot, cards, sel, look, setLook, intent, intentCard, viewing, clearIntent, text, setText, me, rev, selName, choice, setChoice, chosen, chosenName, counter, approve, veto, select, message };
+}
+
+export function ProposalPanel({
+  e,
+  viewer,
+  now,
+  embedded = false,
+  readOnly = false,
+}: {
+  e: ConjunctionEvent;
+  viewer: "a" | "b";
+  now: number;
+  embedded?: boolean;
+  /** Observer and waiting views: the same cards, no controls (canAct: false). */
+  readOnly?: boolean;
+}) {
+  const { autopilot, cards, sel, setLook, intent, intentCard, viewing, clearIntent, text, setText, me, rev, selName, setChoice, chosen, chosenName, counter, approve, veto, message } = usePlanChoice(e, viewer, readOnly);
 
   return (
     <div className="text-fg">
@@ -377,5 +384,167 @@ function PlanCard({
         </span>
       </button>
     </motion.div>
+  );
+}
+
+const hhmm = (ms: number) => {
+  const t = new Date(ms);
+  return `${String(t.getUTCHours()).padStart(2, "0")}:${String(t.getUTCMinutes()).padStart(2, "0")}`;
+};
+
+/**
+ * The plans as one message in the meeting, from the agents: a compact row per plan, who has approved, and the two
+ * buttons. While the round is open the meeting keeps it in view; once decided it reads like any other message.
+ */
+export function PlanMessage({
+  e,
+  viewer,
+  at,
+  due,
+  done,
+  waitingFor,
+}: {
+  e: ConjunctionEvent;
+  viewer: "a" | "b";
+  at: number;
+  /** This side's turn: the circles and the buttons work. */
+  due: boolean;
+  /** The round is decided: no controls, the decided plan marked. */
+  done: boolean;
+  /** Who decides now, when it is not this side. */
+  waitingFor?: string;
+}) {
+  const readOnly = !due || done;
+  const { autopilot, cards, sel, intent, intentCard, clearIntent, setChoice, chosen, chosenName, counter, approve, veto, rev } = usePlanChoice(e, viewer, readOnly);
+  const [open, setOpen] = useState<string | undefined>(undefined);
+  const sides = requiredSides(e);
+  const marked = readOnly ? sel : chosen;
+  const reset = !done ? e.lastReset : undefined;
+  return (
+    <div className="flex gap-3" data-testid="meeting-decision" data-done={done}>
+      <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white/[0.05] text-[#9cc2ff] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]">
+        <Sparkles size={13} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2 text-[12px]">
+          <span className="font-medium text-neutral-200">The agents</span>
+          <span className="text-neutral-600">{done ? `${cards.length} plans · decided` : `${cards.length} plans · choose one, then approve`}</span>
+          {due && !done && (
+            <span className="flex items-center gap-1.5 font-medium text-orange">
+              <span className="pulse-dot" style={{ width: 5, height: 5 }} /> Your turn
+            </span>
+          )}
+          <span className="tnum ml-auto shrink-0 text-[11px] text-neutral-600">{hhmm(at)}</span>
+        </div>
+
+        <div className={`mt-1.5 rounded-[14px] py-1 ${due && !done ? "bg-white/[0.035] shadow-[inset_0_0_0_1px_rgba(255,159,64,0.28)]" : "bg-white/[0.025] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"}`}>
+          {reset && (
+            <div className="flex items-center gap-1.5 px-3.5 pb-1 pt-1.5 text-[12px] text-orange">
+              <RotateCcw size={11} className="shrink-0" /> {reset.reason}
+            </div>
+          )}
+          {cards.map((c) => {
+            const o = c.option;
+            const t = optionText(e, o);
+            const on = marked?.option.id === c.option.id;
+            const expanded = on || open === c.option.id;
+            const lead = o.burnAt ? Math.round((e.tca - o.burnAt) / 3600_000) : null;
+            const meta =
+              o.action === "wait"
+                ? "No burn. The next conjunction message decides."
+                : `Burn ${fmtWhen(o.burnAt!)}${lead !== null ? `, ${lead} h before closest approach` : ""} · ${(o.fuelKg * 1000).toFixed(1)} g fuel`;
+            return (
+              <div key={c.option.id} className={`mx-1 rounded-[10px] transition-colors ${on ? "bg-white/[0.06]" : "hover:bg-white/[0.03]"} ${done && !on ? "opacity-50" : ""}`}>
+                <button
+                  role={readOnly ? undefined : "radio"}
+                  aria-checked={readOnly ? undefined : on}
+                  aria-label={readOnly ? `${c.label} details` : `Choose ${c.label}`}
+                  className="flex w-full items-center gap-3 px-2.5 py-2 text-left"
+                  onClick={() => {
+                    sfx.click();
+                    if (readOnly) setOpen((v) => (v === c.option.id ? undefined : c.option.id));
+                    else setChoice(c.option.id);
+                  }}
+                >
+                  <span className={`grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full transition-[box-shadow,background] ${on ? "bg-white" : "shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.28)]"}`}>
+                    {on && <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 600, damping: 26 }} className="h-[7px] w-[7px] rounded-full bg-black" />}
+                  </span>
+                  <span className="mono w-5 shrink-0 text-[11.5px] font-semibold text-neutral-500">{c.label}</span>
+                  <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-1.5 text-[13.5px] font-medium text-neutral-100">
+                    {t.verb}
+                    {t.who ? <ObjectChip e={e} side={t.who} size="sm" /> : <span>for the next CDM</span>}
+                    {o.action !== "wait" && <span className="tnum font-normal text-neutral-500">by {o.dvMs} m/s</span>}
+                    {o.recommended && <span className="text-[11px] font-normal text-neutral-500">· agents&rsquo; pick</span>}
+                  </span>
+                  <span className="tnum shrink-0 text-[13.5px] font-semibold" style={{ color: o.action === "wait" ? "#ff8a80" : "#fff" }}>
+                    {fmtMiss(o.missAfterM)}
+                  </span>
+                </button>
+                <AnimatePresence initial={false}>
+                  {expanded && (
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                      <div className="pb-2.5 pl-[66px] pr-3 text-[12px] leading-[1.55] text-neutral-500">
+                        <span className="tnum text-neutral-400">{meta}</span> · miss from {fmtMiss(e.missM)}
+                        {o.why && <div>{o.why}</div>}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            );
+          })}
+
+          {intentCard && !readOnly && (
+            <div className="mx-2 mt-1 flex items-center gap-2.5 rounded-[10px] bg-[rgba(79,140,255,0.1)] px-3 py-2 text-[12px]">
+              <Mic size={13} className="shrink-0 text-blue" />
+              <span className="min-w-0 flex-1 truncate text-neutral-300">
+                You said <span className="text-white">“{intent!.said}”</span> · speech never decides
+              </span>
+              <button
+                className="shrink-0 font-medium text-white hover:underline"
+                onClick={() => {
+                  clearIntent();
+                  setChoice(intentCard.option.id);
+                }}
+              >
+                Choose {intentCard.label}
+              </button>
+              <button className="shrink-0 text-neutral-500 hover:text-white" onClick={clearIntent}>
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-white/[0.05] px-3.5 pb-1.5 pt-2.5">
+            {sides.map((side) => {
+              const p = partyOf(e, side);
+              const st = e.approvals[side];
+              return (
+                <span key={side} className="flex items-center gap-1.5 text-[12px]">
+                  <span className="h-3.5 w-3.5 shrink-0 overflow-hidden rounded-[3px] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">{p?.country && <Flag code={p.country} h={14} square />}</span>
+                  <span className="text-neutral-300">{clean(p?.operator) || `Side ${side.toUpperCase()}`}</span>
+                  <span className={st === "approved" ? "text-green" : st === "vetoed" ? "text-[#ff8a80]" : "text-neutral-600"}>
+                    {st === "approved" ? `approved ${sel?.label ?? ""} · R${rev}` : st === "vetoed" ? "vetoed" : "not yet"}
+                  </span>
+                </span>
+              );
+            })}
+            {done ? null : due ? (
+              <span className="ml-auto flex items-center gap-1.5">
+                {autopilot && <Sparkles size={11} className="text-blue" />}
+                <button className="btn h-8 gap-1.5 px-3 text-[12.5px] text-neutral-300 hover:text-red" onClick={veto}>
+                  <X size={12} /> Veto{sel ? ` ${sel.label}` : ""}
+                </button>
+                <button className="btn btn-primary h-8 gap-1.5 px-3.5 text-[12.5px]" disabled={!chosen} onClick={approve}>
+                  <Check size={13} /> {!chosen ? "Choose a plan" : counter ? `Propose ${chosen.label} instead` : `Approve ${chosenName}`}
+                </button>
+              </span>
+            ) : (
+              waitingFor && <span className="ml-auto text-[12px] text-neutral-500">{waitingFor} decides now</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
