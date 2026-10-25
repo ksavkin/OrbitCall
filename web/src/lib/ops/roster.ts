@@ -143,5 +143,6 @@ export const HUMANS: Record<HumanId, { name: string; detail: string }> = {
 export function nodeLabel(id: NodeId) {
   if (id in AGENTS) return AGENTS[id as AgentId].name;
   if (id in TOOLS) return TOOLS[id as ToolId].name;
-  return HUMANS[id as HumanId].name;
+  // a backend span can name an agent this roster does not know (lib/backend/spans.ts, the generic node)
+  return HUMANS[id as HumanId]?.name ?? String(id);
 }
