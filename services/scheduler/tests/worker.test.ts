@@ -25,6 +25,13 @@ it("requires exact paths, finite approved values, and intent-bound references", 
   expect(() => parsePrepare({ ...request(), ref: { ...request().ref, revision: 2 } })).toThrow();
   expect(() => parsePrepare({ ...request(), extra: true })).toThrow();
 });
+it("refuses normalized nonexistent calendar dates instead of shifting an approved burn time", () => {
+  for (const burnTimeUtc of ["2030-02-29T00:00:00Z", "2030-04-31T00:00:00Z", "2030-01-01T24:00:00Z"]) {
+    expect(() => parsePrepare({ ...request(), entry: { ...request().entry, burnTimeUtc } })).toThrow();
+  }
+  const leap = { ...request(), entry: { ...request().entry, burnTimeUtc: "2032-02-29T00:00:00Z" } };
+  expect(parsePrepare(leap)).toEqual(leap);
+});
 it("only publishes a real provider-written exact artifact and deduplicates prepare/commit", async () => {
   const { engine, provider, root } = await setup();
   const [a, b] = await Promise.all([engine.prepare(request()), engine.prepare(request())]); expect(a.jobId).toBe(b.jobId);

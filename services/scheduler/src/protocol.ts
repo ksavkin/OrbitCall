@@ -8,7 +8,7 @@ const version = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 export const refSchema = z.object({ eventId: id, proposalId: id, revision: version, selectionGeneration: version, approvalRuleVersion: version }).strict();
 export const trajectorySchema = z.object({ id, version }).strict().nullable();
 export const entrySchema = z.object({ eventId: id, proposalId: id, revision: version,
-  objectId: z.string().regex(/^(?:\d{1,9}|SIM-\d+)$/), burnTimeUtc: z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/).refine(s => Number.isFinite(Date.parse(s))),
+  objectId: z.string().regex(/^(?:\d{1,9}|SIM-\d+)$/), burnTimeUtc: z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/).refine(s => Number.isFinite(Date.parse(s)) && new Date(s).toISOString() === s.replace(/Z$/, ".000Z")),
   deltaVMs: z.number().finite().positive(), direction: z.enum(["prograde", "retrograde"]), simulated: z.boolean() }).strict();
 const intentKey = z.string().min(1).max(600).regex(/^[A-Za-z0-9:_-]+$/);
 const filePath = z.string().regex(/^operators\/[A-Za-z0-9_-]{1,128}\/schedule\.json$/);

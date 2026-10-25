@@ -56,6 +56,12 @@ it("rejects invalid inputs and unsafe URLs before making a request", async () =>
   await expect(prepareSchedule({ ...input, filePath: "operators/../schedule.json" })).rejects.toMatchObject({ code: "VALIDATION" });
   vi.stubEnv("SCHEDULE_SERVICE_URL", "https://name:secret@scheduler.example"); await expect(prepareSchedule(input)).rejects.toMatchObject({ code: "WORKER_UNAVAILABLE" }); expect(fetchMock).not.toHaveBeenCalled();
 });
+it("refuses nonexistent calendar burn times before contacting the worker", async () => {
+  for (const burnTimeUtc of ["2030-02-29T00:00:00Z", "2030-04-31T00:00:00Z", "2030-01-01T24:00:00Z"]) {
+    await expect(prepareSchedule({ ...input, entry: { ...input.entry, burnTimeUtc } })).rejects.toMatchObject({ code: "VALIDATION" });
+  }
+  expect(fetchMock).not.toHaveBeenCalled();
+});
 it("sanitizes transport failures and service job errors", async () => {
   fetchMock.mockRejectedValue(new Error("SECRET_SOCKET_DETAILS")); const error = await prepareSchedule(input).catch(e => e); expect(error.message).not.toContain("SECRET");
   const p = await job(); respond({ ...p, status: "failed", result: null, error: { code: "PROVIDER_ERROR", message: "SECRET_PROVIDER_BODY" } });
