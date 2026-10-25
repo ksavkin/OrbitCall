@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { fmtUtc } from "@/lib/format";
 import { sfx } from "@/lib/sound";
 import { AccountMenu } from "@/components/auth/AccountMenu";
+import { useLive, useRealMode } from "@/lib/backend/live";
 import { useOrbit } from "@/lib/store";
 import { useOps, type Tab } from "@/lib/ops/store";
 import { isLocalHost, useLocalhost } from "@/lib/localhost";
@@ -24,12 +25,14 @@ export function Navbar() {
   const set = useOrbit((s) => s.set);
   const source = useOrbit((s) => s.catalog?.meta.source);
   const tab = useOps((s) => s.tab);
-  // dev on: synthetic scenarios; dev off: red rows of the backend queue
+  // dev on: red synthetic scenarios on Decision Center; real mode: unread inbox entries that need attention, on Inbox
+  // (an event the person never opened counts as unread, so all unread would read "99+" for a new operator)
+  const real = useRealMode();
   const redCount = useOps((s) =>
-    s.dev
-      ? s.events.filter((e) => e.risk === "red" && !["verified", "scheduled", "no_action"].includes(e.status)).length
-      : (s.backendRows ?? []).filter((r) => r.color === "red").length,
+    s.dev ? s.events.filter((e) => e.risk === "red" && !["verified", "scheduled", "no_action"].includes(e.status)).length : 0,
   );
+  const unread = useLive((s) => s.inbox?.filter((e) => e.unread && e.section === "attention").length ?? 0);
+  const badge: { tab: Tab; count: number } = real ? { tab: "audit", count: unread } : { tab: "decision", count: redCount };
 
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 p-2.5">
@@ -60,9 +63,9 @@ export function Navbar() {
                   <motion.span layoutId="nav-pill" className="seg-pill" transition={{ type: "spring", stiffness: 500, damping: 38 }} />
                 )}
                 <span className="relative">{n.label}</span>
-                {n.id === "decision" && redCount > 0 && (
+                {n.id === badge.tab && badge.count > 0 && (
                   <span className="relative ml-0.5 grid h-[15px] min-w-[15px] place-items-center rounded-full bg-red px-1 text-[9.5px] font-semibold text-black">
-                    {redCount}
+                    {badge.count > 99 ? "99+" : badge.count}
                   </span>
                 )}
               </button>

@@ -7,10 +7,12 @@ import { useMe, useSession } from "@/components/auth/session";
 import { Chip } from "@/components/ui/Chip";
 import { Select } from "@/components/ui/Popover";
 import { ScreenFrame, ScreenMessage } from "@/components/ui/ScreenFrame";
+import { useRealMode } from "@/lib/backend/live";
 import { fmtUtc } from "@/lib/format";
 import { useOps } from "@/lib/ops/store";
 import { sfx } from "@/lib/sound";
 import { AUDIT_ACTION, auditEntries, defaultPeriod, periodBounds, type AuditEntry } from "./fromEvents";
+import { InboxNotices } from "./InboxNotices";
 
 const PAGE = 50;
 
@@ -47,8 +49,16 @@ export function AuditScreen() {
   );
 }
 
-/** What needs this dispatcher: decisions due, cases they were added to, cases that closed. Newest first. */
+/** What needs this dispatcher. Real mode: the personal inbox (inbox.list). Dev: what the simulator has for them. */
 function Notices() {
+  const real = useRealMode();
+  const dev = useOps((s) => s.dev);
+  if (real) return <InboxNotices />;
+  return dev ? <DevNotices /> : null;
+}
+
+/** The simulator's notices: decisions due, cases they were added to, cases that closed. Newest first. */
+function DevNotices() {
   const events = useOps((s) => s.events);
   const humans = useOps((s) => s.humans);
   const viewer = useOps((s) => s.actAs ?? "a");
@@ -151,7 +161,7 @@ function AuditBody({ companyName }: { companyName: string }) {
           </div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-          {dev && <Notices />}
+          <Notices />
           {!dev ? (
             <Empty
               title="No shared log on this deployment yet"
