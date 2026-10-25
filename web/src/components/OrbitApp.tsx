@@ -22,6 +22,7 @@ import { CONVEX_ENABLED } from "@/lib/backend/provider";
 import { ConjunctionMarkers } from "@/components/ops/ConjunctionMarkers";
 import { OrbitOps } from "@/components/ops/OrbitOps";
 import { OpsSync } from "@/components/ops/OpsSync";
+import { SmokeBridge } from "@/components/ops/SmokeBridge";
 import { Director } from "@/components/ops/Director";
 import { ScanResults, UrgencyOverlay } from "@/components/ops/DemoFlow";
 import { DecisionDock } from "@/components/ops/DecisionDock";
@@ -34,6 +35,7 @@ import { ObserverFeed } from "@/components/observer/feed";
 import { ProfileSheet } from "@/components/auth/ProfileSheet";
 import { ScenarioBar } from "@/components/ops/ScenarioBar";
 import { useLocalhost } from "@/lib/localhost";
+import { ensureSmokeDev, isSmokeDemo } from "@/lib/ops/smoke";
 import { useOps } from "@/lib/ops/store";
 import { sceneRef } from "@/lib/sceneRef";
 import { sfx } from "@/lib/sound";
@@ -45,6 +47,7 @@ export function OrbitApp() {
   useGlobalInteractions();
   useShortcuts();
   useDeployedRealMode();
+  useSmokeDemo();
 
   const tab = useOps((s) => s.tab);
   const dev = useOps((s) => s.dev);
@@ -60,6 +63,7 @@ export function OrbitApp() {
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/50 to-transparent" />
       <WeatherSync />
       <OpsSync />
+      <SmokeBridge />
       <ObserverFeed />
       <ProfileSheet />
       <Director />
@@ -101,12 +105,23 @@ export function OrbitApp() {
   );
 }
 
-/** Deployed hosts have no Dev switch and never run the local simulator. */
+/** Deployed hosts have no Dev switch and never run the local simulator — unless smoke demo is on. */
 function useDeployedRealMode() {
   const local = useLocalhost();
   useEffect(() => {
+    if (isSmokeDemo()) {
+      ensureSmokeDev();
+      return;
+    }
     if (local === false && useOps.getState().dev) useOps.getState().set({ dev: false });
   }, [local]);
+}
+
+/** Cal Hacks recording: keep the simulator on for Vercel when NEXT_PUBLIC_SMOKE_DEMO=1. */
+function useSmokeDemo() {
+  useEffect(() => {
+    ensureSmokeDev();
+  }, []);
 }
 
 /** Cursor spotlight on glass, hover/click ticks on controls, sound preference. */

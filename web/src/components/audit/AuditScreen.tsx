@@ -8,6 +8,13 @@ import { Chip } from "@/components/ui/Chip";
 import { Select } from "@/components/ui/Popover";
 import { ScreenFrame, ScreenMessage } from "@/components/ui/ScreenFrame";
 import { fmtUtc } from "@/lib/format";
+import {
+  acceptSmokeInvite,
+  isSmokeDemo,
+  readSmokeInvite,
+  smokeSideFor,
+  subscribeSmokeInvites,
+} from "@/lib/ops/smoke";
 import { useOps } from "@/lib/ops/store";
 import { sfx } from "@/lib/sound";
 import { AUDIT_ACTION, auditEntries, defaultPeriod, periodBounds, type AuditEntry } from "./fromEvents";
@@ -53,41 +60,64 @@ function Notices() {
   const humans = useOps((s) => s.humans);
   const viewer = useOps((s) => s.actAs ?? "a");
   const resolved = useOps((s) => s.resolved);
+  const me = useMe();
+  const [smokeInvite, setSmokeInvite] = useState(() => (isSmokeDemo() ? readSmokeInvite() : null));
+  useEffect(() => {
+    if (!isSmokeDemo()) return;
+    return subscribeSmokeInvites((inv) => setSmokeInvite(inv));
+  }, []);
   const items = useMemo(() => {
-    const out: { id: string; at: number; tone: "due" | "info" | "ok"; title: string; detail: string; eventId: string }[] = [];
+    const out: { id: string; at: number; tone: "due" | "info" | "ok" | "accept"; title: string; detail: string; eventId: string }[] = [];
+    const smokeSide = smokeSideFor(me?.userId);
+    // CN / RU smoke guests: Accept joins the Decision Center and the case call
+    if (isSmokeDemo() && me && smokeSide && smokeSide !== "a") {
+      const inv = smokeInvite ?? readSmokeInvite();
+      out.push({
+        id: "smoke-accept",
+        at: Number.MAX_SAFE_INTEGER,
+        tone: "accept",
+        title: inv ? `Invitation: join ${inv.eventId}` : "Invitation: join the US · China · Russia case",
+        detail: inv ? `${inv.pair} · Accept to enter the room and call` : "American Satellite Dynamics opened coordination · Accept to enter",
+        eventId: inv?.eventId ?? "CE-SMOKE1",
+      });
+    }
     const ROOM = ["communication", "proposal", "approved", "scheduled", "awaiting_verification", "verified", "monitoring", "needs_decision"];
     for (const e of events) {
       // a case keeps its notices once its channel existed (a plan was published), even while agents re-plan
       if (!e.parties?.some((p) => p.role === "b") || (!ROOM.includes(e.status) && !e.proposals?.length)) continue;
       const pair = `${e.a.name} × ${e.b.name}`;
-      if (humans.some((h) => h.eventId === e.id && h.side === viewer)) out.push({ id: `due-${e.id}`, at: Number.MAX_SAFE_INTEGER, tone: "due", title: `Your decision is needed on ${e.id}`, detail: pair, eventId: e.id });
+      if (humans.some((h) => h.eventId === e.id && h.side === viewer)) out.push({ id: `due-${e.id}`, at: Number.MAX_SAFE_INTEGER - 1, tone: "due", title: `Your decision is needed on ${e.id}`, detail: pair, eventId: e.id });
       const others = (e.parties ?? []).filter((p) => p.role !== viewer).map((p) => p.operator.replace(/\s*\(synthetic\)/i, ""));
       out.push({ id: `room-${e.id}`, at: e.createdAt, tone: "info", title: `You were added to the coordination for ${e.id}`, detail: `${pair} · with ${others.join(", ")}`, eventId: e.id });
       if (resolved?.eventId === e.id) out.push({ id: `ok-${e.id}`, at: resolved.at, tone: "ok", title: `${e.id} resolved`, detail: pair, eventId: e.id });
     }
-    return out.sort((a, b) => (a.tone === "due" ? -1 : b.tone === "due" ? 1 : b.at - a.at)).slice(0, 6);
-  }, [events, humans, viewer, resolved]);
+    return out.sort((a, b) => (a.tone === "accept" || a.tone === "due" ? -1 : b.tone === "accept" || b.tone === "due" ? 1 : b.at - a.at)).slice(0, 6);
+  }, [events, humans, viewer, resolved, me, smokeInvite]);
   if (items.length === 0) return null;
-  const COLOR = { due: "var(--orange)", info: "#9cc2ff", ok: "var(--green)" } as const;
+  const COLOR = { due: "var(--orange)", info: "#9cc2ff", ok: "var(--green)", accept: "var(--green)" } as const;
   return (
     <section className="mb-3 px-2 pt-1">
       <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-500">Notifications</div>
       <ul className="space-y-1.5">
         {items.map((n) => (
           <li key={n.id} className="flex items-center gap-3 rounded-[12px] bg-white/[0.03] px-3.5 py-2.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]">
-            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: COLOR[n.tone], boxShadow: n.tone === "due" ? `0 0 10px ${COLOR.due}` : undefined }} />
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: COLOR[n.tone], boxShadow: n.tone === "due" || n.tone === "accept" ? `0 0 10px ${COLOR[n.tone]}` : undefined }} />
             <div className="min-w-0 flex-1">
               <div className="truncate text-[13px] font-medium text-white">{n.title}</div>
               <div className="truncate text-[12px] text-neutral-500">{n.detail}</div>
             </div>
             <button
-              className={`btn h-8 shrink-0 px-3 text-[12px] ${n.tone === "due" ? "btn-primary" : "text-neutral-300"}`}
+              className={`btn h-8 shrink-0 px-3 text-[12px] ${n.tone === "due" || n.tone === "accept" ? "btn-primary" : "text-neutral-300"}`}
               onClick={() => {
                 sfx.whoosh();
+                if (n.tone === "accept" && me?.userId) {
+                  acceptSmokeInvite(me.userId);
+                  return;
+                }
                 useOps.getState().set({ tab: "decision", incident: n.eventId, focusEvent: n.eventId, incidentView: "expanded" });
               }}
             >
-              Open
+              {n.tone === "accept" ? "Accept" : "Open"}
             </button>
           </li>
         ))}
@@ -151,8 +181,8 @@ function AuditBody({ companyName }: { companyName: string }) {
           </div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-          {dev && <Notices />}
-          {!dev ? (
+          {(dev || isSmokeDemo()) && <Notices />}
+          {!dev && !isSmokeDemo() ? (
             <Empty
               title="No shared log on this deployment yet"
               body="When a case is recorded, each message, selection, approval, veto, schedule result and verification is listed here. Policy numbers stay out of it."

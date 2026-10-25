@@ -9,6 +9,7 @@ import { AccountMenu } from "@/components/auth/AccountMenu";
 import { useOrbit } from "@/lib/store";
 import { useOps, type Tab } from "@/lib/ops/store";
 import { isLocalHost, useLocalhost } from "@/lib/localhost";
+import { isSmokeDemo } from "@/lib/ops/smoke";
 import { LogoMark } from "./Logo";
 import { Tooltip } from "./Tooltip";
 
@@ -118,7 +119,8 @@ export function Navbar() {
 function DevSwitch() {
   const local = useLocalhost();
   const dev = useOps((s) => s.dev);
-  if (local !== true) return null;
+  // smoke demo on Vercel keeps the Dev switch so the recording can toggle if needed
+  if (local !== true && !isSmokeDemo()) return null;
   return (
     <Tooltip
       label={
@@ -160,7 +162,7 @@ function DevSwitch() {
 }
 
 export function toggleDev() {
-  if (!isLocalHost()) return;
+  if (!isLocalHost() && !isSmokeDemo()) return;
   const s = useOps.getState();
   const v = !s.dev;
   sfx.toggle(v);

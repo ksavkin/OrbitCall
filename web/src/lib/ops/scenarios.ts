@@ -1,7 +1,8 @@
 "use client";
 
-import { Cancelled, engine, makeEvent, partyOf, pickObject, screeningPass, type Decision, type Engine } from "./engine";
+import { Cancelled, engine, makeEvent, partyOf, pickByNorad, pickObject, screeningPass, type Decision, type Engine } from "./engine";
 import { fmtMiss, fmtOdds, fmtPc, fmtWhen } from "./format";
+import { isSmokeDemo, publishSmokeInvite, SMOKE_VARIANT } from "./smoke";
 import { useOps } from "./store";
 import type { ConjunctionEvent, DecisionOption, Proposal } from "./types";
 
@@ -449,6 +450,19 @@ async function openRoom(eng: Engine, gen: number, e: ConjunctionEvent, pr: Propo
   const calls = [eng.span({ agent: "host", target: "humanA", kind: "human", name: "Call Operator A", eventId: id, model: "grok-voice" }, 1400, gen)];
   if (e.b.kind !== "debris") calls.push(eng.span({ agent: "host", target: "humanB", kind: "human", name: "Call Operator B", eventId: id, model: "grok-voice" }, 1900, gen));
   await Promise.all(calls);
+  // smoke recording: US host publishes the case so CN/RU see Accept in Inbox (same origin / BroadcastChannel)
+  if (isSmokeDemo() || e.scenario === SMOKE_VARIANT) {
+    const live = eng.event(id)!;
+    if (!live.parties?.some((p) => p.role === "affected")) {
+      eng.update(id, {
+        parties: [
+          ...(live.parties ?? []),
+          partyOf("humanC", "affected", "Sever Imaging (synthetic)", "CIS"),
+        ],
+      });
+    }
+    publishSmokeInvite(eng.event(id)!, "demo-us");
+  }
 }
 
 async function askHumans(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal, autoA: Decision, autoB: Decision) {
@@ -673,7 +687,70 @@ const RU_DAY: Record<string, string> = {
 
 const RED_B = { bName: "SEVER-7 (SYN)", bOperator: "Sever Imaging (synthetic)", bOwner: "CIS" };
 
+/** Cal Hacks smoke: US × CN encounter, RU invited as affected. First red after Run scan. */
+const TRI_B = {
+  bName: "JILIN-1 (SYN)",
+  bOperator: "Jade Orbit (synthetic)",
+  bOwner: "PRC",
+};
+
 export const SCENARIOS: Scenario[] = [
+  {
+    id: "trilateral",
+    title: "US · China · Russia room",
+    story: "ASD HAWK against Jade JILIN. Sever is invited because the burn grazes GEOSCAN. Three languages in one room.",
+    refs: "smoke demo · ROOM-2, AGT-4",
+    run: async (eng, gen, existing) => {
+      const cross = existing ? crossOf(existing) : 71;
+      const e = await redEvent(
+        eng,
+        gen,
+        { salt: 61, crossDeg: cross, missM: 165, pc: 7.4e-4, tcaInH: 19, ...TRI_B },
+        existing,
+      );
+      eng.update(e.id, {
+        scenario: SMOKE_VARIANT,
+        parties: [
+          partyOf("humanA", "a", "American Satellite Dynamics (synthetic)", "US"),
+          partyOf("humanB", "b", "Jade Orbit (synthetic)", "PRC"),
+          partyOf("humanC", "affected", "Sever Imaging (synthetic)", "CIS"),
+        ],
+      });
+      await analyze(eng, gen, eng.event(e.id)!, cross);
+      const v1 = proposal(eng.event(e.id)!, {
+        version: 1,
+        mover: "a",
+        action: "raise",
+        dvMs: 0.07,
+        leadH: 6,
+        crossDeg: cross,
+        rationale:
+          "HAWK-7A raises 0.07 m/s at TCA−6 h. Electric propulsion, reserve stays above ASD policy. Miss clears Jade’s imaging window and keeps GEOSCAN outside 1 km after the burn (shared mover check).",
+      });
+      await negotiate(eng, gen, eng.event(e.id)!, {
+        first: v1,
+        rounds: [
+          {
+            from: "advocateA",
+            text: `Offer: ASD raises HAWK-7A ${v1.dvMs} m/s at TCA−6 h. ${(v1.fuelKg * 1000).toFixed(1)} g Kr. Miss ${fmtMiss(v1.missBeforeM)} → ${fmtMiss(v1.missAfterM)}.`,
+          },
+          {
+            from: "advocateB",
+            text: "Jade: feasible. JILIN keeps the afternoon imaging pass; no burn required on our side.",
+          },
+          {
+            from: "advocateA",
+            text: "Sever (affected): GEOSCAN stays >1 km after the raise. No veto path; they join the room for visibility.",
+          },
+        ],
+      });
+      await check(eng, gen, eng.event(e.id)!, v1);
+      await openRoom(eng, gen, eng.event(e.id)!, v1);
+      // US decides first; CN then RU-affected watch. Autopilot off when actAs matches.
+      const fin = await agree(eng, gen, eng.event(e.id)!, v1, { decision: "approved" }, { decision: "approved" });
+      if (fin) await scheduleAndVerify(eng, gen, eng.event(e.id)!, fin);
+    },
+  },
   {
     id: "demo",
     title: "Veto, then re-plan",
@@ -871,6 +948,18 @@ const CANDIDATES: {
   source: ConjunctionEvent["pcSource"];
   confidence: NonNullable<ConjunctionEvent["confidence"]>;
 }[] = [
+  // smoke / demo recording: highest Pc + soonest TCA so it is always the first red urgency case
+  {
+    variant: "trilateral",
+    salt: 61,
+    pc: 7.4e-4,
+    missM: 165,
+    tcaInH: 19,
+    crossDeg: 71,
+    b: { name: "JILIN-1 (SYN)", operator: "Jade Orbit (synthetic)", owner: "PRC" },
+    source: "SOCRATES + CDM",
+    confidence: { level: "high", why: "Matched CDM and SOCRATES; ASD × Jade pair with Sever in the graze volume" },
+  },
   { variant: "demo", salt: 2, pc: 3.1e-4, missM: 180, tcaInH: 31, crossDeg: 64, b: { name: "SEVER-7 (SYN)", operator: "Sever Imaging (synthetic)", owner: "CIS" }, source: "SOCRATES + CDM", confidence: { level: "high", why: "SOCRATES and a public CDM agree; GP and operator orbits within 103 m" } },
   { variant: "debris", salt: 23, pc: 6.2e-4, missM: 120, tcaInH: 22, crossDeg: 104, b: { name: "FENGYUN 1C DEB (SYN)", operator: "Debris · no operator", owner: "PRC", debris: true }, source: "SOCRATES + CDM", confidence: { level: "high", why: "Listed in both sources; CDM flagged emergency-reportable" } },
   { variant: "refusal", salt: 13, pc: 4.4e-4, missM: 150, tcaInH: 27, crossDeg: 58, b: { name: "LUCH-12 (SYN)", operator: "Sever Imaging (synthetic)", owner: "CIS" }, source: "SOCRATES", confidence: { level: "medium", why: "Only SOCRATES lists it so far; CDM not published yet" } },
@@ -886,17 +975,27 @@ const variantOf = new Map<string, string>();
 export function runScan() {
   engine.run("scan", async (eng, gen) => {
     try {
-      useOps.setState({ scan: { phase: "scanning", ids: [], stats: null }, focusEvent: null, actAs: "a" });
+      useOps.setState({ scan: { phase: "scanning", ids: [], stats: null }, focusEvent: null, actAs: "a", autopilot: isSmokeDemo() ? false : useOps.getState().autopilot });
       const t0 = Date.now();
       await screeningPass(eng, gen, null);
       const ids: string[] = [];
-      for (const c of CANDIDATES) {
-        const a = pickObject((o) => o.category === "starlink", c.salt) ?? pickObject((o) => o.category === "other", c.salt);
+      // smoke recording: only the trilateral red + one yellow filler so the urgency case is unambiguous
+      const list = isSmokeDemo() ? CANDIDATES.filter((c) => c.variant === "trilateral" || c.variant === "happy" && c.salt === 41) : CANDIDATES;
+      for (const c of list) {
+        const a =
+          c.variant === "trilateral"
+            ? pickByNorad(56191, (o) => o.category === "starlink") ?? pickObject((o) => o.category === "starlink", c.salt)
+            : pickObject((o) => o.category === "starlink", c.salt) ?? pickObject((o) => o.category === "other", c.salt);
         if (!a) continue;
         const red = c.pc > 1e-4 && c.tcaInH < 72;
         const e = makeEvent(eng, {
           a,
-          aOperator: a.category === "starlink" ? "SpaceX Starlink" : a.owner,
+          aOperator:
+            c.variant === "trilateral"
+              ? "American Satellite Dynamics (synthetic)"
+              : a.category === "starlink"
+                ? "SpaceX Starlink"
+                : a.owner,
           b: { norad: 90_000 + 800 + c.salt, name: c.b.name, owner: c.b.owner, operator: c.b.operator, kind: c.b.debris ? "debris" : "payload" },
           tcaInH: c.tcaInH,
           missM: c.missM,
@@ -906,8 +1005,18 @@ export function runScan() {
           trend: red ? "rising" : "flat",
           pcSource: c.source,
           confidence: c.confidence,
+          scenario: c.variant === "trilateral" ? SMOKE_VARIANT : undefined,
         });
         if (!e) continue;
+        if (c.variant === "trilateral") {
+          eng.update(e.id, {
+            parties: [
+              partyOf("humanA", "a", "American Satellite Dynamics (synthetic)", "US"),
+              partyOf("humanB", "b", "Jade Orbit (synthetic)", "PRC"),
+              partyOf("humanC", "affected", "Sever Imaging (synthetic)", "CIS"),
+            ],
+          });
+        }
         variantOf.set(e.id, c.variant);
         // the SOCRATES check for the simulated scan: most pairs match with slightly different numbers (their
         // element sets are older), one has different element-set epochs, one is not in their run yet
@@ -943,10 +1052,10 @@ export function runScan() {
 export function runIncident(eventId: string) {
   const ev = useOps.getState().events.find((e) => e.id === eventId);
   if (!ev) return;
-  const s = SCENARIOS.find((x) => x.id === (variantOf.get(eventId) ?? "happy")) ?? SCENARIOS[1];
+  const s = SCENARIOS.find((x) => x.id === (variantOf.get(eventId) ?? "happy")) ?? SCENARIOS.find((x) => x.id === "happy")!;
   useOps.setState({
     scan: { ...useOps.getState().scan, phase: "idle" },
-    actAs: "a",
+    actAs: useOps.getState().actAs ?? "a",
     focusEvent: eventId,
     agentView: "graph",
     // the alarm did its job; the case view takes over from here

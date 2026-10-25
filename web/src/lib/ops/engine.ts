@@ -393,6 +393,15 @@ export function pickObject(pred: (o: SatObject) => boolean, salt = 0): SatObject
   return pool[(salt * 7919) % pool.length];
 }
 
+/** Prefer a catalog object by NORAD id (demo fleets); fall back to any matching predicate. */
+export function pickByNorad(norad: number, fallback?: (o: SatObject) => boolean): SatObject | null {
+  const cat = catalog();
+  if (!cat) return null;
+  const hit = cat.objects.find((o) => o.norad === norad);
+  if (hit) return hit;
+  return fallback ? pickObject(fallback, norad) : null;
+}
+
 export function refOf(o: SatObject, operator: string): SpaceObjectRef {
   return {
     norad: o.norad,
