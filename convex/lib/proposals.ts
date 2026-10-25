@@ -1,6 +1,6 @@
 import type { MutationCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
-import { advanceSelection, classifyIfUnset } from "./approvals";
+import { advanceSelection, classifyIfUnset, resetApprovals } from "./approvals";
 
 // Plan cards (spec §2.3 ProposalCard/Revision) mirrored from the candidate set: one proposals row per event and
 // candidateId ("P1".."P4"), one proposalRevisions row per immutable candidate revision. The numbers stay in
@@ -10,7 +10,7 @@ import { advanceSelection, classifyIfUnset } from "./approvals";
 /** Statuses before people decide: publishing options moves these to "proposal" (functionality §3). */
 const BEFORE_PROPOSAL = new Set(["new", "agents"]);
 
-export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, candidateRevisionIds: Id<"candidateRevisions">[]) {
+export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, candidateRevisionIds: Id<"candidateRevisions">[], evidenceChanged: boolean) {
   const now = Date.now();
   const offered = new Set<Id<"proposals">>();
   for (const id of candidateRevisionIds) {
@@ -40,5 +40,8 @@ export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, cand
   if (!selected || !offered.has(selected._id)) await advanceSelection(ctx, classified, null, { kind: "agents" }, "proposal_withdrawn");
   else if (selected.latestRevision !== selection.revision) {
     await advanceSelection(ctx, classified, { proposalId: selected._id, revision: selected.latestRevision }, { kind: "agents" }, "revision_changed");
+  } else if (evidenceChanged) {
+    // Same cards recomputed on new orbital evidence: approvals signed on the old evidence stop counting.
+    await resetApprovals(ctx, classified, "evidence_changed");
   }
 }
