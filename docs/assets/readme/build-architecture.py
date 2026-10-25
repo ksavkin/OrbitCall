@@ -86,7 +86,6 @@ def node(spec: tuple) -> str:
     role_x = x + (35 if core else 27)
     parts = [f'<g id="{key}" class="node" data-label="{escape(title)}">']
     parts.append(f'<rect class="card" x="{x}" y="{y}" width="{w}" height="{h}" rx="22" fill="{fill}" stroke="{stroke}" stroke-width="{2.5 if core else 1.8}"/>')
-    parts.append(f'<path d="M{x + w - 77} {y + 30} H{x + w - 29}" stroke="{accent}" stroke-width="4" stroke-linecap="round" opacity=".65"/>')
     parts.append(f'<circle cx="{cx}" cy="{cy}" r="{badge/2}" fill="white"/>')
     parts.append(f'<clipPath id="badge-{key}"><circle cx="{cx}" cy="{cy}" r="{badge/2}"/></clipPath>')
     parts.append(f'<image class="brand-logo" x="{logo_x}" y="{logo_y}" width="{logo_size}" height="{logo_size}" href="{image_data(logo)}" clip-path="url(#badge-{key})"/>')
@@ -120,11 +119,11 @@ for name, color in [("default", "#8291a5"), ("media", "#5c998d"), ("core", "#968
 parts += ['</defs>', '<rect width="100%" height="100%" fill="white"/>']
 parts += [text(1000, 65, "OrbitCall", "page-title"), text(1000, 105, "System architecture", "page-subtitle")]
 # Use headings in open space, without frames around a layer.
-parts += [text(45, 328, "01  ACCESS & CLIENTS", "layer", "start"), text(45, 653, "02  STATE & VOICE", "layer", "start"), text(45, 961, "03  SPEECH SERVICES", "layer", "start"), text(45, 1297, "04  AGENTS & ORBITAL COMPUTATION", "layer", "start"), text(45, 1635, "05  MEMORY, HISTORY & ARTIFACTS", "layer", "start")]
+parts += [text(WIDTH / 2, 328, "01  ACCESS & CLIENTS", "layer"), text(WIDTH / 2, 664, "02  STATE & VOICE", "layer"), text(WIDTH / 2, 961, "03  SPEECH SERVICES", "layer"), text(WIDTH / 2, 1297, "04  AGENTS & ORBITAL COMPUTATION", "layer"), text(WIDTH / 2, 1635, "05  MEMORY, HISTORY & ARTIFACTS", "layer")]
 
 # Authentication and the two browser roles.
 parts += [connector("M1400 305 V342 H1000 V380"), connector("M1400 342 H1700 V400")]
-parts += [text(1162, 328, "Authenticate"), text(1610, 328, "Authenticate")]
+parts += [text(1230, 328, "Authenticate"), text(1610, 328, "Authenticate")]
 parts += [connector("M530 490 H750", start=True, color="media"), text(640, 463, "Live audio")]
 parts += [connector("M1000 600 V640 H1330 V690", start=True, color="core"), connector("M1700 580 V690", start=True, color="core")]
 parts += [text(1436, 625, "Live state"), text(1728, 640, "Live state", anchor="start")]
@@ -136,12 +135,12 @@ parts += [connector("M340 935 V985", start=True, end=False, color="media"), conn
 for cx in [195, 530, 897.5]:
     parts.append(connector(f"M{cx} 985 V1065", color="media"))
 
-# Shared service bus, then a branch through the center gap to supporting services.
+# Shared service bus, then a branch through the right-hand gap to supporting services.
 parts += [connector("M1550 940 V1315", start=True, end=False, color="core"), text(1577, 1155, "Backend service calls", anchor="start")]
 parts += [connector("M265 1315 H1735", end=False, color="core")]
 for cx in [265, 755, 1245, 1735]:
     parts.append(connector(f"M{cx} 1315 V1380", color="core"))
-parts += [connector("M1000 1315 V1660", end=False, color="core"), connector("M265 1660 H1245", end=False, color="core")]
+parts += [connector("M1490 1315 V1660", end=False, color="core"), connector("M265 1660 H1490", end=False, color="core")]
 for cx in [265, 755, 1245]:
     parts.append(connector(f"M{cx} 1660 V1745", color="core"))
 parts += [connector("M1735 1745 V1600"), text(1765, 1674, "Pinned OMM", anchor="start")]
