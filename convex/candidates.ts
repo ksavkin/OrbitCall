@@ -6,14 +6,45 @@ import { validateCandidates } from "./lib/policies";
 import { loadFacts } from "./lib/events";
 import { inputKey } from "./lib/analyst";
 import { supersede } from "./lib/runs";
+import { ommSnapshotId } from "./lib/publishCandidates";
 import type { Id } from "./_generated/dataModel";
 
 export const publish = internalMutation({
-  args: { eventId: v.id("events"), baseVersion: v.union(v.number(), v.null()), candidates: v.array(candidate), start: v.optional(v.boolean()) },
-  handler: async (ctx, { eventId, baseVersion, candidates, start = true }) => {
+  args: {
+    eventId: v.id("events"), baseVersion: v.union(v.number(), v.null()), candidates: v.array(candidate), start: v.optional(v.boolean()),
+    // What the candidates were computed on; an event that moved on since then is refused rather than mislabeled.
+    expectedEvidenceKey: v.optional(v.string()), expectedSnapshotId: v.optional(v.string()),
+    expectedOmmSnapshotId: v.optional(v.string()),
+    expectedDemoRunId: v.optional(v.union(v.id("demoRuns"), v.null())),
+  },
+  handler: async (ctx, { eventId, baseVersion, candidates, start = true, expectedEvidenceKey, expectedSnapshotId, expectedOmmSnapshotId, expectedDemoRunId }) => {
     const event = await ctx.db.get(eventId);
     if (!event) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
+    // A remote calculation can outlive its event or a burn. Recheck inside this transaction before any writes.
+    if (expectedEvidenceKey !== undefined && (!event.active || event.tcaMs <= Date.now() || event.workflow === "internal_review" ||
+      candidates.some(c => c.kind === "maneuver" && Date.parse(c.burnTimeUtc!) <= Date.now()))) {
+      throw new ConvexError({ code: "STALE_REVISION", message: "The event or an offered burn is no longer available; recompute candidates." });
+    }
+    if (expectedDemoRunId !== undefined && expectedDemoRunId !== (event.demoRunId ?? null)) {
+      throw new ConvexError({ code: "STALE_REVISION", message: "The event's demo run changed while candidates were computed." });
+    }
+    if (event.demoRunId) {
+      const run = await ctx.db.get(event.demoRunId);
+      if (!run || run.state !== "open" || run.closedAt !== null) {
+        throw new ConvexError({ code: "STALE_REVISION", message: "The demo run is no longer open for candidate publication." });
+      }
+    }
     const facts = await loadFacts(ctx, event);
+    if (expectedEvidenceKey !== undefined && expectedEvidenceKey !== inputKey(facts)) {
+      throw new ConvexError({ code: "STALE_REVISION", message: "The event's evidence changed while candidates were computed; recompute them." });
+    }
+    const snapshot = await ctx.db.get(event.snapshotId);
+    if (expectedSnapshotId !== undefined && expectedSnapshotId !== snapshot?.snapshotId) {
+      throw new ConvexError({ code: "STALE_REVISION", message: "The event's snapshot changed while candidates were computed; recompute them." });
+    }
+    if (expectedOmmSnapshotId !== undefined && (!snapshot || expectedOmmSnapshotId !== ommSnapshotId(snapshot))) {
+      throw new ConvexError({ code: "STALE_REVISION", message: "The orbital catalog changed while candidates were computed; recompute them." });
+    }
     validateCandidates(candidates, facts);
     const [companyAId, companyBId] = await Promise.all([facts.objectA.objectId, facts.objectB.objectId].map(async objectId =>
       (await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", objectId)).unique())?.companyId ?? null));
