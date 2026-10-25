@@ -157,3 +157,20 @@ export function workflowNote(status: ApprovalStatus | undefined): string | null 
   if (status?.workflow === "internal_review") return "Internal review: scheduling is disabled";
   return null;
 }
+
+/**
+ * The log rows `diffState` may count as a failure of the current selection. A preparation's intent key names its
+ * generation (convex/maneuvers.ts `intentOf`), so an older generation's failure no longer counts after the user
+ * selects the plan again to retry. A shared maneuver's key names the plan version instead; its failures count only
+ * when written since `since` (when this screen began waiting), less a few seconds of clock skew.
+ */
+export function selectionFailures(log: LogEntry[] | undefined, status: ApprovalStatus | undefined, since: number | null): LogEntry[] | undefined {
+  const sel = status?.selected;
+  if (!log || !sel) return log;
+  return log.filter((l) => {
+    if (l.action !== "schedule_failed") return false;
+    const key = l.after?.intentKey;
+    if (typeof key === "string" && key.startsWith("event:")) return key.endsWith(`:generation:${sel.generation}`);
+    return since !== null && Date.parse(l.at) >= since - 5_000;
+  });
+}
