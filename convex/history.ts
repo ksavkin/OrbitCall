@@ -2,7 +2,7 @@ import { ConvexError, v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { exportFields, historyPoint, sameContent } from "./lib/tigerExport";
+import { exportFields, historyPoint, sameContent, toSeriesPoints, toTigerObservation } from "./lib/tigerExport";
 import { sourceName } from "./lib/validators";
 import { requireUser } from "./session";
 
@@ -28,6 +28,44 @@ const retryPending = (row: Doc<"observationExports">) => row.exportState === "fa
 const canRequeue = (row: Doc<"observationExports">, now: number) =>
   (row.exportState === "failed" && !retryPending(row)) || (row.exportState === "pending" && now - row.updatedAt > EXPORT_LEASE_MS);
 
+// Reset can close a run without deleting its history. New work and in-flight completions must both check it.
+async function openEvent(ctx: QueryCtx, eventId: Id<"events">) {
+  const event = await ctx.db.get(eventId);
+  if (!event) return null;
+  if (event.demoRunId) {
+    const run = await ctx.db.get(event.demoRunId);
+    if (!run || run.state !== "open" || run.closedAt !== null) return null;
+  }
+  return event;
+}
+const inScope = (row: Doc<"observationExports">, demoRunId: Id<"demoRuns"> | null) =>
+  row.simulated ? row.demoRunId === demoRunId : row.demoRunId === null;
+async function scopedExports(ctx: QueryCtx, eventId: Id<"events">, demoRunId: Id<"demoRuns"> | null) {
+  return (await ctx.db.query("observationExports").withIndex("by_event", q => q.eq("eventId", eventId)).collect())
+    .filter(row => inScope(row, demoRunId));
+}
+// The read token includes the cache state and immutable ledger rows. It changes when observations, export
+// outcomes or cache failures change, including within the same millisecond. A delayed SQL result cannot clear
+// newer missing data or failures; no extra schema writer is needed for this optimistic publication check.
+const readVersion = (rows: Doc<"observationExports">[], cache: Doc<"historySeries"> | null) => JSON.stringify([
+  cache === null ? null : [cache.seriesVersion, cache.fetchedAt, cache.stale, cache.error],
+  rows.map(row => [row._id, row.exportState, row.attempts, row.updatedAt]),
+]);
+async function matchingScope(ctx: QueryCtx, eventId: Id<"events">, demoRunId: Id<"demoRuns"> | null, version: string) {
+  const event = await openEvent(ctx, eventId);
+  if (!event || (event.demoRunId ?? null) !== demoRunId) return null;
+  const rows = await scopedExports(ctx, eventId, demoRunId);
+  const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
+  return readVersion(rows, cache) === version ? rows : null;
+}
+async function activeExport(ctx: QueryCtx, exportId: Id<"observationExports">) {
+  const row = await ctx.db.get(exportId);
+  if (!row || row.exportState === "exported") return null;
+  const event = await openEvent(ctx, row.eventId);
+  return event && inScope(row, event.demoRunId ?? null) ? row : null;
+}
+const scopeArgs = { demoRunId: v.union(v.id("demoRuns"), v.null()), readVersion: v.string() };
+
 /**
  * Queues one committed observation for export. The key is built from the event, demo run, source, metric, evidence
  * version and canonical time. Simulated evidence must carry the event's current demo run (null outside a run) and
@@ -49,6 +87,7 @@ export const recordObservation = internalMutation({
   handler: async (ctx, { eventId, observation }) => {
     const event = await ctx.db.get(eventId);
     if (!event) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
+    if (!await openEvent(ctx, eventId)) throw new ConvexError({ code: "INVALID_STATE", message: "This incident belongs to a closed or missing demo run." });
     const fields = exportFields(eventId, observation);
     const expectedRun = observation.simulated ? event.demoRunId ?? null : null;
     if (observation.runId !== expectedRun) {
@@ -66,12 +105,14 @@ export const recordObservation = internalMutation({
       const now = Date.now();
       if (!canRequeue(existing, now)) return { observationKey, status: "unchanged" as const };
       await ctx.db.patch(existing._id, { exportState: "pending", attempts: 0, updatedAt: now });
+      await markStale(ctx, eventId, existing.lastError);
       await ctx.scheduler.runAfter(0, internal.historyActions.exportObservation, { exportId: existing._id });
       return { observationKey, status: "retried" as const };
     }
     const exportId = await ctx.db.insert("observationExports", {
       ...fields, exportState: "pending", attempts: 0, lastError: null, updatedAt: Date.now(),
     });
+    await markStale(ctx, eventId, null);
     await ctx.scheduler.runAfter(0, internal.historyActions.exportObservation, { exportId });
     return { observationKey, status: "queued" as const };
   },
@@ -79,7 +120,7 @@ export const recordObservation = internalMutation({
 
 export const loadExport = internalQuery({
   args: { exportId: v.id("observationExports") },
-  handler: (ctx, { exportId }) => ctx.db.get(exportId),
+  handler: (ctx, { exportId }) => activeExport(ctx, exportId),
 });
 
 // Simulated points are read for the event's current demo run only, so an old run cannot look like fresh history.
@@ -87,10 +128,11 @@ export const loadExport = internalQuery({
 export const seriesScope = internalQuery({
   args: { eventId: v.id("events") },
   handler: async (ctx, { eventId }) => {
-    const event = await ctx.db.get(eventId);
+    const event = await openEvent(ctx, eventId);
     if (!event) return null;
     const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
-    return { demoRunId: event.demoRunId ?? null, baseVersion: cache?.seriesVersion ?? 0 };
+    const demoRunId = event.demoRunId ?? null;
+    return { demoRunId, baseVersion: cache?.seriesVersion ?? 0, readVersion: readVersion(await scopedExports(ctx, eventId, demoRunId), cache) };
   },
 });
 
@@ -103,8 +145,8 @@ export const markExported = internalMutation({
   args: { exportId: v.id("observationExports") },
   returns: v.null(),
   handler: async (ctx, { exportId }) => {
-    const row = await ctx.db.get(exportId);
-    if (!row || row.exportState === "exported") return null;
+    const row = await activeExport(ctx, exportId);
+    if (!row) return null;
     await ctx.db.patch(exportId, { exportState: "exported", attempts: row.attempts + 1, lastError: null, updatedAt: Date.now() });
     await ctx.scheduler.runAfter(0, internal.historyActions.refreshSeries, { eventId: row.eventId });
     return null;
@@ -115,8 +157,8 @@ export const markFailed = internalMutation({
   args: { exportId: v.id("observationExports"), code: v.string(), message: v.string() },
   returns: v.object({ retryScheduled: v.boolean() }),
   handler: async (ctx, { exportId, code, message }) => {
-    const row = await ctx.db.get(exportId);
-    if (!row || row.exportState === "exported") return { retryScheduled: false };
+    const row = await activeExport(ctx, exportId);
+    if (!row) return { retryScheduled: false };
     const attempts = row.attempts + 1;
     const lastError = failureText(code, message);
     await ctx.db.patch(exportId, { exportState: "failed", attempts, lastError, updatedAt: Date.now() });
@@ -128,9 +170,10 @@ export const markFailed = internalMutation({
 });
 
 export const markSeriesFailed = internalMutation({
-  args: { eventId: v.id("events"), code: v.string(), message: v.string(), fetchedAt: v.number(), baseVersion: v.number() },
+  args: { eventId: v.id("events"), code: v.string(), message: v.string(), fetchedAt: v.number(), baseVersion: v.number(), ...scopeArgs },
   returns: v.object({ marked: v.boolean() }),
-  handler: async (ctx, { eventId, code, message, fetchedAt, baseVersion }) => {
+  handler: async (ctx, { eventId, code, message, fetchedAt, baseVersion, demoRunId, readVersion }) => {
+    if (!await matchingScope(ctx, eventId, demoRunId, readVersion)) return { marked: false };
     const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     if (isOlderRead(cache, fetchedAt, baseVersion)) return { marked: false };
     await markStale(ctx, eventId, failureText(code, message));
@@ -139,7 +182,7 @@ export const markSeriesFailed = internalMutation({
 });
 
 // Keeps the last good points. Before any successful read the row is a placeholder at version 0.
-async function markStale(ctx: MutationCtx, eventId: Id<"events">, error: string) {
+async function markStale(ctx: MutationCtx, eventId: Id<"events">, error: string | null) {
   const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
   if (cache) await ctx.db.patch(cache._id, { stale: true, error });
   else await ctx.db.insert("historySeries", { eventId, seriesVersion: 0, points: [], stale: true, error, fetchedAt: 0 });
@@ -147,21 +190,21 @@ async function markStale(ctx: MutationCtx, eventId: Id<"events">, error: string)
 
 /**
  * Publishes one Tiger read as the next cache version, unless it is older than the cached read (isOlderRead).
- * The cache stays stale while any of the event's exports is failed or still pending, because Tiger may then lack
+ * The cache stays stale while any current-scope export is failed or still pending, because Tiger may then lack
  * an observation that Convex holds; the chart never shows fresh while a point is missing.
  */
 export const storeSeries = internalMutation({
-  args: { eventId: v.id("events"), points: v.array(historyPoint), fetchedAt: v.number(), baseVersion: v.number() },
+  args: { eventId: v.id("events"), points: v.array(historyPoint), fetchedAt: v.number(), baseVersion: v.number(), ...scopeArgs },
   returns: v.object({ stored: v.boolean() }),
-  handler: async (ctx, { eventId, points, fetchedAt, baseVersion }) => {
+  handler: async (ctx, { eventId, points, fetchedAt, baseVersion, demoRunId, readVersion }) => {
+    const rows = await matchingScope(ctx, eventId, demoRunId, readVersion);
+    if (!rows) return { stored: false };
     const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     if (isOlderRead(cache, fetchedAt, baseVersion)) return { stored: false };
-    const unsettled = (state: "failed" | "pending") => ctx.db.query("observationExports").withIndex("by_event", q => q.eq("eventId", eventId))
-      .filter(q => q.eq(q.field("exportState"), state)).first();
-    const failed = await unsettled("failed");
-    const pending = failed ? null : await unsettled("pending");
+    const failed = rows.find(row => row.exportState === "failed");
+    const pending = rows.find(row => row.exportState === "pending");
     const row = {
-      seriesVersion: (cache?.seriesVersion ?? 0) + 1, points, stale: failed !== null || pending !== null,
+      seriesVersion: (cache?.seriesVersion ?? 0) + 1, points, stale: failed !== undefined || pending !== undefined,
       error: failed?.lastError ?? null, fetchedAt,
     };
     if (cache) await ctx.db.patch(cache._id, row);
@@ -181,10 +224,10 @@ async function requireHistoryReader(ctx: QueryCtx, eventId: Id<"events">) {
     if (user.role === "operator") {
       const assignment = await ctx.db.query("fleetAssignments")
         .withIndex("by_user_object", q => q.eq("userId", user._id).eq("objectId", object.objectId)).unique();
-      if (assignment?.active) return;
+      if (assignment?.active) return event!;
     } else if (user.role === "head_of_ops") {
       const owner = await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", object.objectId)).unique();
-      if (owner?.companyId === user.companyId) return;
+      if (owner?.companyId === user.companyId) return event!;
     }
   }
   throw new ConvexError({ code: "FORBIDDEN", message: "You are not assigned to this incident." });
@@ -197,7 +240,8 @@ const seriesPoint = v.object({ atUtc: v.string(), pc: v.union(v.number(), v.null
  * Returns { real: Point[], simulated: Point[], stale, error, fetchedAt, seriesVersion } where
  * Point = { atUtc, pc: number | null, missKm: number | null, source: SourceName }, oldest first.
  * This intentionally differs from the flat array in spec §3.4: real and simulated evidence are separate series and
- * are never merged, and the chart needs the cache state. Simulated holds the event's current demo run only.
+ * are never merged, and the chart needs the cache state. Simulated holds the event's current open demo run only;
+ * closing or replacing the run hides old simulated cache values immediately. Archived real values remain visible.
  * - Observations only: no forecast or interpolation. A metric that was not observed is null.
  * - Points are per instant, source, evidence version and run, so two points may share atUtc and source when the
  *   evidence version differs. The cache schema has no evidenceVersion field, so the point cannot name it.
@@ -212,16 +256,25 @@ export const series = query({
     fetchedAt: v.union(v.number(), v.null()), seriesVersion: v.union(v.number(), v.null()),
   }),
   handler: async (ctx, { eventId }) => {
-    await requireHistoryReader(ctx, eventId);
+    const event = await requireHistoryReader(ctx, eventId);
     const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     const points = cache?.points ?? [];
+    const live = await openEvent(ctx, eventId);
+    // The frozen cache schema has no run ID. Until it is widened, the export ledger proves which cached
+    // simulated values belong to the current run. This never manufactures chart data from queued observations.
+    const rows = live ? await scopedExports(ctx, eventId, event.demoRunId ?? null) : [];
+    const pointKey = (point: typeof points[number]) => JSON.stringify([point.atUtc, point.source, point.pc, point.missKm]);
+    const allowed = new Set(toSeriesPoints(rows.filter(row => row.simulated && row.exportState === "exported")
+      .map(toTigerObservation)).map(pointKey));
+    const simulated = points.filter(point => point.simulated && allowed.has(pointKey(point)));
+    const hidden = simulated.length !== points.filter(point => point.simulated).length;
     // Only Tiger rows that passed the client's source check reach the cache.
     const shape = ({ atUtc, pc, missKm, source }: typeof points[number]) => ({ atUtc, pc, missKm, source: source as Infer<typeof sourceName> });
     const fetched = cache !== null && cache.seriesVersion > 0;
     return {
       real: points.filter(point => !point.simulated).map(shape),
-      simulated: points.filter(point => point.simulated).map(shape),
-      stale: cache?.stale ?? false, error: cache?.error ?? null,
+      simulated: simulated.map(shape),
+      stale: !live || hidden || (cache?.stale ?? false) || rows.some(row => row.exportState !== "exported"), error: cache?.error ?? null,
       fetchedAt: fetched ? cache.fetchedAt : null, seriesVersion: fetched ? cache.seriesVersion : null,
     };
   },

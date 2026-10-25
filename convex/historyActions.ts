@@ -53,11 +53,11 @@ export const refreshSeries = internalAction({
     try {
       series = await withTiger(db => readHistory(db, eventId, scope.demoRunId), connectTiger);
     } catch (error) {
-      await ctx.runMutation(internal.history.markSeriesFailed, { eventId, ...safeTigerFailure(error), fetchedAt, baseVersion: scope.baseVersion });
+      await ctx.runMutation(internal.history.markSeriesFailed, { eventId, ...safeTigerFailure(error), fetchedAt, ...scope });
       return null;
     }
     const points = [...toSeriesPoints(series.real), ...toSeriesPoints(series.simulated)];
-    await ctx.runMutation(internal.history.storeSeries, { eventId, points, fetchedAt, baseVersion: scope.baseVersion });
+    await ctx.runMutation(internal.history.storeSeries, { eventId, points, fetchedAt, ...scope });
     return null;
   },
 });

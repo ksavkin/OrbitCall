@@ -353,10 +353,10 @@ describe("export and refresh", () => {
   });
 
   const point = { atUtc: "2026-10-24T10:30:00Z", pc: null, missKm: 0.18, source: "socrates", simulated: false };
-  const store = (t: Backend, eventId: Id<"events">, fetchedAt: number, baseVersion: number, points = [point]) =>
-    t.mutation(internal.history.storeSeries, { eventId, points, fetchedAt, baseVersion });
-  const failRead = (t: Backend, eventId: Id<"events">, fetchedAt: number, baseVersion: number) =>
-    t.mutation(internal.history.markSeriesFailed, { eventId, code: "UPSTREAM_UNAVAILABLE", message: "Retry later.", fetchedAt, baseVersion });
+  const store = async (t: Backend, eventId: Id<"events">, fetchedAt: number, baseVersion: number, points = [point]) =>
+    t.mutation(internal.history.storeSeries, { ...(await t.query(internal.history.seriesScope, { eventId }))!, eventId, points, fetchedAt, baseVersion });
+  const failRead = async (t: Backend, eventId: Id<"events">, fetchedAt: number, baseVersion: number) =>
+    t.mutation(internal.history.markSeriesFailed, { ...(await t.query(internal.history.seriesScope, { eventId }))!, eventId, code: "UPSTREAM_UNAVAILABLE", message: "Retry later.", fetchedAt, baseVersion });
 
   it("orders reads by start time and the cache version they started from, so an older read never wins a tie", async () => {
     const { t, eventId } = await setup();
@@ -452,6 +452,167 @@ describe("history.series", () => {
       await ctx.db.patch(assignment!._id, { active: false });
     });
     await expect(as(t, "a").query(api.history.series, { eventId })).rejects.toThrow("FORBIDDEN");
+  });
+});
+
+describe("history freshness across exports and demo resets", () => {
+  const sim = (runId: Id<"demoRuns">): Input => realMiss({
+    source: "simulated", simulated: true, runId, evidenceVersion: "sim-v1",
+  });
+  const close = (t: Backend, runId: Id<"demoRuns">) =>
+    t.run(ctx => ctx.db.patch(runId, { state: "closed", closedAt: Date.now() }));
+
+  it("marks an existing chart stale as soon as another observation is committed", async () => {
+    const { t, eventId } = await setup();
+    await record(t, eventId, realMiss());
+    await finish(t);
+    await record(t, eventId, realMiss({ observedAt: "2026-10-24T11:00:00Z", value: 0.2 }));
+    expect(await as(t, "a").query(api.history.series, { eventId })).toMatchObject({ stale: true });
+  });
+
+  it("rejects new observations after the demo run is closed", async () => {
+    const { t, eventId } = await setup();
+    const runId = await demoRun(t, "closed");
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: runId }));
+    await close(t, runId);
+    await expect(record(t, eventId, sim(runId))).rejects.toThrow("INVALID_STATE");
+    expect(await exports(t)).toHaveLength(0);
+  });
+
+  it("does not start queued exports or cache reads after reset", async () => {
+    const { t, eventId } = await setup();
+    const runId = await demoRun(t, "closed");
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: runId }));
+    await record(t, eventId, sim(runId));
+    await close(t, runId);
+    await finish(t);
+    await t.action(internal.historyActions.refreshSeries, { eventId });
+    expect(tiger.connects).toBe(0);
+    expect((await exports(t))[0].exportState).not.toBe("exported");
+  });
+
+  it("does not publish or retry an export that settles after reset", async () => {
+    const { t, eventId } = await setup();
+    const runId = await demoRun(t, "closing");
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: runId }));
+    await record(t, eventId, sim(runId));
+    const db = fakeConnection();
+    vi.mocked(connectTiger).mockResolvedValue({
+      ...db, async sql(text, values) {
+        if (text.startsWith("INSERT")) await close(t, runId);
+        return db.sql(text, values);
+      },
+    });
+    await finish(t);
+    expect((await exports(t))[0].exportState).not.toBe("exported");
+    expect(await scheduled(t, "historyActions:refreshSeries")).toHaveLength(0);
+  });
+
+  it("discards a Tiger read when the run closes while SQL is running", async () => {
+    const { t, eventId } = await setup();
+    const runId = await demoRun(t, "closing");
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: runId }));
+    await record(t, eventId, sim(runId));
+    await finish(t);
+    const before = await cache(t, eventId);
+    const db = fakeConnection();
+    vi.mocked(connectTiger).mockResolvedValue({
+      ...db, async sql(text, values) {
+        if (text.startsWith("SELECT observation_key")) await close(t, runId);
+        return db.sql(text, values);
+      },
+    });
+    await t.action(internal.historyActions.refreshSeries, { eventId });
+    expect(await cache(t, eventId)).toEqual(before);
+    expect(await as(t, "a").query(api.history.series, { eventId })).toMatchObject({ simulated: [], stale: true });
+  });
+
+  it("hides the previous run's cached simulation immediately when an event changes runs", async () => {
+    const { t, eventId } = await setup();
+    const [oldRun, newRun] = [await demoRun(t, "old"), await demoRun(t, "new")];
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: oldRun }));
+    await record(t, eventId, sim(oldRun));
+    await finish(t);
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: newRun }));
+    expect(await as(t, "a").query(api.history.series, { eventId })).toMatchObject({ simulated: [], stale: true });
+    await record(t, eventId, { ...sim(newRun), value: 0.4 });
+    await finish(t);
+    expect(await as(t, "a").query(api.history.series, { eventId })).toMatchObject({
+      simulated: [{ missKm: 0.4 }], stale: false,
+    });
+  });
+
+  it("keeps archived real observations visible when the simulated run closes", async () => {
+    const { t, eventId } = await setup();
+    const runId = await demoRun(t, "closed");
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: runId }));
+    await record(t, eventId, realMiss());
+    await record(t, eventId, sim(runId));
+    await finish(t);
+    await close(t, runId);
+    expect(await as(t, "a").query(api.history.series, { eventId })).toMatchObject({
+      real: [{ missKm: 0.18, source: "socrates" }], simulated: [], stale: true,
+    });
+  });
+
+  it("ignores a failed read after reset without changing the archived cache", async () => {
+    const { t, eventId } = await setup();
+    const runId = await demoRun(t, "closing");
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: runId }));
+    await record(t, eventId, sim(runId));
+    await finish(t);
+    const before = await cache(t, eventId);
+    const db = fakeConnection();
+    vi.mocked(connectTiger).mockResolvedValue({
+      ...db, async sql(text, values) {
+        if (text.startsWith("SELECT observation_key")) {
+          await close(t, runId);
+          throw pgError("ECONNRESET");
+        }
+        return db.sql(text, values);
+      },
+    });
+    await t.action(internal.historyActions.refreshSeries, { eventId });
+    expect(await cache(t, eventId)).toEqual(before);
+  });
+
+  it("cannot clear a newer read failure with an older successful response", async () => {
+    const { t, eventId } = await setup();
+    await record(t, eventId, realMiss());
+    await finish(t);
+    const older = (await t.query(internal.history.seriesScope, { eventId }))!;
+    const before = (await cache(t, eventId))!;
+    await t.mutation(internal.history.markSeriesFailed, {
+      eventId, ...older, fetchedAt: FIXTURE_NOW + 20, code: "UPSTREAM_UNAVAILABLE", message: "Retry later.",
+    });
+    expect(await t.mutation(internal.history.storeSeries, {
+      eventId, ...older, fetchedAt: FIXTURE_NOW + 10, points: before.points,
+    })).toEqual({ stored: false });
+    expect(await cache(t, eventId)).toMatchObject({ stale: true, error: "UPSTREAM_UNAVAILABLE: Retry later." });
+  });
+
+  it("does not let an earlier read mark a newly committed observation fresh", async () => {
+    const { t, eventId } = await setup();
+    await record(t, eventId, realMiss());
+    await finish(t);
+    const before = await cache(t, eventId);
+    const db = fakeConnection();
+    let changed = false;
+    vi.mocked(connectTiger).mockResolvedValue({
+      ...db, async sql(text, values) {
+        const result = await db.sql(text, values);
+        if (text.startsWith("SELECT observation_key") && !changed) {
+          changed = true;
+          await record(t, eventId, realMiss({ observedAt: "2026-10-24T11:00:00Z", value: 0.2 }));
+        }
+        return result;
+      },
+    });
+    await t.action(internal.historyActions.refreshSeries, { eventId });
+    expect(await cache(t, eventId)).toMatchObject({ seriesVersion: before!.seriesVersion, stale: true });
+    await finish(t);
+    expect(await as(t, "a").query(api.history.series, { eventId })).toMatchObject({ stale: false });
+    expect((await cache(t, eventId))!.points).toHaveLength(2);
   });
 });
 
