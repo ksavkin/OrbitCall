@@ -137,4 +137,24 @@ describe("catalog.snapshot", () => {
       snapshotId: "socrates-only", takenAt: "2026-10-24T08:00:00Z", gpUrl: null, ommUrl: null,
     });
   });
+
+  it("returns the registered ommUrl; a re-register replaces or clears it without touching the evidence", async () => {
+    const t = backend();
+    const register = (ommUrl?: string) =>
+      t.mutation(internal.ingest.register, { snapshotId: "socrates-test", sources: catalogSources, ...(ommUrl ? { ommUrl } : {}) });
+    const ommUrl = async () => (await t.query(api.catalog.snapshot, {}))?.ommUrl;
+
+    const snapshot = await register("/snapshots/gp-a/catalog.json");
+    expect(await ommUrl()).toBe("/snapshots/gp-a/catalog.json");
+    await t.mutation(internal.ingest.upsertBatch, { snapshot, pairs: [pair(100, 200, 40, 5e-4)] });
+    const [before] = await t.query(api.events.catalogPairs, {});
+
+    vi.setSystemTime(FIXTURE_NOW + 60_000);
+    expect(await register("/snapshots/gp-b/catalog.json")).toEqual(snapshot);
+    expect(await ommUrl()).toBe("/snapshots/gp-b/catalog.json");
+    await register();
+    expect(await ommUrl()).toBeNull();
+    const [after] = await t.query(api.events.catalogPairs, {});
+    expect(after.updatedAt).toBe(before.updatedAt);
+  });
 });

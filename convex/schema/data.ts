@@ -6,8 +6,9 @@ import { color, sourceRef } from "../lib/validators";
 // object metadata once per object, provenance once per snapshot, measurements per event.
 export const dataTables = {
   // Provenance of one pinned snapshot (or one fixture); the catalog files stay in the repo.
+  // `ommUrl` is where the browser loads the pinned OMM catalog (served by the web app); absent before one exists.
   snapshots: defineTable({
-    snapshotId: v.string(), sources: v.array(sourceRef),
+    snapshotId: v.string(), sources: v.array(sourceRef), ommUrl: v.optional(v.string()),
   }).index("by_snapshot_id", ["snapshotId"]),
   // Metadata for objects that appear in loaded events. `simulated` and `celestrakUrl`
   // follow from `objectId`; owner, owner company and purpose are unknown in Phase 1.

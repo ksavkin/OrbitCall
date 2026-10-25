@@ -1,5 +1,7 @@
 # Andrew's Phase 1: Incident Analyst
 
+Source of truth for current scope and stack: [master roadmap v1.1](master-roadmap.md). Claude retains the Analyst and private Advocates, Gemini runs the Coordination Host, and Grok runs independent checking. This document records the earlier Analyst implementation and does not establish completion of those later roles.
+
 > Current product decisions: [assigned-fleet workflow](user-flow.md) and [integration handoff](integration-status.md). Dev on is TLE/simulation; Dev off requires OMM and has no TLE fallback. The old Phase 1 fallback/global-queue descriptions below are implementation history, not the latest real-mode contract. Fleet scope, new sorting, selection/approval and unilateral debris are accepted follow-up requirements.
 
 

@@ -10,6 +10,8 @@ Current user-approved amendment: [assigned-fleet workflow](user-flow.md). My Fle
 
 Latest scope and stack: [master-roadmap.md](master-roadmap.md). The hackathon demo uses three dispatcher laptops and a read-only large display, group rooms for 2-4 operators with pair-specific approvals, English/Russian/Mandarin voice, DigitalOcean hosting, and separate Factory/Backboard/Tiger Data roles. These accepted targets supersede older two-user-only, pair-room-only, and hosting/provider alternatives below.
 
+Master roadmap v1.1 is the source of truth for provider ownership: Claude runs the Incident Analyst, private Operator Advocates and translation. Gemini runs the Coordination Host. Grok independently checks rationale and handles STT/Russian TTS. The host follows the same privacy, number-checking and human-approval rules as the other agents.
+
 This document lists functionality only. Priorities, owners and the schedule belong to the roadmap. Endpoints and data formats belong to `specification.md`, which is written from this document.
 
 Each function has a stable ID (for example `ROOM-3`) so the specification and the roadmap can refer to it. Inside each area, **System** is what OrbitCall does on its own and **User** is what a person sees or does.
@@ -37,7 +39,7 @@ The user confirmed: Dev on keeps the working TLE catalog and synthetic conjuncti
 | Risk Monitor | Screens assigned fleet objects against the catalog, ranks each user's relevant queue using current evidence, starts the agents on red events | Decide who moves or forecast future risk estimates |
 | Incident Analyst | Gathers shareable evidence on a pair and produces a five-line summary with multiple computed proposals | Read either company's private policy or represent either side |
 | Operator Advocate (one per company) | Negotiates on behalf of its company within that company's policy | Step outside the policy or execute anything |
-| Coordination Host | Opens the room, calls the right people, translates, runs the conversation, writes the log | Vote or decide |
+| Coordination Host | Gemini interprets shared discussion, asks clarifications and summarizes each linked incident. Convex publishes checked results and Claude translates them | Read private policy, approve, or decide for operators |
 | Maneuver Scheduler | After all required approvals for the workflow (two active-operator sides, or one active side for confirmed debris) of the same proposal ID and revision, re-screens and writes the maneuver to the schedule | Act without current approvals; write outside the one schedule location |
 | Maneuver Verifier | Compares the agreed maneuver with later observations and records the evidence in the shared log | Treat sparse orbit changes as proof of an exact burn |
 
@@ -272,7 +274,7 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 - **DSP-1** Opens a room for a red event.
 - **DSP-2** Later, not in the base build (question 6): finds and calls the two owners. For now both operators see the event in their queue and inbox and open the room themselves.
 - **DSP-3** Later, not in the base build (question 7): finds operators whose satellites the proposed maneuver affects, and notifies them before the maneuver.
-- **DSP-4** Runs the conversation in the room and writes every step to the log.
+- **DSP-4** Gemini hosts the shared conversation, asks relevant clarification questions, requests checked revisions when discussion changes a plan, and produces source-linked per-event summaries. Convex records validated outputs in the log. Gemini receives only shareable room context and cannot create approval or alter schedule state directly.
 - **DSP-7** Makes the incident and available operator contact methods accessible in each relevant person's inbox regardless of whether they answer the call or join the room.
 
 **User**

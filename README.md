@@ -9,11 +9,11 @@ Nothing moves without a human. It is a handshake, not a law.
 
 ## Master plan
 
-Start with [the locked master roadmap](docs/master-roadmap.md): short phase goals, recent problem evidence, the complete technical architecture, sponsor roles, and deployment instructions. The target is a hackathon demo with three dispatcher laptops and one read-only large display. Rooms support 2-4 operators across linked pair incidents. The locked languages are English, Russian, and Mandarin.
+Start with [the locked master roadmap](docs/master-roadmap.md), the team's source of truth: short phase goals, recent problem evidence, the complete technical architecture, sponsor roles, and deployment instructions. The target is a hackathon demo with three dispatcher laptops and one read-only large display. Rooms support 2-4 operators across linked pair incidents. The locked languages are English, Russian, and Mandarin. The v1.1 agent-provider split is Claude for analysis/advocacy, Gemini for the Coordination Host, and Grok for independent checking. These are target roles, with implementation status recorded in the roadmap.
 
 ## Current integration and modes
 
-See [the integration handoff](docs/integration-status.md) for what is implemented and what is still planned. **Dev on** uses the current TLE catalog and synthetic scenarios. **Dev off** requires backend OMM and shows an explicit pending state until the pipeline is ready. CelesTrak remains the source; switching formats does not itself guarantee more accurate orbits.
+See [the integration handoff](docs/integration-status.md) for what is implemented and what is still planned. **Dev on** uses the current TLE catalog and synthetic scenarios. **Dev off** loads the pinned OMM catalog named by Convex and propagates OMM directly. Missing or invalid inputs keep a waiting/error state with no TLE fallback. CelesTrak remains the source. Switching formats does not itself guarantee more accurate orbits. [Data preparation](data/README.md) explains the committed inputs and static web delivery.
 
 ## Development
 
@@ -44,7 +44,7 @@ flowchart TD
     AN --> OA[Operator Advocate A<br/>private policy A]
     AN --> OB[Operator Advocate B<br/>private policy B]
     OA <-- "share candidate outcomes, not private limits" --> OB
-    OA --> DI[Coordination Host<br/>opens the room, calls people, translates, logs]
+    OA --> DI[Gemini Coordination Host<br/>clarifies discussion and summarizes plans]
     OB --> DI
     DI --> R{{"Conjunction room<br/>compare and select proposals<br/>voice + text, live translation"}}
     HA[Human operator A] <--> R
@@ -58,7 +58,7 @@ flowchart TD
 1. **Risk Monitor** propagates assigned spacecraft against the available catalog with SGP4, finds close pairs, and ranks each personal queue by severity then earliest closest approach. Red (Pc > 1e-4 and TCA < 72 h) wakes the agents. Missing probability is explicit; there is no risk forecast.
 2. **Incident Analyst** prepares a five-line summary and multiple computed proposals, up to four when feasible, showing who moves, timing, delta-v, estimated consequences and assumptions. Waiting can be an option with a review condition.
 3. **Operator Advocates A and B** evaluate candidates using their own private company policies. They exchange feasibility outcomes and constraint categories; raw policy values are inaccessible to the other side.
-4. **Coordination Host** opens the room, translates, logs and, when a call ends, posts and reads a summary of what was agreed. Each person also has a persistent inbox with incident details, operator contacts and history, including when the other operator is absent.
+4. **Gemini Coordination Host** follows the shared room discussion, asks clarifying questions and posts a checked summary for each linked incident. Claude translates the host text and the existing TTS path reads it aloud. Each person also has a persistent inbox with incident details, operator contacts and history, including when the other operator is absent.
 5. **The incident's assigned operators** compare and select a candidate, discuss it in the room's always-on chat or optional live call, and approve that exact revision by ticking a checkmark, or veto it. Speech never approves. Counters are ordinary voice or text, with automatic agent revisions. Switching the selected candidate or revising it visibly resets required approvals. Bilateral active-spacecraft coordination requires both sides; confirmed debris requires only the assigned active-object operator, without a fictional debris approval. Every new incident asks the required operators again.
 6. **Maneuver Scheduler** re-screens the moved satellite against the whole catalog and records only the currently approved maneuver. A new conflict returns to discussion; a wait agreement schedules no burn.
 7. **Maneuver Verifier** compares later observations with the agreed plan, showing evidence consistent with the plan, a mismatch, or insufficient data. The shared record supports an operator-scoped six-month report draft and supporting event export.
@@ -80,11 +80,11 @@ Principles:
 | Frontend | TypeScript, Next.js 16.4.3, React 19.3, existing Three.js GlobeScene, Tailwind CSS 4, Motion and Zustand |
 | Backend, live state, scheduler | Convex: the single source of truth for events, rooms, messages, proposals, approvals, policies, inbox and log; cron and scheduled functions; agent calls |
 | Orbital mechanics | A separate Python service (`python-sgp4`, Python 3.12): catalog screening, re-screen, verification, validation and the simulated satellite's orbit. It keeps the catalog snapshot; Convex calls it and stores the results. `satellite.js` only draws orbits in the browser |
-| Reasoning agents, translation | Claude Sonnet for reasoning and translation. Risk Monitor uses deterministic backend jobs and Python screening. Grok independently checks shared rationale |
-| Agent runtime | Our own backend: each agent is a separate Claude call with its own instructions and data access; agent messages are stored with the incident state. No agent framework. Fetch.ai was dropped on Oct 24, 2026 |
-| Orbit data format | Real mode: OMM (JSON / CSV), integration pending. Dev/demo: current TLE catalog and synthetic scenarios. No real-mode fallback to TLE |
+| Reasoning agents, translation | Claude Sonnet for analysis, private advocates and translation. Gemini Flash runs the Coordination Host. Grok independently checks shared rationale. Risk Monitor uses deterministic backend jobs and Python screening |
+| Agent runtime | Convex actions call the provider assigned to each role with explicit instructions and scoped data. Gemini uses `@google/genai` in a Node action. Convex stores checked outputs and job state. No general agent framework. Fetch.ai remains dropped |
+| Orbit data format | Real mode: pinned OMM JSON, Convex catalog URL, static Vercel assets and direct OMM propagation are implemented. Assigned-fleet numerical screening remains planned. Dev uses TLE and synthetic scenarios. No real-mode fallback to TLE |
 | Voice | LiveKit Cloud call plus persistent text. Python worker: Grok STT (`grok-voice-transcribe-2.0`) → protect values → Claude translation → restore/check → Cartesia EN/ZH or Grok RU TTS. Three languages, one shared room, pair-specific approvals |
-| Model and voice configuration | Use the pinned identifiers in the master roadmap. Test EN/RU/ZH speech and number integrity before rehearsal. The text Coordination Host uses Claude and the same listener-language TTS routing |
+| Model and voice configuration | Use the pinned identifiers in the master roadmap, including `gemini-3.8-flash` for the host. Test EN/RU/ZH speech and number integrity before rehearsal. Gemini host text uses the same checked translation and listener-language TTS routing |
 | Sign-in | Pre-created test users only, one per operator; no registration. Login through Auth0 with sign-ups disabled; Convex verifies the identity on every read, write and subscription |
 | Additional locked sponsors | Factory Droid SDK for authorized schedule artifacts, Backboard for isolated operator memory, Tiger Data for historical observations. Convex owns app decisions |
 | Development | Cursor (required by the SpaceXAI track) |

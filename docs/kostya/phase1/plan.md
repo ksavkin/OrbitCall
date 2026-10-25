@@ -1,5 +1,7 @@
 # Phase 1 — Kostya's plan
 
+Source of truth for current scope and stack: [master roadmap v1.1](../../master-roadmap.md). Claude retains the Analyst and private Advocates, Gemini runs the Coordination Host, and Grok runs independent checking. This is an earlier Phase 1 implementation plan. Its provider, hosting and fallback choices cannot override the current lock.
+
 > Current product decisions: [assigned-fleet workflow](../../user-flow.md) and [integration handoff](../../integration-status.md). Dev on is TLE/simulation; Dev off requires OMM and has no TLE fallback. The old Phase 1 fallback/global-queue descriptions below are implementation history, not the latest real-mode contract. Fleet scope, new sorting, selection/approval and unilateral debris are accepted follow-up requirements.
 
 

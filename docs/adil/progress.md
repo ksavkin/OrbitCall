@@ -1,6 +1,6 @@
 # Frontend progress (Adil)
 
-Latest accepted scope and technical stack: [master roadmap](../master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Existing implementation notes below are not completion claims.
+Source of truth: [master roadmap v1.1](../master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Claude runs analysis/advocates, Gemini runs the Coordination Host, and Grok runs independent checking and selected audio tasks. Existing implementation notes below are not completion claims.
 
 
 Branch: `adil`. App: `web/`. Run with `cd web && npm run dev`, then open http://localhost:3000.
@@ -13,9 +13,11 @@ Priority: severity first, then earliest closest approach; missing/stale data is 
 
 The historical implementation notes below describe the simulator. Its Pc/time sorting, fixed four options, auto-approved debris, private traces, affected-party notification and fast verification are not the accepted backend behavior. Country-based demo assignments and replay must remain visibly simulated.
 
+Agent traces must identify the actual provider/model for each call, including the Gemini Host. Show provider results only after backend integration. A local simulator animation does not establish live sponsor use.
+
 ## Merged backend and mode boundary
 
-Phase 1 Convex catalog/snapshot/Analyst integration is now included alongside the latest simulator. Dev on keeps TLE plus synthetic scenarios. Dev off waits for backend OMM and never loads `/api/catalog` or substitutes a synthetic event. Phase 1 returns `ommUrl: null`; the real OMM loader and renderer are still pending. The full assigned-fleet flow below remains a target, not completed backend functionality. See [integration status](../integration-status.md).
+Phase 1 Convex catalog/snapshot/Analyst integration is included alongside the simulator. The `ec5ea34` merge adds pinned OMM assets, a Convex catalog URL, the loader and direct OMM propagation in Dev off. Dev on keeps TLE plus synthetic scenarios. Missing OMM stays pending/error and never loads `/api/catalog` or substitutes a synthetic event. Shared-deployment validation and the full assigned-fleet flow remain work to complete. SOCRATES queue geometry is not recomputed by merely loading the OMM catalog. See [integration status](../integration-status.md).
 
 ## Where things stand
 

@@ -5,3 +5,5 @@ node_modules/
 .convex/
 coverage/
 *.tsbuildinfo
+# raw CelesTrak responses kept between runs of scripts/fetch_*.py; never commit
+data/snapshots/_incoming/

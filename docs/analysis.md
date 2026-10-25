@@ -15,6 +15,8 @@ The user confirmed: Dev on keeps the working TLE catalog and synthetic conjuncti
 
 The latest locked scope, stack, phases, and deployment are in [master-roadmap.md](master-roadmap.md). It supersedes older provider alternatives and pair-room-only assumptions in this decision history.
 
+The user approved a third agent provider in master roadmap v1.1. Gemini takes the Coordination Host role. Claude retains incident analysis, private advocates and translation. Grok retains independent rationale checking and selected audio tasks. This replaces the earlier all-Claude host assumption and requires a real Gemini API result before any Best Use of Gemini API claim.
+
 ## Current workflow amendment: assigned fleet (October 24, 2026)
 
 The user approved [the fleet-first workflow](user-flow.md): My Fleet + personal incident queue + globe, with four assigned spacecraft per enabled demo dispatcher, three demo dispatchers based in Russia, the US and China, a read-only public display, and support for a fourth operator. Identity and assignment determine access; country does not. Run Scan screens the caller's assigned fleet against every other usable object in the pinned catalog over the next 72 hours. It does not populate a global operator queue.

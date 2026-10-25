@@ -256,7 +256,7 @@ function DataCard({
   }, [objects]);
   const fetched = Date.parse(meta.fetchedAt);
   const t = fmtUtc(fetched);
-  const live = meta.source !== "snapshot";
+  const live = meta.source === "celestrak-live" || meta.source === "celestrak-cache";
   // fraction of the 2 h CelesTrak refresh window used up
   const used = Math.min((now - fetched) / (2 * 3600 * 1000), 1);
   return (

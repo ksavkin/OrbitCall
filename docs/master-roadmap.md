@@ -1,8 +1,8 @@
 # OrbitCall master roadmap
 
-Status: locked hackathon plan, version 1.0. Updated October 24, 2026, America/Los_Angeles. Code baseline: `0ed8496`.
+Status: locked hackathon plan, version 1.1. Updated October 24, 2026, America/Los_Angeles. Code baseline: `ec5ea34`, including the OMM snapshot merge. Version 1.1 assigns the Coordination Host to Gemini.
 
-This document is the team entry point. It defines the finished hackathon demo, phase goals, stack, agent roles, data ownership, service contracts, and deployment plan. It separates implemented code from work still required.
+This document is the team's source of truth. It defines the finished hackathon demo, phase goals, stack, agent roles, data ownership, service contracts, and deployment plan. It separates implemented code from work still required. Other documents explain or implement this plan and must follow its current decisions.
 
 The team may improve a locked choice. Record the change, reason, affected contracts, and owner here before implementing the replacement. Update the specification and sponsor claims in the same change. Until then, use this plan. Account access, selected voice IDs, and deployment addresses are configuration values to record during setup, not invitations to swap providers silently.
 
@@ -100,6 +100,8 @@ The base catalog is real public data. Engineered encounters, demo ownership assi
 
 The same numerical pipeline must produce the engineered trajectories, screening results, candidate geometry, and rendered orbits. Store the scenario inputs and measured closest approach. A fixture is not a real detected emergency. A supplied demo probability is marked simulated and is not computed from SGP4 geometry.
 
+The current OMM delivery is implemented: pinned files under `data/snapshots/` are copied byte-for-byte into `web/public/snapshots/`, and Convex returns the catalog index URL. The browser loads that index and propagates the OMM records directly. Current queued encounters still come from SOCRATES and are filtered to objects in that catalog. This object-membership filter does not recompute encounter geometry or implement the assigned-fleet screening service. [Data layout and preparation](../data/README.md).
+
 ## 3. Phases: goals only
 
 Phases describe completion order, not fixed hours. Establish deployment early and update it throughout the build. Do not restart completed work just to match a phase number.
@@ -195,7 +197,8 @@ These are target choices. The baseline status table in section 15 identifies wha
 | Application backend | Convex TypeScript functions, reactive database, scheduler, storage, search | Root `convex/`, hosted by Convex |
 | Identity | Auth0 React SDK, `ConvexProviderWithAuth0`, server identity checks | Auth0 tenant, browser token bridge, Convex authorization |
 | Numerical service | Python 3.12, FastAPI, Uvicorn, `sgp4`, NumPy, HTTPX, Pydantic | `services/orbit/`, DigitalOcean container |
-| Agent calls | Anthropic SDK for TypeScript, explicit role-specific prompts and data access | Convex actions |
+| Analysis and advocate agents | Anthropic SDK for TypeScript, explicit role-specific prompts and data access | Convex actions |
+| Coordination Host agent | Google Gemini API through the official `@google/genai` TypeScript SDK, structured outputs | Convex Node action |
 | Independent rationale check | Grok text API, structured check result | Convex action, no scheduling authority |
 | Live media | LiveKit Cloud, `livekit-client`, Python LiveKit RTC/Agents SDK | Browser audio transport and DigitalOcean translation worker |
 | STT | Grok streaming speech-to-text | Translation worker calls xAI |
@@ -216,7 +219,8 @@ Use Node.js 22.13 or newer within Node 22 for the build and Node worker. The roo
 
 | Role | Locked identifier or API | Configuration |
 |---|---|---|
-| Incident Analyst, Operator Advocates, text Coordination Host | `claude-sonnet-5-5` | `ANTHROPIC_MODEL` |
+| Incident Analyst and Operator Advocates | `claude-sonnet-5-5` | `ANTHROPIC_MODEL` |
+| Text Coordination Host | `gemini-3.8-flash` | `GEMINI_HOST_MODEL` |
 | Phrase translation | `claude-sonnet-5-5` | `TRANSLATION_MODEL` |
 | Independent rationale check | `grok-4.20-0309-reasoning` | `XAI_CHECKER_MODEL` |
 | Speech recognition | `grok-voice-transcribe-2.0`, `wss://api.x.ai/v1/stt` | `XAI_STT_MODEL` |
@@ -226,7 +230,9 @@ Use Node.js 22.13 or newer within Node 22 for the build and Node worker. The roo
 
 These are configured target IDs, not proof of access in the team's accounts. An access failure leaves the step failed with a visible reason. Record any provider/model change as a new lock revision. Do not switch to `latest` aliases during judging.
 
-The target names above are supported by the provider documentation checked for this plan: [Claude models](https://platform.claude.com/docs/en/models/overview), [Grok checker](https://docs.x.ai/developers/models/grok-4.20), [Grok STT](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text), [Cartesia snapshot](https://docs.cartesia.ai/build-with-cartesia/tts-models/latest), [Grok TTS](https://docs.x.ai/developers/model-capabilities/audio/text-to-speech), [Factory SDK](https://docs.factory.com/sdk/typescript).
+The target names above are supported by the provider documentation checked for this plan: [Claude models](https://platform.claude.com/docs/en/models/overview), [Gemini model](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash), [Grok checker](https://docs.x.ai/developers/models/grok-4.20), [Grok STT](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text), [Cartesia snapshot](https://docs.cartesia.ai/build-with-cartesia/tts-models/latest), [Grok TTS](https://docs.x.ai/developers/model-capabilities/audio/text-to-speech), [Factory SDK](https://docs.factory.com/sdk/typescript).
+
+The three agent providers have separate jobs: Claude analyzes incidents and advocates for each company, Gemini hosts the shared coordination discussion, and Grok independently checks rationale. Claude also translates phrases. Grok also provides STT and Russian TTS. Gemini Host text uses the existing checked translation and speech path. It adds no separate media server or speech pipeline.
 
 Grok TTS uses the endpoint's documented request fields. Do not invent a TTS `model` parameter. Cartesia currently lists Russian support too. Routing Russian to Grok is our chosen demo allocation, not a claim that Cartesia cannot speak Russian.
 
@@ -239,8 +245,9 @@ flowchart TD
     AUTH[Auth0] --> UI
     AUTH --> OBS
     CV <--> ORBIT[DigitalOcean: Python orbital API]
-    ORBIT --> DATA[CelesTrak and permitted reference sources]
+    ORBIT --> DATA[Pinned CelesTrak and permitted reference inputs]
     CV <--> CLAUDE[Claude reasoning agents]
+    CV <--> GEMINI[Gemini Coordination Host]
     CV <--> CHECK[Grok rationale check]
     CV <--> MEMORY[Backboard company memory]
     CV <--> TIGER[Tiger Data historical analytics]
@@ -287,7 +294,7 @@ One CPU Droplet is the locked initial host. Use measured memory and screening ru
 ### Dependency rules
 
 - Browser application commands go to Convex. Live audio goes to LiveKit.
-- Large OMM assets may load from a versioned backend-issued file URL. This is asset delivery, not browser access to the numerical API.
+- OMM assets load from the versioned index named by Convex. The current demo serves the committed files from `web/public/snapshots/` through Vercel. This is asset delivery, not browser access to the numerical API.
 - Convex calls the orbital and schedule services using service authentication.
 - Workers publish results through narrow authenticated backend functions or HTTP actions. They do not expose a general client write token.
 - Tiger Data cannot alter approvals. Backboard cannot authorize a maneuver. Factory cannot select one.
@@ -302,13 +309,24 @@ The agent graph represents these actual roles and tool calls. Do not animate an 
 | Risk Monitor | Deterministic Convex jobs plus Python screening | Snapshot, assigned object IDs, window, supplied source values | Encounter results, severity, queue updates. No LLM is needed to assign a threshold color |
 | Incident Analyst | Claude Sonnet action in Convex | Shared event evidence and computed candidate results | Five-line explanation and checked candidate descriptions. Cannot read private company policy |
 | Operator Advocate | One Claude Sonnet role per company in Convex | That company's policy, relevant memory, shared candidates | Feasible/infeasible outcomes, recommendations, and shareable constraint categories. Cannot approve |
-| Coordination Host | Claude Sonnet action in Convex | Group-room public context, messages, pair-scoped decisions | Room summary, clarification requests, revisions to consider, end-of-call summary. Cannot approve |
+| Coordination Host | Gemini Flash Node action in Convex | Group-room public context, messages, pair-scoped decisions | Room summary, clarification requests, revisions to consider, end-of-call summary. Cannot approve |
 | Independent checker | Grok text action in Convex | Published candidate facts and proposed explanation | Agreement/disagreement flag and reason. Does not replace deterministic number checks |
 | Maneuver Scheduler | Convex authorization mutations, Python re-screen, Factory worker on DigitalOcean | Exact selected revision, required approvals, snapshot and trajectory versions | Prepared diff and committed schedule artifact. Cannot alter maneuver numbers or command a spacecraft |
 | Maneuver Verifier | Python numerical method, Convex result publication | Approved plan and later observations | Consistent, mismatch, or awaiting data, with method and limitations |
 | Translation worker | Python LiveKit process on DigitalOcean | Each source audio track and final phrases | Original text, checked translations, and listener-language audio. Cannot approve or change a proposal directly |
 
 Three companies produce three advocate instances. The number of advocates follows room membership and relevant incident sides, not a hard-coded A/B pair. Deterministic screening runs for all assigned assets. LLM work runs only for the selected/top relevant incidents, with one deduplicated agent run per evidence version.
+
+### Gemini Host contract
+
+- Trigger the host when a relevant final human message arrives, checked candidate results change, a summary is requested, or a call ends. Deduplicate by room, input version, and trigger. Its own messages do not trigger another host run.
+- Send only shared messages with source IDs, linked event facts, current candidate revisions, shareable feasibility outcomes, and server-reported approval state. Private policies and Backboard memory stay with the authorized advocate.
+- Call `models.generateContent` through `@google/genai` in a Convex Node action. Use a JSON Schema for an allowlisted result: referenced event/message IDs, clarification questions, requested revisions, and per-event summary text.
+- Check referenced IDs, numerical values, room membership, and input freshness before publishing through a mutation. A requested revision returns to the existing calculation and validation flow.
+- Generate canonical host text, then use Claude translation and the selected Cartesia/Grok TTS routes for each listener. Host speech cannot create an approval.
+- Show the Gemini provider/model and actual result in the agent trace. A host failure leaves the text room and existing evidence available, with bounded retry and no silent provider substitution.
+
+Google documents the official SDK and JSON Schema output support. A valid schema still needs our factual and authorization checks. [Google GenAI SDK](https://ai.google.dev/gemini-api/docs/libraries), [structured outputs](https://ai.google.dev/gemini-api/docs/structured-output).
 
 ### Prompt and context contract
 
@@ -553,19 +571,22 @@ Demo evidence: a real database write/query, a rendered historical series with pr
 | Convex | One shared event state updates four browsers. Mutations enforce current approvals. Scheduled actions run jobs. Search finds a shared message or audit entry |
 | SpaceXAI | Real Grok STT request and Russian TTS output in the multilingual room. Record actual Cursor usage during implementation |
 | Anthropic | Checked incident explanation, company-specific advocate outcomes, and discussion-driven revision |
+| Google Gemini | Live Coordination Host clarification and a per-event room summary tied to the actual discussion and current candidate revisions |
 | Cartesia | English and Mandarin translated speech in the main flow, with recorded latency and known limitations |
 | Auth0 | Three distinct identities with different fleet access and approval rights |
 | DigitalOcean | Running orbital API, persistent translation worker, and Factory worker with health/log evidence |
 
 ### Prize context and claims
 
-The live Hive page checked October 24 lists Convex at $5,000 cash, Factory at $2,000 plus credits/swag, SpaceXAI at a custom Cursor keyboard, DigitalOcean at a Retro Wireless Mouse, Vultr at an M5Stack Official Tab5, Backboard at a Tile Essentials Pack, and Tiger Data at a Stream Deck Mini. Do not treat this list as a guarantee or infer comparative winning odds. The Devpost Convex listing differs from Hive, so confirm the award with the sponsor before quoting it in a pitch. [Hive prize briefs](https://hive.hackberkeley.org/prizes), [event Devpost](https://cal-hacks-13-0.devpost.com/).
+The live Hive page checked October 24 lists Convex at $5,000 cash, Factory at $2,000 plus credits/swag, SpaceXAI at a custom Cursor keyboard, DigitalOcean at a Retro Wireless Mouse, Vultr at an M5Stack Official Tab5, Backboard at a Tile Essentials Pack, and Tiger Data at a Stream Deck Mini. Best Use of Gemini API lists MLH Swag Kits on both Hive and Devpost. The current Devpost Convex listing also shows $5,000. Recheck final awards before submission. Do not infer comparative winning odds. [Hive prize briefs](https://hive.hackberkeley.org/prizes), [event Devpost](https://cal-hacks-13-0.devpost.com/).
 
 The chosen host is DigitalOcean. Vultr remains an unselected alternative. Its different prize is not a technical reason to split the deployment.
 
 The SpaceXAI Hive brief requires Cursor and a Grok Imagine or Voice API integration. Our selected voice path provides substantive Grok audio use. Record the actual API calls and actual development-tool use. Do not rewrite build history for eligibility. Factory needs runtime SDK work, and Cartesia asks for a complete demo-first presentation. Recheck final submission requirements before opting into tracks.
 
-No additional runtime providers such as Gemini, ElevenLabs, Apify, Moss, or Fetch.ai are locked in this version. Replacing a provider requires a recorded stack change. Submit-only tracks do not justify adding an unused service.
+Best Use of Gemini API requires actual Gemini API use. Demonstrate the host interpreting a discussion, asking a relevant clarification, and producing a source-linked summary. Capture the successful request, configured model, checked output, and UI trace before claiming that integration is complete. The target role alone does not establish eligibility.
+
+No additional runtime providers such as ElevenLabs, Apify, Moss, or Fetch.ai are locked in this version. Replacing a provider requires a recorded stack change. Submit-only tracks do not justify adding an unused service.
 
 ## 11. Verification, reporting, and failure behavior
 
@@ -647,9 +668,9 @@ The planned directories and commands below become runnable after their implement
 
 ### Step 1: Create accounts and record readiness
 
-- Confirm access to Vercel, the shared Convex project, Auth0, LiveKit Cloud, DigitalOcean, Anthropic, xAI, Cartesia, Factory, Backboard, and Tiger Cloud.
+- Confirm access to Vercel, the shared Convex project, Auth0, LiveKit Cloud, DigitalOcean, Anthropic, Google AI Studio/Gemini API, xAI, Cartesia, Factory, Backboard, and Tiger Cloud.
 - Record the selected model IDs and tested voice IDs in the demo manifest.
-- Run one small provider test per selected speech language, one memory write/recall, one SQL write/read, and one constrained Factory SDK run.
+- Run one small checked call from each of Claude, Grok, and Gemini, speech checks for all three languages, one memory write/recall, one SQL write/read, and one constrained Factory SDK run.
 - Record success or failure. Do not mark an integration ready from the existence of an API key.
 
 ### Step 2: Configure identity
@@ -690,7 +711,7 @@ Confirm health endpoints and a real job after container startup. A running conta
 |---|---|
 | Vercel public build values | `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_AUTH0_DOMAIN`, `NEXT_PUBLIC_AUTH0_CLIENT_ID` |
 | Convex identity | `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID` |
-| Convex provider calls | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `XAI_API_KEY`, `XAI_CHECKER_MODEL`, `BACKBOARD_API_KEY`, `TIGER_DATABASE_URL` |
+| Convex provider calls | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `GEMINI_API_KEY`, `GEMINI_HOST_MODEL`, `XAI_API_KEY`, `XAI_CHECKER_MODEL`, `BACKBOARD_API_KEY`, `TIGER_DATABASE_URL` |
 | Convex service access | `ORBIT_SERVICE_URL`, `ORBIT_SERVICE_TOKEN`, `SCHEDULE_SERVICE_URL`, `SCHEDULE_SERVICE_TOKEN` |
 | Convex media authorization | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` |
 | Voice container | LiveKit credentials, xAI/Anthropic/Cartesia keys, STT/translation/TTS IDs, voice IDs, `CONVEX_SITE_URL`, narrowly scoped worker callback credential |
@@ -721,6 +742,7 @@ For this two-package repo, deploy the root Convex package in the release workflo
 ### Step 7: Prepare data and the four screens
 
 - Load the pinned OMM snapshot and record its hash, source coverage, and epochs.
+- Use `scripts/build_omm_catalog.py` to publish the byte-identical OMM files and index inside `web/`. `scripts/build_catalog_pairs.py` records that index path, and the snapshot loader registers it as `ommUrl`. Keep both packages on the same release commit. See the data README for the pinned inputs and preparation commands.
 - Seed four assigned spacecraft for each dispatcher, with the intended simulated objects and labels.
 - Seed a closed prior incident or explicitly demonstrate a first interaction, then a second one, for Backboard recall.
 - Load only sourced or explicitly simulated historical observations into Tiger Data. Keep them distinguishable.
@@ -755,6 +777,7 @@ For this two-package repo, deploy the root Convex package in the release workflo
 - Three people can join one room. A fourth account can join a separate test without changing pair approvals.
 - English, Russian, and Mandarin values and object identifiers survive recognition, translation, and speech checks.
 - One operator introduces a new constraint. The relevant candidate changes and only affected approvals reset.
+- Gemini asks a relevant clarification and summarizes the current pair-specific plans. Claude's analysis/advocates and Grok's rationale check each show their own real call and result.
 - Selection never approves. Speech never approves. A room member cannot approve an unrelated incident.
 - Factory shows the exact approved values and a real resulting artifact after re-screening.
 - Tiger history contains recorded points with source/time. Backboard recall cites actual prior context.
@@ -783,6 +806,7 @@ For this two-package repo, deploy the root Convex package in the release workflo
 - A short demo-first video showing one complete flow.
 - A Cartesia two-minute cut with the language routing explained accurately.
 - A concise explanation of Convex's central role and actual Grok Voice usage.
+- Best Use of Gemini API evidence: the running host, its successful API request, checked clarification/summary, and visible role in the complete flow.
 - Factory, Backboard, Tiger Data, Auth0, and DigitalOcean evidence from working code.
 - A problem statement backed by the dated reports in section 1.
 - A clear statement of what is real, simulated, replayed, and still missing.
@@ -790,23 +814,25 @@ For this two-package repo, deploy the root Convex package in the release workflo
 
 ## 15. Baseline status and team handoff
 
-### What exists at `0ed8496`
+### What exists through `ec5ea34`
 
 - Next.js globe/UI and the TLE development catalog.
 - Local synthetic conjunction/agent scenarios, decision dock, camera, and resolution/alert screens.
 - Root Convex schema for snapshots, objects, events, and Analyst runs.
 - SOCRATES ingestion, catalog queries, current color updates, and checked Analyst runtime.
 - Frontend Convex bridge and error boundaries.
-- Dev-off waiting state with no automatic TLE fallback.
-- Backend tests, frontend checks, and a successful production build from the previous reconciliation.
+- Pinned GP OMM and SATCAT inputs, static web catalog index, Convex `ommUrl`, OMM loader, and direct OMM worker propagation in Dev off. Missing inputs retain the waiting/error state with no TLE fallback.
+- SOCRATES queue rows restricted to objects in the pinned OMM catalog. Their supplied geometry remains a separate source result.
+- Backend TypeScript and 59 tests, frontend TypeScript/lint, and production build pass for the merged baseline. The integration handoff records asset checks and remaining live-deployment validation.
 
 ### What is still to build
 
-- OMM loading and rendering in real mode.
+- Validate OMM delivery on the shared deployment and add the numerical assigned-fleet screening service against those pinned inputs.
 - Auth0 identity and assigned fleets.
 - Fleet screening jobs and private queues.
 - Group rooms, three-language live voice, and notifications.
 - Real proposals, private advocate evaluation, approval integrity, and linked trajectory handling.
+- Gemini Coordination Host, its validated output contract, and the three-provider agent traces.
 - Factory, Backboard, Tiger Data, and the DigitalOcean deployment.
 - Observer display, sourced verification replay, and final export/rehearsal.
 
@@ -845,5 +871,12 @@ These are coordination areas, not new hour commitments. Keep task assignments in
 This version supersedes the earlier two-user-only demo, pair-only room, English/Russian-only scope, Railway/Fly hosting options, and recommendations to drop Backboard or Tiger Data. It keeps the approved TLE-dev/OMM-real boundary and pair-specific human approvals. It replaces the one-simulated-object-per-run limit with a transparent multi-incident demo fixture.
 
 The old automatic Auth0 replacement, automatic non-Factory schedule writer and unimplemented offline shared backend are outside this lock. Their failures use the visible states and tested backups described above.
+
+### Lock changes
+
+| Date and version | Change | Reason and impact |
+|---|---|---|
+| October 24, 2026, v1.1 | Coordination Host moves from Claude to Gemini. Claude keeps analysis, advocates, and translation. Grok keeps independent checking and audio | User requested three meaningful agent providers and Best Use of Gemini API coverage. Adds the Google SDK, server-only key/model configuration, checked host output, and sponsor evidence. No extra duplicate review agent. Integration owners follow the work areas above. Documentation is aligned. The Gemini runtime and live checks remain to build |
+| October 24, 2026, baseline refresh | Include the OMM snapshot and renderer merged in `ec5ea34` | Update implementation status and the static asset-delivery path. The remaining fleet-screening and shared-deployment work stays explicit |
 
 Future changes need a short record: date, old choice, new choice, reason, affected functions/services, verification, and sponsor impact. Keep `main` and `adil` synchronized when sharing a new agreed baseline. A push does not deploy the cloud services by itself.

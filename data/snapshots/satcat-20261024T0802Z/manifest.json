@@ -1,0 +1,39 @@
+{
+  "snapshotId": "satcat-20261024T0802Z",
+  "takenAt": "2026-10-24T08:02:43Z",
+  "files": [
+    {
+      "file": "satcat.csv.gz",
+      "source": "celestrak_satcat",
+      "url": "https://celestrak.org/pub/satcat.csv",
+      "fetchedAt": "2026-10-24T08:02:43Z",
+      "subset": "Only the objects in the Dev globe's six TLE groups (active, stations, gnss and the three debris clouds), exactly the NORAD ids in web/data/snapshot/*.tle; CelesTrak's full file has about 71k rows.",
+      "copiedFrom": "web/data/snapshot/satcat.csv at commit 792e449 (Adil's Dev catalog snapshot)",
+      "bytes": 1648243,
+      "sha256": "05bbf40efaebc97ae1f22118ce0860fdb8686438ff21ad9f448bf976d526e960",
+      "rows": 18589,
+      "columns": [
+        "OBJECT_NAME",
+        "OBJECT_ID",
+        "NORAD_CAT_ID",
+        "OBJECT_TYPE",
+        "OPS_STATUS_CODE",
+        "OWNER",
+        "LAUNCH_DATE",
+        "LAUNCH_SITE",
+        "DECAY_DATE",
+        "PERIOD",
+        "INCLINATION",
+        "APOGEE",
+        "PERIGEE",
+        "RCS",
+        "DATA_STATUS_CODE",
+        "ORBIT_CENTER",
+        "ORBIT_TYPE"
+      ],
+      "compression": "gzip",
+      "gzBytes": 270713,
+      "gzSha256": "038b9e1e56ca71ec70c6ccd897f30ef226fd0522061b90aa9f87ebec0260b167"
+    }
+  ]
+}

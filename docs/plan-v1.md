@@ -1,6 +1,6 @@
 # OrbitCall — Full Kit for Cal Hacks 13.0 (plan v1)
 
-> Historical planning kit. The current scope and stack are locked in [master-roadmap.md](master-roadmap.md): hackathon only, four screens, 2-4 operator group rooms with pair approvals, three languages, DigitalOcean hosting, and Factory/Backboard/Tiger Data. Earlier options and hour plans below are historical where they differ.
+> Historical planning kit. The team's source of truth is [master-roadmap.md](master-roadmap.md), now v1.1: hackathon only, four screens, 2-4 operator group rooms with pair approvals, three languages, DigitalOcean hosting, and Factory/Backboard/Tiger Data. Claude runs analysis/advocates and translation, Gemini runs the Coordination Host, and Grok runs independent checking and selected audio tasks. Earlier provider choices and hour plans below are historical where they differ.
 
 
 Oct 23, 2026 · @K · Product decisions updated Oct 24, 2026
@@ -315,6 +315,8 @@ Use public orbit sources, reference conjunction records and operator metadata. S
 ---
 
 ## 10. Which model for the agents: Claude or Grok
+
+Historical comparison. The current lock has three agent providers: Claude for analysis/advocates, Gemini for the Coordination Host, and Grok for the independent check. Use the master roadmap's model registry, service boundaries and configuration.
 
 **Short answer:** Claude for the reasoning agents, Grok Voice for voice, Grok as a second opinion optionally. We don't pick one; we split by task.
 

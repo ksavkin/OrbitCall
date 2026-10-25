@@ -1,6 +1,6 @@
 # docs/adil
 
-Latest accepted scope and technical stack: [master roadmap](../master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Existing implementation notes below are not completion claims.
+Source of truth: [master roadmap v1.1](../master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Claude runs analysis/advocates, Gemini runs the Coordination Host, and Grok runs independent checking and selected audio tasks. Existing implementation notes below are not completion claims.
 
 
 Frontend notes from Adil (UI owner). Start here if you work on `web/`.

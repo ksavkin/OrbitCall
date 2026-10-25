@@ -1,6 +1,6 @@
 # OrbitCall web
 
-Latest accepted scope and technical stack: [master roadmap](../docs/master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Existing implementation notes below are not completion claims.
+Source of truth: [master roadmap v1.1](../docs/master-roadmap.md). It defines the four-screen demo, 2-4 operator rooms, EN/RU/ZH voice, sponsor roles, and DigitalOcean deployment. Claude runs analysis/advocates, Gemini runs the Coordination Host, and Grok runs independent checking and selected audio tasks. Existing implementation notes below are not completion claims.
 
 
 The ops UI prototype. The current first screen is the live orbit view. The approved target is [My Fleet + My Incidents + globe](../docs/user-flow.md), with four assigned spacecraft per enabled demo account, fleet-versus-catalog Run Scan over 72 hours, severity then closest-approach ordering, and a separate missing/stale-data review section. This target is not implemented yet. Backend integration follows [the specification](../docs/specification.md); simulator types require an adapter. TCA means Time of Closest Approach. Shared candidate selection and individual Approve are separate, with up to four computed candidates and a distinct unilateral debris workflow.
@@ -12,7 +12,7 @@ npm run dev        # http://localhost:3000
 
 ## Runtime mode decision
 
-Dev on is the TLE catalog and synthetic scenarios. Dev off requires backend OMM. While Phase 1 returns `ommUrl: null`, the real view shows an explicit waiting state with no TLE/simulator fallback. The OMM loader/renderer remains an integration task. Both modes are in `main` and `adil`; Git branch names do not choose data format. See [integration status](../docs/integration-status.md).
+Dev on is the TLE catalog and synthetic scenarios. Dev off loads the pinned OMM index from `catalog.snapshot.ommUrl`, then its static group files, and propagates those OMM records directly. The loader/renderer is merged. Missing or invalid inputs keep the waiting/error state with no TLE/simulator fallback. Shared-deployment validation remains separate from code presence. Both modes are in `main` and `adil`. Git branch names do not choose data format. See [integration status](../docs/integration-status.md) and [data preparation](../data/README.md).
 
 ## What's on screen
 
