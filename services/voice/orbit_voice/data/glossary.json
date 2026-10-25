@@ -1,0 +1,17 @@
+{
+  "note": "Domain terms for the translator prompt and STT key terms. English only; other languages are produced by the translator at runtime.",
+  "terms": [
+    {"term": "burn", "meaning": "an orbital maneuver (engine firing), never a skin burn"},
+    {"term": "TCA", "meaning": "time of closest approach of the two objects"},
+    {"term": "Pc", "meaning": "probability of collision"},
+    {"term": "delta-v", "meaning": "change of velocity of a maneuver"},
+    {"term": "miss distance", "meaning": "smallest predicted separation of the two objects"},
+    {"term": "conjunction", "meaning": "a close approach between two space objects"},
+    {"term": "prograde", "meaning": "a burn along the direction of motion (raises the orbit)"},
+    {"term": "retrograde", "meaning": "a burn against the direction of motion (lowers the orbit)"},
+    {"term": "imaging pass", "meaning": "a scheduled period when a satellite takes pictures"},
+    {"term": "re-screen", "meaning": "checking a planned maneuver against the whole catalog again"},
+    {"term": "STARLINK", "meaning": "a satellite constellation name, keep as is"},
+    {"term": "OneWeb", "meaning": "a satellite constellation name, keep as is"}
+  ]
+}

@@ -1,0 +1,7 @@
+livekit-agents==1.8.9
+livekit-api==1.2.2
+anthropic==2.3.0
+httpx==0.28.1
+websockets==17.3
+cn2an==0.5.23
+number-parser==0.3.2
