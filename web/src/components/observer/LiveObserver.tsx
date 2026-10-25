@@ -56,14 +56,14 @@ function RunFollower({ now }: { now: number }) {
   if (run === undefined) {
     return (
       <Centered now={now} link={CONNECTING} k="run">
-        <Note title="Looking for the demonstration" />
+        <Note title="Looking for the live session" />
       </Centered>
     );
   }
   if (run === null) {
     return (
       <Centered now={now} link={LIVE} k="no-run">
-        <Note icon={<MonitorUp size={18} />} title="Waiting for the demonstration" body="No run is open for this observer yet. This screen follows the next one as soon as it starts." />
+        <Note icon={<MonitorUp size={18} />} title="Waiting for the live session" body="No run is open for this observer yet. This screen follows the next one as soon as it starts." />
       </Centered>
     );
   }
@@ -83,14 +83,14 @@ function RunView({ demoRunId, now }: { demoRunId: DemoRunId; now: number }) {
   if (view === undefined) {
     return (
       <Centered now={now} link={CONNECTING} k="view">
-        <Note title="Loading the demonstration" />
+        <Note title="Loading the live session" />
       </Centered>
     );
   }
   if (view.state === "closed") {
     return (
       <Centered now={now} link={LIVE} k="closed">
-        <Note icon={<MonitorUp size={18} />} title="This demonstration is closed" body="This screen follows the next run as soon as it starts." />
+        <Note icon={<MonitorUp size={18} />} title="This session is closed" body="This screen follows the next run as soon as it starts." />
       </Centered>
     );
   }
@@ -99,7 +99,7 @@ function RunView({ demoRunId, now }: { demoRunId: DemoRunId; now: number }) {
     return (
       <Centered now={now} link={LIVE} k="empty">
         <div className="w-[420px] max-w-full">
-          <Note icon={<MonitorUp size={18} />} title="Waiting for a case" body="Cases of this demonstration appear here as soon as a scan finds them." />
+          <Note icon={<MonitorUp size={18} />} title="Waiting for a case" body="Cases of this session appear here as soon as a scan finds them." />
           {view.scans.length > 0 && <Scans scans={view.scans} />}
         </div>
       </Centered>
@@ -160,8 +160,8 @@ function SignedOut({ now }: { now: number }) {
     <Centered now={now} link={{ text: "Signed out", on: false }} k="signed-out">
       <Note
         icon={<LogIn size={18} />}
-        title="Sign in to watch the demonstration"
-        body="This screen shows the demonstration run to its observer account. Sign in with that account, then open this page again."
+        title="Sign in to watch the live session"
+        body="This screen shows the live session to its observer account. Sign in with that account, then open this page again."
         action={
           <Link href="/signin" className="btn h-9 gap-1.5 px-3.5 text-[13px] text-white" onClick={() => sfx.click()}>
             <LogIn size={13} /> Sign in
@@ -193,7 +193,7 @@ function Failed({ now, error, stage, onRetry }: { now: number; error: Error; sta
       <Centered now={now} link={{ text: "No run to watch", on: false }} k="forbidden">
         <Note
           icon={<ShieldX size={18} />}
-          title="This screen is for the demonstration observer"
+          title="This screen is for the live-session observer"
           body={`${message} Operators work on their cases on the main screen.`}
           action={
             <Link href="/" className="btn h-9 gap-1.5 px-3.5 text-[13px] text-white" onClick={() => sfx.click()}>
@@ -210,7 +210,7 @@ function Failed({ now, error, stage, onRetry }: { now: number; error: Error; sta
     <Centered now={now} link={{ text: code === "FORBIDDEN" ? "Not authorized" : "Not connected", on: false }} k={`failed-${stage}`}>
       <Note
         icon={code === "FORBIDDEN" ? <ShieldX size={18} /> : undefined}
-        title={code === "FORBIDDEN" ? "This run is not shared with this observer" : "Could not load the demonstration"}
+        title={code === "FORBIDDEN" ? "This run is not shared with this observer" : "Could not load the live session"}
         body={body}
         action={retry}
       />
@@ -347,7 +347,7 @@ function CaseColumn({ e, truncated }: { e: PublicEvent; truncated: boolean }) {
       {e.probability === null && <p className="mt-4 text-[12.5px] text-neutral-500">No probability is published for this pair.</p>}
       {truncated && (
         <p className="mt-6 border-t border-white/[0.06] pt-4 text-[12px] leading-[1.5] text-neutral-500">
-          Some records of this demonstration are over the public view&rsquo;s limits and are not shown.
+          Some records of this session are over the public view&rsquo;s limits and are not shown.
         </p>
       )}
     </div>
@@ -548,7 +548,7 @@ function Scans({ scans }: { scans: Scan[] }) {
   return (
     <div className="pt-5">
       <div className="text-[15px] font-semibold text-white">Scans</div>
-      <div className="text-[12px] text-neutral-500">Close-approach screening in this demonstration.</div>
+      <div className="text-[12px] text-neutral-500">Close-approach screening in this session.</div>
       <div className="mt-3 space-y-2">
         {list.slice(0, 3).map((s) => (
           <ScanRow key={s.scanId} s={s} />

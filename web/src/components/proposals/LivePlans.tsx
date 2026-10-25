@@ -13,7 +13,6 @@ import { fmtCountdown, fmtMiss } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent, Party } from "@/lib/ops/types";
 import { sfx } from "@/lib/sound";
-import { Chip } from "@/components/ui/Chip";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { Brief, ObjectChip } from "@/components/ops/Entity";
@@ -583,11 +582,6 @@ function LiveCard({
             {t.verb}
             {t.who ? <ObjectChip e={e} side={t.who} size="sm" /> : <span>{r.kind === "wait" ? "for the next CDM" : "the moving object"}</span>}
             {t.by && <span className="tnum font-normal text-neutral-400">{t.by}</span>}
-            {r.simulated && (
-              <Chip color="var(--orange)" size="sm" className="self-center">
-                Synthetic
-              </Chip>
-            )}
           </span>
           <span className="tnum mt-1 block text-[12.5px] text-neutral-400">{t.meta}</span>
           <AnimatePresence initial={false}>

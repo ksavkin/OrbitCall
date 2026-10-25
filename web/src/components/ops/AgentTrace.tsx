@@ -228,11 +228,6 @@ function RunFacts({ out }: { out: RealOutput }) {
           Numbers checked
         </Chip>
       )}
-      {out.simulated && (
-        <Chip color="var(--orange)" size="sm">
-          Simulated
-        </Chip>
-      )}
     </div>
   );
 }

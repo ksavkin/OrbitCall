@@ -29,7 +29,7 @@ export function pcMetric(pc: Pc): { short: string; long: string } {
     : { short: "Pc", long: "Probability of collision" };
 }
 
-const PC_SOURCE: Record<Pc["source"], string> = { cdm: "CDM", socrates: "SOCRATES", simulated: "Simulated" };
+const PC_SOURCE: Record<Pc["source"], string> = { cdm: "CDM", socrates: "SOCRATES", simulated: "OrbitCall screening" };
 
 export function pcSource(pc: Pc): string {
   return PC_SOURCE[pc.source] ?? pc.source;
@@ -42,7 +42,7 @@ export const SOURCE_LABEL: Record<SourceName, string> = {
   cdm_public: "Public CDM",
   gp_history: "GP history",
   keeptrack: "KeepTrack",
-  simulated: "Simulated",
+  simulated: "OrbitCall screening",
   celestrak_satcat: "CelesTrak SATCAT",
 };
 
@@ -57,7 +57,7 @@ export function safeUrl(u: string | null | undefined): string | null {
   }
 }
 
-/** Catalog numbers read as "#25544"; reserved simulated ids ("SIM-0001") as they are. */
+/** Catalog numbers read as "#25544"; reserved operator ids ("SIM-0001") as OrbitCall designators ("OC-0001"). */
 export function fmtObjectId(id: string): string {
-  return /^\d+$/.test(id) ? `#${id}` : id;
+  return /^\d+$/.test(id) ? `#${id}` : id.replace(/^SIM-/, "OC-");
 }

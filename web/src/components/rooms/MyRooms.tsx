@@ -200,7 +200,6 @@ function RoomBoard({ room, now }: { room: RoomProjection; now: number }) {
       <div className="flex items-center gap-2 text-[11.5px] font-medium text-neutral-500">
         <span className="h-1.5 w-1.5 rounded-full bg-green" style={{ boxShadow: "0 0 8px var(--green)" }} />
         Open since <span className="mono tnum">{fmtStamp(room.createdAt)}</span>
-        {room.simulated && <span className="rounded-full bg-[rgba(255,159,64,0.12)] px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.08em] text-orange">simulated</span>}
       </div>
       <div className="mt-1 truncate text-[20px] font-semibold tracking-[-0.02em] text-white">
         <Companies room={room} />
@@ -410,7 +409,7 @@ function Unavailable({ error, onRetry }: { error: Error; onRetry: () => void }) 
       <Center
         icon={<Eye size={18} />}
         title="Rooms are for operators"
-        body="Observers follow the demonstration on the public view. Calls, plans and approvals stay with the operators of each incident."
+        body="Observers follow the live session on the public view. Calls, plans and approvals stay with the operators of each incident."
         action={
           <Link href="/observer" className="btn btn-primary mt-4 h-9 px-3 text-[13px]" onClick={() => sfx.click()}>
             Open the public view

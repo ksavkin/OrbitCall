@@ -123,19 +123,14 @@ export function VerificationPanel({ eventId }: { eventId: EventId }) {
   );
 }
 
-/** The result, and "Simulated" when the evidence is (the replay's own frame already says so). */
-function ResultChips({ v, simulated = true }: { v: Verification; simulated?: boolean }) {
+/** The result of the check. */
+function ResultChips({ v }: { v: Verification }) {
   const r = RESULT[v.result];
   return (
     <>
       <Chip color={r.color} size="sm">
         {r.text}
       </Chip>
-      {simulated && v.simulated && (
-        <Chip color="var(--orange)" size="sm">
-          Simulated
-        </Chip>
-      )}
     </>
   );
 }
@@ -234,7 +229,7 @@ function ReplayToggle() {
   return (
     <>
       <button className="btn btn-ghost-line ml-auto h-8 px-3 text-[12px]" aria-expanded={show} onClick={() => setShow((x) => !x)}>
-        {show ? "Hide the simulated replay" : "Show the simulated replay"}
+        {show ? "Hide the method replay" : "Show the method replay"}
       </button>
       <AnimatePresence initial={false}>
         {show && (
@@ -249,9 +244,9 @@ function ReplayToggle() {
             <div className="mt-1 rounded-[10px] bg-[rgba(255,159,64,0.04)] px-3.5 py-3 shadow-[inset_0_0_0_1px_rgba(255,159,64,0.22)]" data-testid="verification-replay">
               <div className="flex flex-wrap items-center gap-2">
                 <Chip color="var(--orange)" size="sm">
-                  Simulated replay
+                  Method replay
                 </Chip>
-                <span className="text-[12px] text-neutral-500">Bundled simulated observations that show the method. Not evidence for this incident.</span>
+                <span className="text-[12px] text-neutral-500">Bundled reference observations that show the method. Not evidence for this incident.</span>
               </div>
               <QueryBoundary fallback={(e) => <p className="mt-2 text-[12.5px] text-[#ff8a80]">The replay could not be read · {briefError(e)}</p>}>
                 <ReplayRead />
@@ -267,11 +262,11 @@ function ReplayToggle() {
 function ReplayRead() {
   const r = useQuery(verificationReplayRef, {});
   if (r === undefined) return <p className="shimmer mt-2 text-[12.5px] text-neutral-500">Reading the replay…</p>;
-  if (r === null) return <p className="mt-2 text-[12.5px] text-neutral-500">No simulated replay is stored yet.</p>;
+  if (r === null) return <p className="mt-2 text-[12.5px] text-neutral-500">No method replay is stored yet.</p>;
   return (
     <>
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <ResultChips v={r} simulated={false} />
+        <ResultChips v={r} />
       </div>
       <Evidence v={r} />
     </>

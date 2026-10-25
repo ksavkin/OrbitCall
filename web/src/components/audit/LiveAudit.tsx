@@ -225,11 +225,6 @@ function LogRow({ entry, lang }: { entry: LogEntry; lang: string | null }) {
           {t.date} {t.time}
         </span>
         <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-300">{actorName(entry.actor)}</span>
-        {entry.simulated && (
-          <Chip color="var(--orange)" size="sm">
-            Simulated
-          </Chip>
-        )}
         <Chip color={meta.color} size="sm">
           {meta.label}
         </Chip>
@@ -510,7 +505,7 @@ function ExportCsv({ args }: { args: ReportArgs | null }) {
       {state.file && <p className="mono mt-1.5 truncate text-[10.5px] text-muted">{state.file.filename}</p>}
       {state.error && <p className="mt-2 text-[11.5px] leading-[1.45] text-red">{state.error}</p>}
       <p className="mt-2 text-[11.5px] leading-[1.45] text-neutral-500">
-        The CSV leaves out policy values and simulated cases. It is a draft, not a filing. Review it before anyone uses it for a report.
+        The CSV leaves out policy values. It is a draft, not a filing. Review it before anyone uses it for a report.
       </p>
     </>
   );

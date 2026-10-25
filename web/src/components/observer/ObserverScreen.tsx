@@ -111,7 +111,7 @@ function FeedScreen({ view, now, local }: { view: PublicView | null; now: number
               title="Waiting for a case"
               body={
                 local === false
-                  ? "This build has no sign-in, so it cannot read the demonstration run."
+                  ? "This build has no sign-in, so it cannot read the live session."
                   : "Open OrbitCall in another tab of this browser, turn on Dev and run a case. This screen follows it, read only. With the backend and sign-in, the same screen reads the demo run's public view."
               }
             />

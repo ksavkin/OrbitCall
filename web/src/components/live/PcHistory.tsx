@@ -13,7 +13,6 @@ import { fmtChance, fmtMiss, fmtOdds } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
 import { sfx } from "@/lib/sound";
 import { useNow } from "@/lib/useNow";
-import { Chip } from "@/components/ui/Chip";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { useHistoryError } from "./sync/VerificationSync";
 
@@ -68,7 +67,7 @@ function seriesOf(h: HistorySeries): Series[] {
     const name = SOURCE_LABEL[p.source] ?? p.source;
     const s = out.get(key) ?? {
       key,
-      label: !simulated ? name : p.source === "simulated" ? "Simulated" : `Simulated · ${name}`,
+      label: !simulated ? name : p.source === "simulated" ? "OrbitCall screening" : `Screening · ${name}`,
       color: simulated ? "var(--orange)" : (SOURCE_COLOR[p.source] ?? "var(--fg-2)"),
       simulated,
       points: [],
@@ -142,11 +141,6 @@ function HistoryView({ history, error, compact }: { history: HistorySeries | und
           <div className={compact ? "text-[12px] font-semibold text-neutral-200" : "text-[13px] font-medium text-white"}>{title}</div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-neutral-500">
             {status ?? "Observations only, no forecast"}
-            {shown.some((s) => s.simulated) && (
-              <Chip color="var(--orange)" size="sm">
-                Simulated
-              </Chip>
-            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">

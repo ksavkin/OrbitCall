@@ -6,7 +6,6 @@ import { Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useFleet, useMe, useSession, type FleetSatellite, type Me } from "@/components/auth/session";
-import { Chip } from "@/components/ui/Chip";
 import { ScreenFrame, ScreenMessage } from "@/components/ui/ScreenFrame";
 import { policyMineRef, policyUpdateRef, settingsMineRef, settingsUpdateRef } from "@/lib/backend/api";
 import { QueryBoundary, briefError } from "@/lib/backend/QueryBoundary";
@@ -148,7 +147,6 @@ function PolicyForm({
   initial,
   savedAt,
   mode,
-  simulated,
   companyName,
   revision,
   onSave,
@@ -203,7 +201,6 @@ function PolicyForm({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="text-[16px] font-semibold text-white">Policy</h1>
-            {simulated && <Chip color="var(--orange)" size="sm">Synthetic</Chip>}
             {revision ? <span className="mono text-[11px] text-neutral-500">rev {revision}</span> : null}
           </div>
           <p className="mt-1 text-[12.5px] text-neutral-500">Private to {companyName}. The other operator never sees these numbers.</p>
