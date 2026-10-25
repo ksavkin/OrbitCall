@@ -3,11 +3,12 @@ import type { SatKind } from "./session";
 // Small 2D drawings of a spacecraft by what it does, for the fleet list. Line art in the app's style: thin
 // white strokes on dark, one accent per kind, no gradients.
 
-const ACCENT: Record<SatKind, string> = { imaging: "#7fb2ff", rf: "#ffb340", weather: "#5fd3c6", cubesat: "#c792ff" };
+/** One color per spacecraft type, shared by the drawings and the compact fleet list. */
+export const KIND_COLOR: Record<SatKind, string> = { imaging: "#7fb2ff", rf: "#ffb340", weather: "#5fd3c6", cubesat: "#c792ff" };
 export const KIND_LABEL: Record<SatKind, string> = { imaging: "Earth imaging", rf: "RF sensing", weather: "Weather", cubesat: "CubeSat" };
 
 export function SatGlyph({ kind, size = 40 }: { kind: SatKind; size?: number }) {
-  const a = ACCENT[kind];
+  const a = KIND_COLOR[kind];
   const line = { stroke: "rgba(255,255,255,0.85)", strokeWidth: 1.3, fill: "none", strokeLinejoin: "round" as const, strokeLinecap: "round" as const };
   const panel = { stroke: a, strokeWidth: 1.1, fill: `${a}26` };
   return (

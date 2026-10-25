@@ -204,10 +204,10 @@ function CallCard({ s, now, open: wantOpen }: { s: Span; now: number; open: bool
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
-            <span className="truncate text-[11.5px] font-medium">{agent.name}</span>
-            {model && s.kind === "llm" && <span className="mono shrink-0 rounded-[4px] bg-white/[0.05] px-1 text-[9px] text-fg-2">{model.label}</span>}
+            <span className="truncate text-[12.5px] font-medium">{agent.name}</span>
+            {model && s.kind === "llm" && <span className="mono shrink-0 rounded-[4px] bg-white/[0.05] px-1 text-[10px] text-fg-2">{model.label}</span>}
           </span>
-          <span className="flex items-center gap-1 truncate text-[10px] text-muted">
+          <span className="flex items-center gap-1 truncate text-[11px] text-muted">
             <Icon size={9} className="shrink-0" />
             <span className="truncate">{s.name}</span>
             <span className="shrink-0 text-faint">→ {nodeLabel(s.target)}</span>
@@ -238,35 +238,35 @@ function CallCard({ s, now, open: wantOpen }: { s: Span; now: number; open: bool
                   {s.http.status && <span className="ml-auto shrink-0 text-green">{s.http.status}</span>}
                 </div>
               )}
-              {s.error && <div className="mb-1.5 rounded-[6px] bg-[rgba(255,90,79,0.08)] px-2 py-1 text-[10.5px] text-red">{s.error}</div>}
+              {s.error && <div className="mb-1.5 rounded-[6px] bg-[rgba(255,90,79,0.08)] px-2 py-1 text-[11.5px] text-red">{s.error}</div>}
               {!text && s.output === undefined && (
-                <p className="text-[10.5px] leading-[1.5] text-muted">
+                <p className="text-[11.5px] leading-[1.5] text-muted">
                   {s.kind === "handoff"
                     ? `Hands the event to ${nodeLabel(s.target)}.`
                     : s.kind === "human"
                       ? `Calling ${nodeLabel(s.target)} into the room.`
                       : `${KIND_LABEL[s.kind]} step on ${nodeLabel(s.target)}.`}
-                  {s.input !== undefined && <span className="mono mt-1 block break-all text-[10px] text-fg-2">{JSON.stringify(s.input)}</span>}
+                  {s.input !== undefined && <span className="mono mt-1 block break-all text-[11px] text-fg-2">{JSON.stringify(s.input)}</span>}
                 </p>
               )}
               {text ? (
                 <>
-                  <div className="eyebrow mb-1 flex items-center gap-1.5 !text-[9px]">
+                  <div className="eyebrow mb-1 flex items-center gap-1.5 !text-[10px]">
                     Thinking · summarized
                     {running && <span className="h-1 w-1 animate-pulse rounded-full bg-blue" />}
                   </div>
-                  <StreamText full={text} shown={shown} running={running} className="text-[11px] leading-[1.55] text-fg-2" />
+                  <StreamText full={text} shown={shown} running={running} className="text-[12px] leading-[1.55] text-fg-2" />
                 </>
               ) : (
                 s.output !== undefined && (
-                  <pre className="thin-scroll mono max-h-[110px] overflow-auto rounded-[7px] bg-black/30 p-2 text-[10px] leading-[1.5] text-fg-2">
+                  <pre className="thin-scroll mono max-h-[110px] overflow-auto rounded-[7px] bg-black/30 p-2 text-[11px] leading-[1.5] text-fg-2">
                     {JSON.stringify(s.output, null, 2)}
                   </pre>
                 )
               )}
             </div>
             {s.tokensIn !== undefined && (
-              <div className="grid grid-cols-4 border-t border-white/[0.05] text-[10px]">
+              <div className="grid grid-cols-4 border-t border-white/[0.05] text-[11px]">
                 <Stat k="In" v={fmtTokens(s.tokensIn)} hint={s.cacheRead ? `${fmtTokens(s.cacheRead)} cached` : undefined} />
                 <Stat k="Out" v={fmtTokens(Math.round((s.tokensOut ?? 0) * (running ? s.progress : 1)))} />
                 <Stat k="Latency" v={fmtMs(elapsed)} />
