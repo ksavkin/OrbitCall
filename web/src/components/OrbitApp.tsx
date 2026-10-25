@@ -28,9 +28,12 @@ import { DecisionDock } from "@/components/ops/DecisionDock";
 import { ResolutionOverlay } from "@/components/ops/Resolution";
 import { IncidentView, setIncidentView } from "@/components/ops/IncidentView";
 import { RoomsScreen } from "@/components/rooms/RoomsScreen";
+import { PolicyScreen } from "@/components/policy/PolicyScreen";
+import { AuditScreen } from "@/components/audit/AuditScreen";
 import { ObserverFeed } from "@/components/observer/feed";
 import { ProfileSheet } from "@/components/auth/ProfileSheet";
 import { ScenarioBar } from "@/components/ops/ScenarioBar";
+import { useLocalhost } from "@/lib/localhost";
 import { useOps } from "@/lib/ops/store";
 import { sceneRef } from "@/lib/sceneRef";
 import { sfx } from "@/lib/sound";
@@ -41,6 +44,7 @@ const SOUND_KEY = "orbitcall.sound";
 export function OrbitApp() {
   useGlobalInteractions();
   useShortcuts();
+  useDeployedRealMode();
 
   const tab = useOps((s) => s.tab);
   const dev = useOps((s) => s.dev);
@@ -79,6 +83,8 @@ export function OrbitApp() {
       {!conj && <SatellitePanel />}
       <AnimatePresence>{conj && <AgentsPanel key="agents" />}</AnimatePresence>
       <AnimatePresence>{tab === "rooms" && <RoomsScreen key="rooms" />}</AnimatePresence>
+      <AnimatePresence>{tab === "policy" && <PolicyScreen key="policy" />}</AnimatePresence>
+      <AnimatePresence>{tab === "audit" && <AuditScreen key="audit" />}</AnimatePresence>
       <AnimatePresence>{conj && dev && <ScenarioBar key="scenario" />}</AnimatePresence>
       <DecisionDock />
       <IncidentView />
@@ -93,6 +99,14 @@ export function OrbitApp() {
       <BootScreen />
     </main>
   );
+}
+
+/** Deployed hosts have no Dev switch and never run the local simulator. */
+function useDeployedRealMode() {
+  const local = useLocalhost();
+  useEffect(() => {
+    if (local === false && useOps.getState().dev) useOps.getState().set({ dev: false });
+  }, [local]);
 }
 
 /** Cursor spotlight on glass, hover/click ticks on controls, sound preference. */

@@ -8,6 +8,7 @@ import { sfx } from "@/lib/sound";
 import { AccountMenu } from "@/components/auth/AccountMenu";
 import { useOrbit } from "@/lib/store";
 import { useOps, type Tab } from "@/lib/ops/store";
+import { isLocalHost, useLocalhost } from "@/lib/localhost";
 import { LogoMark } from "./Logo";
 import { Tooltip } from "./Tooltip";
 
@@ -15,8 +16,8 @@ const NAV: { id: Tab; label: string; ready: boolean }[] = [
   { id: "orbit", label: "Orbit", ready: true },
   { id: "conjunctions", label: "Conjunctions", ready: true },
   { id: "rooms", label: "Rooms", ready: true },
-  { id: "policy", label: "Policy", ready: false },
-  { id: "audit", label: "Audit log", ready: false },
+  { id: "policy", label: "Policy", ready: true },
+  { id: "audit", label: "Audit log", ready: true },
 ];
 
 export function Navbar() {
@@ -114,9 +115,11 @@ export function Navbar() {
   );
 }
 
-/** Dev mode: synthetic scenarios and agents over the live catalog, so the UI can be built before the backend. */
+/** Dev mode on localhost only. A deployment stays on the real backend and does not offer the switch. */
 function DevSwitch() {
+  const local = useLocalhost();
   const dev = useOps((s) => s.dev);
+  if (local !== true) return null;
   return (
     <Tooltip
       label={
@@ -158,6 +161,7 @@ function DevSwitch() {
 }
 
 export function toggleDev() {
+  if (!isLocalHost()) return;
   const s = useOps.getState();
   const v = !s.dev;
   sfx.toggle(v);
