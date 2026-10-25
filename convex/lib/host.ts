@@ -436,17 +436,37 @@ export function checkHostOutput(raw: string, context: HostContext): HostOutput {
   };
   const evidence = gatherEvidence(context);
   const anyApproval = context.events.some(e => e.approvals.length > 0);
-  const prose = (value: string, recorded: boolean) => {
+  const prose = (value: string, recorded: boolean, sourceIds: string[]) => {
     const normal = normalize(value);
     if (normal === null) throw violation("Host text contains digits from an unsupported script.");
     if (mixesScripts(normal)) throw violation("Host text mixes Latin letters with lookalike letters from another script.");
     if (claimsApproval(normal, recorded)) throw violation("Host text cannot claim or grant an approval.");
+    // Operators can introduce a new time constraint before any candidate uses that time.
+    // Only cited original statements supply these values. Preserve local/unspecified times
+    // exactly; an unqualified time is never promoted into a newly asserted UTC instant.
+    const sourceTimes = new Set<string>(), sourceInstants = new Set<number>(), sourceClocks = new Set<string>();
+    for (const source of context.messages.filter(message => sourceIds.includes(message.messageId))) {
+      const sourceText = normalize(source.text);
+      if (sourceText === null) continue;
+      const mentioned = scan(sourceText, evidence);
+      for (const time of mentioned.times) {
+        const ms = instant(time);
+        if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== time.slice(0, 10)) continue;
+        sourceTimes.add(time);
+        if (time.endsWith("Z")) sourceInstants.add(ms);
+      }
+      for (const time of mentioned.clocks) {
+        const [hours, minutes, seconds = 0] = time.split(":").map(Number);
+        if (hours < 24 && minutes < 60 && seconds < 60) sourceClocks.add(time);
+      }
+    }
     const found = scan(normal, evidence);
     for (const time of found.times) {
-      const known = time.length === 10 ? evidence.dates.has(time) : evidence.instants.has(instant(time));
+      const known = sourceTimes.has(time) || (time.length === 10 ? evidence.dates.has(time)
+        : evidence.instants.has(instant(time)) || sourceInstants.has(instant(time)));
       if (!known) throw violation("Host text contains a time that is not in the shared evidence.");
     }
-    if (found.clocks.some(c => !evidence.clocks.has(c))) throw violation("Host text contains a time that is not in the shared evidence.");
+    if (found.clocks.some(c => !evidence.clocks.has(c) && !sourceClocks.has(c))) throw violation("Host text contains a time that is not in the shared evidence.");
     if (found.unknownIds.length) throw violation("Host text names an ID that is not in this room.");
     if (found.numbers.some(n => !grounded(n, evidence.numbers))) {
       throw violation("Host text contains a number that is not in the shared evidence.");
@@ -458,20 +478,20 @@ export function checkHostOutput(raw: string, context: HostContext): HostOutput {
 
   for (const c of output.clarifications) {
     if (c.eventId !== null) event(c.eventId);
-    cited(c.messageIds); prose(c.question, anyApproval);
+    cited(c.messageIds); prose(c.question, anyApproval, c.messageIds);
   }
   for (const r of output.requestedRevisions) {
     if (!event(r.eventId).candidates.some(c => c.candidateId === r.candidateId)) {
       throw violation("A requested revision must name an existing candidate of the same event.");
     }
-    cited(r.messageIds); prose(r.reason, anyApproval);
+    cited(r.messageIds); prose(r.reason, anyApproval, r.messageIds);
   }
   const summarized = new Set<string>();
   for (const s of output.summaries) {
     const summarizedEvent = event(s.eventId);
     if (summarized.has(s.eventId)) throw violation("The host wrote two summaries for one event.");
     summarized.add(s.eventId);
-    cited(s.messageIds); prose(s.text, summarizedEvent.approvals.length > 0);
+    cited(s.messageIds); prose(s.text, summarizedEvent.approvals.length > 0, s.messageIds);
   }
   const corrected = new Set<string>();
   for (const u of output.understood ?? []) {
@@ -485,7 +505,7 @@ export function checkHostOutput(raw: string, context: HostContext): HostOutput {
       if (!prior || prior.eventId !== u.eventId || corrected.has(u.correctsId)) throw violation("A correction must replace one active entry of the same event once.");
       corrected.add(u.correctsId);
     }
-    prose(u.text, false);
+    prose(u.text, false, [u.sourceMessageId]);
   }
   return output;
 }

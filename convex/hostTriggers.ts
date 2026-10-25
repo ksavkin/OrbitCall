@@ -8,6 +8,7 @@ import { checkResultValidator, type CheckResult } from "./lib/checker";
 import { buildHostContext } from "./lib/hostContext";
 import { publishHostOutput } from "./lib/hostPublish";
 import { requireFleetScope } from "./fleetQuery";
+import { checkedTexts, speakRef } from "./call/hostSpeech";
 
 // Coordination Host runs (roadmap §6 Gemini Host contract). A caller asks explicitly; nothing here watches messages.
 // One run per room, input version and trigger; a failed or superseded run may be retried, at most MAX_ATTEMPTS failures.
@@ -207,6 +208,12 @@ export const finish = internalMutation({
       (hostOutput.summaries.length === 0 || (check?.span.status === "succeeded" && check.result !== null));
     if (checked && hostOutput) await publishHostOutput(ctx, run, context, hostOutput, check?.span.status === "succeeded" ? check.result : null);
     await ctx.db.patch(hostRunId, { status: checked ? "succeeded" : "failed", span, output: hostOutput, check, finishedAt });
+    // Delivery begins after this transaction commits. The voice entry rechecks the succeeded run,
+    // open room/demo and current listeners; a provider failure cannot undo the written conversation.
+    // Worker delivery IDs dedupe the same run/text, including a repeated scheduled delivery.
+    if (checked && hostOutput) for (const text of new Set(checkedTexts(hostOutput))) {
+      if (text.trim()) await ctx.scheduler.runAfter(0, speakRef, { roomId: run.roomId, hostRunId, text });
+    }
     return null;
   },
 });
