@@ -5,6 +5,7 @@ import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import { buildPrompt, checkAndRenderSummary } from "../lib/analyst";
 import { callClaude, claudeConfig, safeFailure } from "../lib/claude";
+import { orbitConfigured } from "../lib/orbit";
 
 // Stable integration entry point for the event-ingestion pipeline.
 export const start = internalAction({
@@ -24,6 +25,8 @@ export const start = internalAction({
     } catch (error) {
       await ctx.runMutation(internal.agentRuns.fail, { runId, ...safeFailure(error) });
     }
+    // The maneuver grid comes from the orbital service, independent of the summary's outcome [AGT-2].
+    if (orbitConfigured()) await ctx.scheduler.runAfter(0, internal.orbit.computeCandidates, { eventId });
     return null;
   },
 });
