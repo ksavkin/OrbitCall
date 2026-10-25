@@ -42,14 +42,16 @@ export async function advanceSelection(ctx: MutationCtx, event: Doc<"events">, n
   const row = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
   const current = await ctx.db.query("approvals").withIndex("by_event_current", q => q.eq("eventId", event._id).eq("current", true)).collect();
   for (const approval of current) await ctx.db.patch(approval._id, { current: false });
+  // A veto is a reset even when nobody had approved yet.
+  const reset = current.length > 0 || reason === "vetoed";
   const value = {
     eventId: event._id, proposalId: next?.proposalId ?? null, revision: next?.revision ?? null,
     generation: (row?.generation ?? 0) + 1, by, at: now,
-    lastReset: current.length ? { at: now, reason } : row?.lastReset ?? null,
+    lastReset: reset ? { at: now, reason } : row?.lastReset ?? null,
   };
   if (row) await ctx.db.replace(row._id, value);
   else await ctx.db.insert("selections", value);
-  if (current.length) {
+  if (reset) {
     const room = await roomOfEvent(ctx, event);
     if (room) await ctx.db.insert("messages", {
       roomId: room._id, eventId: event._id, author: { kind: "system" }, kind: "system",
