@@ -31,7 +31,7 @@ type FeedItem = { id: string; span: Span; pass?: Span[] };
  * The list sticks to the top while you're there; scroll down to read and it stays put,
  * with a pill to jump back to the newest.
  */
-export function CallFeed({ className = "" }: { className?: string }) {
+export function CallFeed({ className = "", eventId }: { className?: string; eventId?: string }) {
   const spans = useOps((s) => s.spans);
   const focusAgent = useOps((s) => s.focusAgent);
   const focusSpan = useOps((s) => s.focusSpan);
@@ -42,6 +42,8 @@ export function CallFeed({ className = "" }: { className?: string }) {
     const passes = new Map<string, FeedItem>();
     for (const s of spans) {
       if (focusAgent && s.agent !== focusAgent && s.target !== focusAgent) continue;
+      // inside a case: only that case's calls, no background passes
+      if (eventId && s.eventId !== eventId) continue;
       // a background screening pass is one card, not five
       if (isPatrolRoot(s)) {
         const it: FeedItem = { id: s.id, span: s, pass: [s] };
@@ -56,7 +58,7 @@ export function CallFeed({ className = "" }: { className?: string }) {
       out.push({ id: s.id, span: s });
     }
     return out.slice(-80).reverse();
-  }, [spans, focusAgent]);
+  }, [spans, focusAgent, eventId]);
 
   const box = useRef<HTMLDivElement>(null);
   const atTop = useRef(true);

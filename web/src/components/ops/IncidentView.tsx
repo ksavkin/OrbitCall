@@ -2,22 +2,20 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Loader2, Maximize2, Minimize2, ShieldAlert } from "lucide-react";
-import { useMemo } from "react";
 import { fmtCountdown, fmtMiss, fmtPc, fmtWhen } from "@/lib/ops/format";
-import { AGENTS, MODELS, nodeLabel } from "@/lib/ops/roster";
+import { AGENTS, MODELS } from "@/lib/ops/roster";
 import { engine } from "@/lib/ops/engine";
 import { useOps } from "@/lib/ops/store";
-import type { ConjunctionEvent, Party, Reply, Span } from "@/lib/ops/types";
+import type { ConjunctionEvent, Party } from "@/lib/ops/types";
 import { sfx } from "@/lib/sound";
 import { useNow } from "@/lib/useNow";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { AgentGraph } from "./AgentGraph";
+import { AgentGraph, GraphLegend } from "./AgentGraph";
 import { CallFeed } from "./AgentTrace";
-import { PcChart } from "./ConjunctionQueue";
+import { PcChart } from "./PcChart";
 import { Decide, Done, TheirReply, Waiting, optionText, useRoomState } from "./DecisionDock";
 import { ObjectChip, RichLine } from "./Entity";
-import { ModelGlyph } from "./Glyphs";
 
 // The incident command view: one near-full-screen place for the case being worked.
 // Left: the case. Center: what is happening now, or the dispatcher's decision. Right: the agents.
@@ -298,37 +296,44 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
   const st = room.state;
   return (
     <div className="flex min-h-0 flex-col border-r border-white/[0.06]">
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.div
-          key={st?.mode ?? "live"}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-          className="thin-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4"
-        >
-          {st?.mode === "decide" ? (
-            <div className="overflow-hidden rounded-[14px] bg-white/[0.02] shadow-[0_0_0_1px_rgba(255,159,64,0.35),0_0_40px_-12px_rgba(255,159,64,0.4)]">
-              <Decide e={e} viewer={room.viewer} now={now} embedded />
+      {/* the room's state sits on top when it needs the dispatcher; the calls fill the rest */}
+      <AnimatePresence initial={false}>
+        {st && (
+          <motion.div
+            key={st.mode + (e.proposal?.version ?? 0)}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+            className={`shrink-0 overflow-hidden ${st.mode === "decide" ? "thin-scroll max-h-[70%] overflow-y-auto" : ""}`}
+          >
+            <div className="px-5 pt-4">
+              {st.mode === "decide" ? (
+                <div className="overflow-hidden rounded-[16px] bg-white/[0.02] shadow-[0_0_0_1px_rgba(255,159,64,0.35),0_0_40px_-12px_rgba(255,159,64,0.4)]">
+                  <Decide e={e} viewer={room.viewer} now={now} embedded />
+                </div>
+              ) : st.mode === "waiting" ? (
+                <Card>
+                  <Waiting e={e} other={room.other} mine={st.mine!} now={now} />
+                </Card>
+              ) : st.mode === "reply" ? (
+                <Card>
+                  <TheirReply e={e} r={st.theirs!} />
+                </Card>
+              ) : (
+                <Card>
+                  <Done e={e} />
+                </Card>
+              )}
             </div>
-          ) : st?.mode === "waiting" ? (
-            <Card>
-              <Waiting e={e} other={room.other} mine={st.mine!} now={now} />
-            </Card>
-          ) : st?.mode === "reply" ? (
-            <Card>
-              <TheirReply e={e} r={st.theirs!} />
-            </Card>
-          ) : st?.mode === "done" ? (
-            <Card>
-              <Done e={e} />
-            </Card>
-          ) : (
-            <Live e={e} />
-          )}
-          <Transcript e={e} />
-        </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
+      <div className="flex shrink-0 items-baseline justify-between px-5 pb-2 pt-4">
+        <span className="text-[12px] font-semibold text-neutral-200">Agent calls</span>
+        <span className="text-[11px] text-neutral-600">newest first · this case only</span>
+      </div>
+      <CallFeed className="flex-1 [&_.px-3]:px-5" eventId={e.id} />
     </div>
   );
 }
@@ -337,143 +342,27 @@ function Card({ children }: { children: React.ReactNode }) {
   return <div className="overflow-hidden rounded-[14px] bg-white/[0.03] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]">{children}</div>;
 }
 
-const VERB: Record<Span["kind"], string> = {
-  llm: "is thinking",
-  tool: "is running a tool",
-  http: "is fetching data",
-  handoff: "is handing off",
-  human: "is calling",
-  check: "is checking the numbers",
-};
 
-/** What is happening right now, in one big readable line plus the streamed reasoning. */
-function Live({ e }: { e: ConjunctionEvent }) {
-  const spans = useOps((s) => s.spans);
-  const span = useMemo(() => {
-    const mine = spans.filter((s) => s.eventId === e.id);
-    for (let i = mine.length - 1; i >= 0; i--) if (mine[i].status === "running") return mine[i];
-    return mine[mine.length - 1] ?? null;
-  }, [spans, e.id]);
-  if (!span) {
-    return <div className="shimmer py-6 text-center text-[13px] font-medium">Waking the agents…</div>;
-  }
-  const agent = AGENTS[span.agent];
-  const running = span.status === "running";
-  const text = span.reasoning ?? "";
-  const shown = running ? text.slice(0, Math.ceil(text.length * Math.min(span.progress * 1.12, 1))) : text;
-  return (
-    <div>
-      <div className="mb-3 text-[12px] font-semibold text-neutral-500">Now</div>
-      <div className="flex items-start gap-3">
-        <span
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-[11px] bg-[#16171b] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.1)]"
-          style={running ? { boxShadow: "inset 0 0 0 1px rgba(79,140,255,0.5), 0 0 22px -4px rgba(79,140,255,0.7)" } : undefined}
-        >
-          <ModelGlyph model={span.model ?? agent.model} size={18} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="text-[18px] font-semibold leading-snug tracking-[-0.015em] text-white">
-            {agent.name} <span className="font-normal text-neutral-400">{running ? VERB[span.kind] : "finished"}</span>
-          </div>
-          <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-neutral-500">
-            {running && <Loader2 size={11} className="animate-spin text-blue" />}
-            {span.name} <span className="text-faint">→ {nodeLabel(span.target)}</span>
-          </div>
-        </div>
-      </div>
-      {text && (
-        <p className={`mt-4 border-l-2 border-white/15 pl-4 text-[15px] leading-[1.7] text-neutral-200 ${running ? "caret" : ""}`}>
-          <RichLine e={e} text={shown} />
-        </p>
-      )}
-    </div>
-  );
-}
 
-type Line = { t: number; side: "a" | "b" | "host"; who: string; text: string; human?: boolean; reply?: Reply };
 
-/** The negotiation as a conversation: both advocates, the host, and the people's answers. */
-function Transcript({ e }: { e: ConjunctionEvent }) {
-  const spans = useOps((s) => s.spans);
-  const replies = useOps((s) => s.replies);
-  const lines = useMemo(() => {
-    const out: Line[] = [];
-    for (const s of spans) {
-      if (s.eventId !== e.id || s.status === "running") continue;
-      if ((s.agent === "advocateA" || s.agent === "advocateB") && s.kind === "llm" && s.reasoning) {
-        out.push({ t: s.t0, side: s.agent === "advocateA" ? "a" : "b", who: AGENTS[s.agent].name, text: s.reasoning });
-      }
-    }
-    for (const r of replies) {
-      if (r.eventId !== e.id) continue;
-      const verdict = r.decision === "approved" ? "Approved" : r.decision === "vetoed" ? "Rejected" : "Countered";
-      out.push({ t: r.t, side: r.side, who: `Operator ${r.side.toUpperCase()}`, text: `${verdict} v${r.version ?? ""}${r.note ? `: “${r.note}”` : "."}`, human: true, reply: r });
-    }
-    return out.sort((x, y) => x.t - y.t);
-  }, [spans, replies, e.id]);
-  if (!lines.length) return null;
-  const flag = (side: "a" | "b") => e.parties?.find((p) => p.role === side)?.country ?? null;
-  return (
-    <div className="mt-5">
-      <div className="mb-3 border-b border-white/[0.06] pb-2 text-[12px] font-semibold text-neutral-200">Negotiation</div>
-      <div className="space-y-2">
-        {lines.map((l, i) => {
-          const right = l.side === "b";
-          const f = l.side === "host" ? null : flag(l.side);
-          return (
-            <motion.div
-              key={`${l.t}-${i}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25 }}
-              className={`flex items-end gap-2 ${right ? "flex-row-reverse" : ""}`}
-            >
-              <span className="grid h-6 w-6 shrink-0 place-items-center overflow-hidden rounded-full shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)]">
-                {f ? <Flag code={f} h={24} /> : null}
-              </span>
-              <div
-                className={`max-w-[84%] rounded-[16px] px-3.5 py-2.5 ${right ? "rounded-br-[4px]" : "rounded-bl-[4px]"}`}
-                style={{ background: l.human ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.035)" }}
-              >
-                <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-neutral-500">
-                  {l.who}
-                  {l.human && (
-                    <span style={{ color: l.reply?.decision === "approved" ? "var(--green)" : l.reply?.decision === "vetoed" ? "var(--red)" : "var(--orange)" }}>
-                      · {l.reply?.decision === "approved" ? "approved" : l.reply?.decision === "vetoed" ? "rejected" : "countered"}
-                    </span>
-                  )}
-                </div>
-                <div className="text-[13.5px] leading-[1.6] text-neutral-200">
-                  <RichLine e={e} text={l.text} />
-                </div>
-                {l.reply?.original && (
-                  <div className="mt-1.5 text-[12px] text-neutral-500">
-                    {l.reply.lang}: “{l.reply.original}”
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 /* ---------------------------------------------------------------- agents */
 
 function AgentsColumn() {
   return (
-    <div className="flex min-h-0 flex-col">
-      <div className="shrink-0 px-5 pt-4">
-        <div className="eyebrow mb-1">Agents</div>
-        <AgentGraph />
+    <div className="thin-scroll flex min-h-0 flex-col overflow-y-auto px-5 py-4">
+      <div className="mb-3 flex items-baseline justify-between">
+        <span className="text-[12px] font-semibold text-neutral-200">Agents</span>
+        <span className="text-[11px] text-neutral-600">click an agent to filter its calls</span>
       </div>
-      <div className="mx-5 mb-1.5 mt-1 flex items-center gap-2">
-        <span className="eyebrow">Calls</span>
-        <span className="h-px flex-1 bg-white/[0.05]" />
+      <div className="flex flex-1 items-start justify-center">
+        <div className="w-full max-w-[460px]">
+          <AgentGraph big />
+        </div>
       </div>
-      <CallFeed className="flex-1" />
+      <div className="pt-3">
+        <GraphLegend />
+      </div>
     </div>
   );
 }
@@ -484,37 +373,44 @@ function CollapsedBar({ e, now, decide }: { e: ConjunctionEvent; now: number; de
   const step = STEPS[Math.min(stepOf(e), STEPS.length - 1)];
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16, scale: 0.97 }}
+      initial={{ opacity: 0, y: -14, scale: 0.97 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 12, scale: 0.97 }}
+      exit={{ opacity: 0, y: -10, scale: 0.97 }}
       transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-      className="glass glass-strong pointer-events-auto absolute bottom-[98px] left-1/2 z-[38] flex h-12 -translate-x-1/2 items-center gap-3 rounded-[14px] pl-3 pr-1.5"
-      style={decide ? { boxShadow: "0 0 0 1px rgba(255,159,64,0.45), 0 0 30px -8px rgba(255,159,64,0.6)" } : undefined}
+      // top center, right under the navbar: the first place the eye goes back to
+      className="pointer-events-auto absolute left-1/2 top-[58px] z-[38] -translate-x-1/2"
     >
-      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: e.risk === "red" ? "var(--red)" : "var(--amber)", boxShadow: `0 0 8px ${e.risk === "red" ? "var(--red)" : "var(--amber)"}` }} />
-      <span className="mono text-[10.5px] text-muted">{e.id}</span>
-      <span className="flex items-center gap-1">
-        <ObjectChip e={e} side="a" size="sm" />
-        <span className="text-faint">×</span>
-        <ObjectChip e={e} side="b" size="sm" />
-      </span>
-      <span className="h-4 w-px bg-white/10" />
-      {decide ? (
-        <span className="flex items-center gap-1.5 text-[11.5px] font-semibold text-orange">
-          <span className="pulse-dot" style={{ width: 5, height: 5 }} /> Your decision is needed
+      <div
+        className="flex h-12 items-center gap-3 rounded-[14px] bg-[rgba(4,4,5,0.92)] pl-3.5 pr-1.5 shadow-[0_0_0_1px_rgba(255,255,255,0.12),0_16px_40px_-12px_rgba(0,0,0,0.9)] backdrop-blur-xl"
+        style={decide ? { boxShadow: "0 0 0 1px rgba(255,159,64,0.55), 0 0 30px -8px rgba(255,159,64,0.6)" } : undefined}
+      >
+        <span className="flex items-center gap-2">
+          <span className="pulse-dot" style={{ width: 6, height: 6, color: decide ? "var(--orange)" : "var(--blue)" }} />
+          <span className="text-[12.5px] font-semibold text-white">{decide ? "Your decision is needed" : "Case in progress"}</span>
         </span>
-      ) : (
-        <span className="flex items-center gap-1.5 text-[11.5px] text-fg-2">
-          {e.agentsWorking && <Loader2 size={11} className="animate-spin text-blue" />}
+        <span className="h-5 w-px bg-white/10" />
+        <span className="flex items-center gap-1.5 text-[12.5px] text-neutral-300">
+          <ObjectChip e={e} side="a" size="sm" />
+          <span className="text-neutral-600">×</span>
+          <ObjectChip e={e} side="b" size="sm" />
+        </span>
+        <span className="flex items-center gap-1.5 text-[12px] text-neutral-500">
+          {e.agentsWorking && <Loader2 size={12} className="animate-spin text-blue" />}
           {step}
         </span>
-      )}
-      <span className="mono tnum text-[11.5px] text-fg">{now ? fmtCountdown(e.tca - now) : ""}</span>
-      <Tooltip label="Back to the case" hint="E">
-        <button className={`btn h-8 gap-1.5 px-2.5 text-[11.5px] ${decide ? "btn-primary" : "btn-ghost-line"}`} onClick={() => setIncidentView("expanded")}>
-          <Maximize2 size={12} /> Open case
+        <span className="tnum text-[13px] font-semibold text-white">{now ? fmtCountdown(e.tca - now).replace("T−", "") : ""}</span>
+        <button className="btn btn-primary h-9 gap-1.5 px-3.5 text-[13px]" onClick={() => setIncidentView("expanded")}>
+          <Maximize2 size={13} /> Open case <span className="kbd !bg-black/10 !text-black/50 !shadow-none">E</span>
         </button>
-      </Tooltip>
+      </div>
+      <motion.div
+        initial={{ opacity: 0, y: -4 }}
+        animate={{ opacity: [0, 1, 1, 0], y: 0 }}
+        transition={{ duration: 5, times: [0, 0.08, 0.85, 1] }}
+        className="pointer-events-none mt-2 text-center text-[12px] text-neutral-400 [text-shadow:0_1px_3px_rgba(0,0,0,0.9)]"
+      >
+        Your case keeps running here. Press <span className="text-white">E</span> or click Open case to go back.
+      </motion.div>
     </motion.div>
   );
 }
