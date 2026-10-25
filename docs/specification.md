@@ -575,6 +575,7 @@ Counter uses `messages.send`, optionally referencing the selected proposal/revis
 |---|---|---|---|
 | `rooms.startWorkflow` | mutation | `{ eventId }` → `{ roomId, created: boolean, joined: Id<"users">[] }` | Operator of a party object, active incident. Creates or returns the encounter's open room (every pair row within ±60 s, both object orders), joins every assigned operator of the involved companies to the room and its call, and leaves an inbox notice for those joined by someone else. Nobody is redirected. Idempotent. The UI calls it from Run agents on this case. Each newly linked incident starts the Incident Analyst and candidate publication (`advocates.publishFromOrbit`); both deduplicate [DSP-1, DSP-5] |
 | `rooms.get` | query | `{ eventId }` → `RoomState \| null` | `null` until someone starts the workflow, or after the room closed |
+| `rooms.forEvent` | query | `{ eventId }` → `{ roomId, state: "open" \| "closed", closedAt: ISODate \| null } \| null` | The incident's most recent room, open or closed, so a reloaded page can open a closed room's history with `rooms.byId` |
 | `rooms.byId` | query | `{ roomId }` → shared group-room projection | Membership required; no private policy/memory/context |
 | `rooms.listMine` | query | `{}` → shared room projections | Open rooms of the caller's incidents |
 | `rooms.join` / `rooms.leave` | mutation | `{ roomId }` → `null` | Presence for "is B in the room" [DSP-5]. Starting the workflow already joins; operators only. `INVALID_STATE` on a closed room |
