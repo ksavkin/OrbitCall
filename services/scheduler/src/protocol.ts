@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 export const MAX_BYTES = 256_000;
+export const MAX_ATTEMPTS = 3;
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const version = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 export const refSchema = z.object({ eventId: id, proposalId: id, revision: version, selectionGeneration: version, approvalRuleVersion: version }).strict();
@@ -16,13 +17,14 @@ const sha = z.string().regex(/^[a-f0-9]{40}$/);
 export const prepareSchema = z.object({ intentKey, filePath, ref: refSchema, trajectory: trajectorySchema, entry: entrySchema }).strict();
 export const commitSchema = z.object({ intentKey, preparedJobId: digest, contentHash: digest,
   expectedPreviousHash: digest.nullable(), expectedPreviousCommit: sha, ref: refSchema, trajectory: trajectorySchema }).strict();
+export const retrySchema = z.object({ expectedAttempt: z.number().int().min(1).max(MAX_ATTEMPTS) }).strict();
 export type Prepare = z.infer<typeof prepareSchema>;
 export type Commit = z.infer<typeof commitSchema>;
 export type Receipt = { sessionId: string; modelId: string; toolWrites: number };
 export type Artifact = { filePath: string; before: string | null; after: string; diff: string; contentHash: string;
   expectedPreviousHash: string | null; expectedPreviousCommit: string; factory: Receipt; commitSha: string | null };
 export type Job = { jobId: string; intentKey: string; kind: "prepare" | "commit"; status: "queued" | "running" | "completed" | "failed";
-  request: Prepare | Commit; result: Artifact | null; error: { code: string; message: string } | null };
+  attempt: number; request: Prepare | Commit; result: Artifact | null; error: { code: string; message: string } | null };
 export class WorkerError extends Error { constructor(readonly code: string, message: string, readonly status = 409) { super(message); } }
 export const fail = (code: string, message: string, status = 409): never => { throw new WorkerError(code, message, status); };
 export const safeError = (e: unknown) => e instanceof WorkerError ? { code: e.code, message: e.message } : { code: "WORKER_FAILED", message: "The schedule operation failed. No provider details are exposed." };

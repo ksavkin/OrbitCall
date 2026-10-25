@@ -16,12 +16,13 @@ export function httpServer(engine: Engine, token: string, ready: () => Promise<b
       if (req.method === "GET" && /^\/jobs\/[a-f0-9]{64}$/.test(req.url ?? "")) {
         const job = await engine.get(req.url!.slice(6)); return job ? reply(200, job) : reply(404, { error: { code: "NOT_FOUND", message: "Schedule job not found." } });
       }
-      if (req.method !== "POST" || !["/prepare", "/commit"].includes(req.url ?? "")) return reply(404, { error: { code: "NOT_FOUND", message: "Route not found." } });
+      const retry = /^\/jobs\/([a-f0-9]{64})\/retry$/.exec(req.url ?? "");
+      if (req.method !== "POST" || !(["/prepare", "/commit"].includes(req.url ?? "") || retry)) return reply(404, { error: { code: "NOT_FOUND", message: "Route not found." } });
       if (req.headers["content-type"]?.split(";")[0] !== "application/json") fail("VALIDATION", "A JSON request is required.", 415);
       let body = "", size = 0;
       for await (const chunk of req) { size += chunk.length; if (size > 16_000) fail("LIMIT_EXCEEDED", "Request exceeds the schedule command limit.", 413); body += chunk; }
       let value: unknown; try { value = JSON.parse(body); } catch { fail("VALIDATION", "Malformed schedule request.", 400); }
-      const job = req.url === "/prepare" ? await engine.prepare(value) : await engine.commit(value);
+      const job = retry ? await engine.retry(retry[1], value) : req.url === "/prepare" ? await engine.prepare(value) : await engine.commit(value);
       reply(job.status === "queued" || job.status === "running" ? 202 : 200, job);
     } catch (error) { if (!res.headersSent) reply(error instanceof WorkerError ? error.status : 500, { error: safeError(error) }); }
   });

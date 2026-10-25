@@ -10,7 +10,7 @@ export type CommitSchedule = { intentKey: string; preparedJobId: string; content
 export type ScheduleArtifact = { filePath: string; before: string | null; after: string; diff: string; contentHash: string;
   expectedPreviousHash: string | null; expectedPreviousCommit: string; factory: { sessionId: string; modelId: string; toolWrites: 1 }; commitSha: string | null };
 export type ScheduleJob = { jobId: string; intentKey: string; kind: "prepare" | "commit"; status: "queued" | "running" | "completed" | "failed";
-  request: PrepareSchedule | CommitSchedule; result: ScheduleArtifact | null; error: { code: string; message: string } | null };
+  attempt: number; request: PrepareSchedule | CommitSchedule; result: ScheduleArtifact | null; error: { code: string; message: string } | null };
 type Expected = Pick<ScheduleJob, "intentKey" | "kind"> & { ref: ScheduleRef; trajectory: ScheduleTrajectory };
 export class ScheduleServiceError extends Error { constructor(readonly code: string, message: string) { super(message); } }
 const fail = (code: string, message: string): never => { throw new ScheduleServiceError(code, message); };
@@ -54,7 +54,7 @@ async function request(endpoint: string, body?: unknown, health = false) {
 }
 const render = (entries: unknown[]) => `{"maneuvers":[\n${entries.map((entry, i) => `${i ? "," : ""}${canonical(entry)}\n`).join("")}]}\n`;
 async function checkedJob(raw: unknown, expected: Expected, expectedRequest?: PrepareSchedule | CommitSchedule, expectedJobId?: string): Promise<ScheduleJob> {
-  if (!fields(raw, ["jobId", "intentKey", "kind", "status", "request", "result", "error"]) || raw.intentKey !== expected.intentKey || raw.kind !== expected.kind || !validRequest(raw.request, expected.kind) ||
+  if (!fields(raw, ["jobId", "intentKey", "kind", "status", "attempt", "request", "result", "error"]) || !version(raw.attempt) || raw.attempt > 3 || raw.intentKey !== expected.intentKey || raw.kind !== expected.kind || !validRequest(raw.request, expected.kind) ||
     !same(raw.request.ref, expected.ref) || !same(raw.request.trajectory, expected.trajectory) || raw.request.intentKey !== expected.intentKey ||
     (expectedRequest && !same(raw.request, expectedRequest)) || !["queued", "running", "completed", "failed"].includes(raw.status as string) || raw.jobId !== await hash(`${expected.kind}:${expected.intentKey}`) || (expectedJobId && raw.jobId !== expectedJobId)) return invalid();
   if (raw.error !== null && (!fields(raw.error, ["code", "message"]) || !text(raw.error.code, 80) || !text(raw.error.message, 500))) return invalid();
@@ -85,3 +85,7 @@ export async function getScheduleHealth() {
 export async function prepareSchedule(input: PrepareSchedule) { if (!validRequest(input, "prepare")) fail("VALIDATION", "Invalid immutable schedule request."); return checkedJob(await request("/prepare", input), { ...input, kind: "prepare" }, input); }
 export async function commitSchedule(input: CommitSchedule) { if (!validRequest(input, "commit")) fail("VALIDATION", "Invalid reserved schedule request."); return checkedJob(await request("/commit", input), { ...input, kind: "commit" }, input); }
 export async function getScheduleJob(jobId: string, expected: Expected) { if (!digest(jobId) || !validRef(expected.ref) || !validTrajectory(expected.trajectory)) fail("VALIDATION", "Invalid schedule job reference."); return checkedJob(await request(`/jobs/${jobId}`), expected, undefined, jobId); }
+export async function retryScheduleJob(jobId: string, expectedAttempt: number, expected: Expected) {
+  if (!digest(jobId) || !version(expectedAttempt) || expectedAttempt > 3 || !validRef(expected.ref) || !validTrajectory(expected.trajectory)) fail("VALIDATION", "Invalid schedule retry reference.");
+  return checkedJob(await request(`/jobs/${jobId}/retry`, { expectedAttempt }), expected, undefined, jobId);
+}

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { append, canonical, diff, fail, hash, MAX_BYTES, parseCommit, parsePrepare, safeError, WorkerError, type Artifact, type Commit, type Job, type Prepare, type Receipt } from "./protocol.js";
+import { append, canonical, diff, fail, hash, MAX_ATTEMPTS, MAX_BYTES, parseCommit, parsePrepare, retrySchema, safeError, type Job, type Prepare, type Receipt } from "./protocol.js";
 
 const exec = promisify(execFile);
 export type Provider = (input: { cwd: string; home: string; file: string; expected: string }) => Promise<Receipt>;
@@ -43,7 +43,9 @@ export class Engine {
   async get(id: string): Promise<Job | null> {
     if (!/^[a-f0-9]{64}$/.test(id)) return fail("VALIDATION", "Invalid job identifier.", 400);
     const file = join(this.root, "jobs", `${id}.json`); if (!await exists(file)) return null;
-    return JSON.parse(await readFile(file, "utf8")) as Job;
+    const job = JSON.parse(await readFile(file, "utf8")) as Job;
+    // Journals from the initial worker version represent exactly one attempt.
+    return { ...job, attempt: job.attempt ?? 1 };
   }
   static async open(root: string, provider: Provider) {
     const e = new Engine(resolve(root), provider);
@@ -57,7 +59,10 @@ export class Engine {
     for (const name of jobs) {
       const job = (await e.get(name.slice(0, -5)))!;
       if (job.status !== "queued" && job.status !== "running") continue;
-      if (job.kind === "prepare") { job.status = "failed"; job.error = { code: "PREPARE_INTERRUPTED", message: "Factory preparation was interrupted; create a newly authorized intent to retry." }; await e.save(job); }
+      if (job.kind === "prepare") {
+        job.status = "failed"; job.result = null; job.error = { code: "PREPARE_INTERRUPTED", message: "Factory preparation was interrupted; explicitly retry the same intent." }; await e.save(job);
+        await rm(join(e.root, "staging", job.jobId), { recursive: true, force: true });
+      }
       else await e.executeCommit(job, true);
     }
     return e;
@@ -70,7 +75,7 @@ export class Engine {
       this.ensureWritable(); const existing = await this.get(jobId);
       if (existing) { if (canonical(existing.request) !== canonical(request)) fail("INTENT_CONFLICT", "An intent cannot change its immutable request."); return existing; }
       await this.capacity();
-      const job: Job = { jobId, intentKey: request.intentKey, kind: "prepare", status: "queued", request, result: null, error: null };
+      const job: Job = { jobId, intentKey: request.intentKey, kind: "prepare", status: "queued", attempt: 1, request, result: null, error: null };
       await this.save(job); return job;
     });
     if (job.status === "queued") void this.serial(async () => { const current = (await this.get(jobId))!; if (current.status === "queued") await this.executePrepare(current); });
@@ -88,10 +93,37 @@ export class Engine {
         request.expectedPreviousCommit !== artifact.expectedPreviousCommit || canonical(request.ref) !== canonical(p.request.ref) || canonical(request.trajectory) !== canonical(p.request.trajectory)) {
         return fail("PREVIEW_MISMATCH", "Commit must reserve the exact completed Factory preview.");
       }
-      const job: Job = { jobId, intentKey: request.intentKey, kind: "commit", status: "queued", request, result: artifact, error: null };
+      const job: Job = { jobId, intentKey: request.intentKey, kind: "commit", status: "queued", attempt: 1, request, result: artifact, error: null };
       await this.save(job); return job;
     });
     if (job.status === "queued") void this.serial(async () => { const current = (await this.get(jobId))!; if (current.status === "queued") await this.executeCommit(current, false); });
+    return clone(job);
+  }
+  async retry(jobId: string, raw: unknown): Promise<Job> {
+    const parsed = retrySchema.safeParse(raw);
+    if (!parsed.success) return fail("VALIDATION", "Retry must identify the observed attempt.", 400);
+    const job = await this.serial(async () => {
+      this.ensureWritable(); const existing = await this.get(jobId);
+      if (!existing) return fail("NOT_FOUND", "Schedule job not found.", 404);
+      // A repeated retry command cannot spend again after its first accepted attempt.
+      if (existing.attempt > parsed.data.expectedAttempt) return existing;
+      if (existing.attempt !== parsed.data.expectedAttempt) return fail("ATTEMPT_CONFLICT", "Retry does not match the observed attempt.");
+      if (existing.status === "completed") return existing;
+      const allowed = existing.kind === "prepare"
+        ? ["WORKER_FAILED", "FACTORY_UNAVAILABLE", "FACTORY_FAILED", "FACTORY_ARTIFACT_INVALID", "PREPARE_INTERRUPTED"]
+        : ["WORKER_FAILED"];
+      if (existing.status !== "failed" || !existing.error || !allowed.includes(existing.error.code)) return fail("RETRY_UNSAFE", "This failure needs reconciliation or fresh authorization, not a retry.");
+      if (existing.attempt >= MAX_ATTEMPTS) return fail("RETRY_LIMIT", "This immutable intent has reached its three-attempt limit.");
+      existing.attempt++; existing.status = "queued"; existing.error = null;
+      await this.save(existing); return existing;
+    });
+    if (job.status === "queued") void this.serial(async () => {
+      const current = (await this.get(jobId))!;
+      if (current.status === "queued") {
+        if (current.kind === "prepare") await this.executePrepare(current);
+        else await this.executeCommit(current, false);
+      }
+    });
     return clone(job);
   }
   private async path(filePath: string, base = this.repo) {

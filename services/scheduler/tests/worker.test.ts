@@ -95,6 +95,49 @@ it("fails an interrupted preparation visibly and never automatically spends agai
   const recovered = await Engine.open(root, provider);
   expect(await recovered.prepare(request())).toMatchObject({ status: "failed", error: { code: "PREPARE_INTERRUPTED" } });
   expect(provider).toHaveBeenCalledTimes(1);
+  const retried = await recovered.retry(p.jobId, { expectedAttempt: 1 });
+  expect(retried).toMatchObject({ jobId: p.jobId, status: "queued", attempt: 2, request: p.request });
+  await recovered.idle(); expect(await recovered.get(p.jobId)).toMatchObject({ status: "completed", attempt: 2 });
+  expect(provider).toHaveBeenCalledTimes(2);
+});
+
+it("pins explicit retries to the observed attempt and preserves their bound across restarts", async () => {
+  const provider = vi.fn(async () => { throw new Error("temporary provider outage"); });
+  const { engine, root } = await setup(provider), p = await prepared(engine);
+  expect(await engine.prepare(request())).toMatchObject({ attempt: 1, status: "failed" });
+  await expect(engine.retry(p.jobId, { expectedAttempt: 2 })).rejects.toMatchObject({ code: "ATTEMPT_CONFLICT" });
+  await expect(engine.retry(p.jobId, { expectedAttempt: 1, entry: request().entry })).rejects.toMatchObject({ code: "VALIDATION" });
+  const [a, b] = await Promise.all([engine.retry(p.jobId, { expectedAttempt: 1 }), engine.retry(p.jobId, { expectedAttempt: 1 })]);
+  expect(a.attempt).toBe(2); expect(b.attempt).toBe(2); await engine.idle();
+  // Replayed commands after a second failure must not trigger a third charge.
+  expect(await engine.retry(p.jobId, { expectedAttempt: 1 })).toMatchObject({ attempt: 2, status: "failed" });
+  expect(provider).toHaveBeenCalledTimes(2);
+  const recovered = await Engine.open(root, provider);
+  await recovered.retry(p.jobId, { expectedAttempt: 2 }); await recovered.idle();
+  expect(provider).toHaveBeenCalledTimes(3);
+  await expect(recovered.retry(p.jobId, { expectedAttempt: 3 })).rejects.toMatchObject({ code: "RETRY_LIMIT" });
+  expect((await recovered.get(p.jobId))!.request).toEqual(p.request);
+});
+
+it("retries a failed commit before a write without changing its preview or calling Factory again", async () => {
+  const { engine, provider, root } = await setup(), p = await prepared(engine), req = commitRequest(p), jobId = hash(`commit:${req.intentKey}`);
+  await writeFile(join(root, "jobs", `${jobId}.json`), JSON.stringify({ jobId, intentKey: req.intentKey, kind: "commit", attempt: 1,
+    status: "failed", request: req, result: p.result, error: { code: "WORKER_FAILED", message: "Transient read failure before write." } }));
+  const retried = await engine.retry(jobId, { expectedAttempt: 1 }); expect(retried).toMatchObject({ attempt: 2, request: req, result: p.result });
+  await engine.idle(); const completed = await engine.get(jobId); expect(completed).toMatchObject({ status: "completed", attempt: 2 });
+  expect(await engine.retry(jobId, { expectedAttempt: 1 })).toEqual(completed);
+  expect(await engine.commit(req)).toEqual(completed); expect(provider).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(await readFile(join(root, "repo", request().filePath), "utf8")).maneuvers).toHaveLength(1);
+});
+
+it("refuses to retry stale previews or writes whose outcome needs recovery", async () => {
+  const { engine, root } = await setup(), a = await prepared(engine), b = await prepared(engine, 2);
+  await engine.commit(commitRequest(a)); await engine.idle();
+  const stale = await engine.commit(commitRequest(b)); await engine.idle();
+  await expect(engine.retry(stale.jobId, { expectedAttempt: 1 })).rejects.toMatchObject({ code: "RETRY_UNSAFE" });
+  const job = (await engine.get(stale.jobId))!;
+  await writeFile(join(root, "jobs", `${job.jobId}.json`), JSON.stringify({ ...job, status: "running", error: { code: "RECOVERY_REQUIRED", message: "Interrupted write." } }));
+  await expect(engine.retry(stale.jobId, { expectedAttempt: 1 })).rejects.toMatchObject({ code: "RETRY_UNSAFE" });
 });
 
 it("rejects symlink destinations and never writes outside its isolated workspace", async () => {
