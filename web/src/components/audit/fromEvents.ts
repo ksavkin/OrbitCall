@@ -132,7 +132,8 @@ export function auditEntries(events: ConjunctionEvent[], replies: Reply[]): Audi
         eventLabel,
         actor: e.selection.by === "agents" ? "Agents" : sideName(e, e.selection.by),
         action: "selected",
-        summary: option ? `Selected ${option.id} for review. Generation ${e.selection.generation}.` : `Selected a plan. Generation ${e.selection.generation}.`,
+        // people read plan labels (P1-P4), never internal option ids
+        summary: option ? `Selected P${(e.options ?? []).indexOf(option) + 1} for review. Generation ${e.selection.generation}.` : `Selected a plan. Generation ${e.selection.generation}.`,
         before: null,
         after: "Approvals pending",
         simulated: sim,

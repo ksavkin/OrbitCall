@@ -25,7 +25,7 @@ export function AuditScreen() {
   const me = useMe();
 
   return (
-    <ScreenFrame label="Audit log">
+    <ScreenFrame label="Inbox">
       {userId === undefined ? (
         <ScreenMessage title="Checking sign-in" body="The log is for the companies in a case. Confirming who is signed in." />
       ) : !me ? (
@@ -44,6 +44,55 @@ export function AuditScreen() {
         <AuditBody companyName={me.company.name} />
       )}
     </ScreenFrame>
+  );
+}
+
+/** What needs this dispatcher: decisions due, cases they were added to, cases that closed. Newest first. */
+function Notices() {
+  const events = useOps((s) => s.events);
+  const humans = useOps((s) => s.humans);
+  const viewer = useOps((s) => s.actAs ?? "a");
+  const resolved = useOps((s) => s.resolved);
+  const items = useMemo(() => {
+    const out: { id: string; at: number; tone: "due" | "info" | "ok"; title: string; detail: string; eventId: string }[] = [];
+    const ROOM = ["communication", "proposal", "approved", "scheduled", "awaiting_verification", "verified", "monitoring", "needs_decision"];
+    for (const e of events) {
+      // a case keeps its notices once its channel existed (a plan was published), even while agents re-plan
+      if (!e.parties?.some((p) => p.role === "b") || (!ROOM.includes(e.status) && !e.proposals?.length)) continue;
+      const pair = `${e.a.name} × ${e.b.name}`;
+      if (humans.some((h) => h.eventId === e.id && h.side === viewer)) out.push({ id: `due-${e.id}`, at: Number.MAX_SAFE_INTEGER, tone: "due", title: `Your decision is needed on ${e.id}`, detail: pair, eventId: e.id });
+      const others = (e.parties ?? []).filter((p) => p.role !== viewer).map((p) => p.operator.replace(/\s*\(synthetic\)/i, ""));
+      out.push({ id: `room-${e.id}`, at: e.createdAt, tone: "info", title: `You were added to the coordination for ${e.id}`, detail: `${pair} · with ${others.join(", ")}`, eventId: e.id });
+      if (resolved?.eventId === e.id) out.push({ id: `ok-${e.id}`, at: resolved.at, tone: "ok", title: `${e.id} resolved`, detail: pair, eventId: e.id });
+    }
+    return out.sort((a, b) => (a.tone === "due" ? -1 : b.tone === "due" ? 1 : b.at - a.at)).slice(0, 6);
+  }, [events, humans, viewer, resolved]);
+  if (items.length === 0) return null;
+  const COLOR = { due: "var(--orange)", info: "#9cc2ff", ok: "var(--green)" } as const;
+  return (
+    <section className="mb-3 px-2 pt-1">
+      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-500">Notifications</div>
+      <ul className="space-y-1.5">
+        {items.map((n) => (
+          <li key={n.id} className="flex items-center gap-3 rounded-[12px] bg-white/[0.03] px-3.5 py-2.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]">
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: COLOR[n.tone], boxShadow: n.tone === "due" ? `0 0 10px ${COLOR.due}` : undefined }} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13px] font-medium text-white">{n.title}</div>
+              <div className="truncate text-[12px] text-neutral-500">{n.detail}</div>
+            </div>
+            <button
+              className={`btn h-8 shrink-0 px-3 text-[12px] ${n.tone === "due" ? "btn-primary" : "text-neutral-300"}`}
+              onClick={() => {
+                sfx.whoosh();
+                useOps.getState().set({ tab: "decision", incident: n.eventId, focusEvent: n.eventId, incidentView: "expanded" });
+              }}
+            >
+              Open
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -81,10 +130,10 @@ function AuditBody({ companyName }: { companyName: string }) {
         <header className="flex items-end justify-between gap-3 px-5 pb-3 pt-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="text-[16px] font-semibold text-white">Audit log</h1>
+              <h1 className="text-[16px] font-semibold text-white">Inbox</h1>
               {dev && rows.length > 0 && <Chip color="var(--orange)" size="sm">Synthetic</Chip>}
             </div>
-            <p className="mt-1 text-[12.5px] text-neutral-500">{companyName} · shared record, newest first</p>
+            <p className="mt-1 text-[12.5px] text-neutral-500">{companyName} · notifications and the shared record, newest first</p>
           </div>
           <div className="shrink-0">
             <Select
@@ -102,6 +151,7 @@ function AuditBody({ companyName }: { companyName: string }) {
           </div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+          {dev && <Notices />}
           {!dev ? (
             <Empty
               title="No shared log on this deployment yet"
@@ -110,7 +160,7 @@ function AuditBody({ companyName }: { companyName: string }) {
           ) : shown.length === 0 ? (
             <Empty
               title="No cases on this screen yet"
-              body="Run a scan on Conjunctions. What was shared — the plan, the answers, the result — is listed here. Policy numbers are not."
+              body="Run a scan on Orbit and run the agents on a case. What was shared (the plan, the answers, the result) is listed here. Policy numbers are not."
             />
           ) : (
             <ul className="space-y-1.5">
@@ -161,7 +211,7 @@ function Entry({ row }: { row: AuditEntry }) {
         className="mt-1 max-w-full truncate text-left text-[11.5px] text-neutral-500 underline-offset-2 hover:text-white hover:underline"
         onClick={() => {
           sfx.click();
-          useOps.getState().set({ tab: "conjunctions", incident: row.eventId, focusEvent: row.eventId, incidentView: "expanded" });
+          useOps.getState().set({ tab: "decision", incident: row.eventId, focusEvent: row.eventId, incidentView: "expanded" });
         }}
       >
         {row.eventLabel}
