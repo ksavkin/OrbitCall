@@ -18,6 +18,11 @@ Selection, relative to the SOCRATES run time (never to "now"):
      and relative speed >= 0.1 km/s (slower pairs are docked or co-orbiting objects, such as the
      ISS with its own modules and visiting vehicles, not conjunctions; this alone removes ~80% of
      the highest-probability rows. `--min-rel-speed-km-s 0` switches the rule off);
+  1b. same-fleet exclusion: drop pairs whose two objects belong to one operator (FLEETS below:
+     a Starlink with a Starlink, a OneWeb with a OneWeb). One operator needs no coordination
+     call, and SpaceX avoids inside its own fleet autonomously; such pairs are 4 of 5 SOCRATES
+     rows that would otherwise qualify. Matched by name prefix until an operator source exists
+     (plan D5 deviation, recorded there). `--keep-same-fleet` switches the rule off;
   2. candidates: MAX_PROB >= 1e-5, plus the 200 smallest TCA_RANGE;
   3. drop pairs where either object has a SATCAT DECAY_DATE;
   4. dedupe by unordered pair, |dTCA| <= 60 s (keep the higher MAX_PROB, then the smaller range);
@@ -55,6 +60,14 @@ RED_MIN_PROB = 1e-4       # exclusive; same rule as isRed in convex/lib/analyst.
 RED_WITHIN_HOURS = 72     # exclusive
 NAME_MAX = 200
 
+# Same-fleet exclusion (step 1b). Operator by object-name prefix, SATCAT name first, SOCRATES name
+# second. SATCAT OWNER is a country code, so it cannot tell one US operator from another. Temporary:
+# replace with operator metadata when a source exists (KeepTrack /v4/sats/brief needs a key).
+# Prefixes follow CelesTrak's naming in GP/SATCAT (celestrak.org/satcat): STARLINK-NNNN, ONEWEB-NNNN,
+# KUIPER-NNNNN. Extend only with a constellation large enough to screen against itself.
+FLEETS = {"STARLINK": "SpaceX", "ONEWEB": "Eutelsat OneWeb", "KUIPER": "Amazon Kuiper"}
+FLEET_RE = re.compile(r"^(" + "|".join(FLEETS) + r")(?=$|[-\s])")
+
 
 def die(message: str) -> None:
     print(f"ERROR: {message}", file=sys.stderr)
@@ -76,6 +89,15 @@ def clean_name(raw: str) -> str:
     name = re.sub(r"\s*\[[^\]]*\]\s*$", "", raw)
     name = re.sub(r"[\x00-\x1f\x7f]", " ", name)
     return re.sub(r"\s+", " ", name).strip()[:NAME_MAX]
+
+
+def fleet_of(*names: str) -> str | None:
+    """Operator key from FLEETS for the first name that carries a fleet prefix, else None."""
+    for raw in names:
+        m = FLEET_RE.match(clean_name(raw).upper())
+        if m:
+            return m.group(1)
+    return None
 
 
 def parse_float(text: str) -> float | None:
@@ -165,12 +187,23 @@ def row_key(r: dict) -> tuple:
     return (r["tca"], min(r["id1"], r["id2"]), max(r["id1"], r["id2"]))
 
 
+def same_fleet(r: dict, satcat: dict[int, dict]) -> bool:
+    """Both objects carry the same FLEETS prefix (SATCAT name first, SOCRATES name as fallback)."""
+    def fleet(object_id: int, socrates_name: str) -> str | None:
+        row = satcat.get(object_id)
+        return fleet_of(row["OBJECT_NAME"] if row else "", socrates_name)
+    a, b = fleet(r["id1"], r["name1"]), fleet(r["id2"], r["name2"])
+    return a is not None and a == b
+
+
 def select(rows: list[dict], run: datetime, satcat: dict[int, dict], min_speed: float,
-           drawable: set[int] | None) -> tuple[list[dict], dict]:
+           drawable: set[int] | None, exclude_same_fleet: bool = True) -> tuple[list[dict], dict]:
     upcoming = [r for r in rows if r["tca"] >= run]
     fast = [r for r in upcoming if r["speed"] >= min_speed]
+    # One operator on both sides is not a coordination case (step 1b).
+    foreign = [r for r in fast if not (exclude_same_fleet and same_fleet(r, satcat))]
     # Only pairs the globe can draw: both objects in the pinned OMM snapshot.
-    eligible = [r for r in fast if drawable is None or (r["id1"] in drawable and r["id2"] in drawable)]
+    eligible = [r for r in foreign if drawable is None or (r["id1"] in drawable and r["id2"] in drawable)]
     closest = sorted(eligible, key=lambda r: (r["range"],) + row_key(r))[:CLOSEST_COUNT]
     closest_ids = {id(r) for r in closest}
     candidates = [r for r in eligible if (r["prob"] is not None and r["prob"] >= MIN_MAX_PROB) or id(r) in closest_ids]
@@ -193,7 +226,8 @@ def select(rows: list[dict], run: datetime, satcat: dict[int, dict], min_speed: 
         chosen = unique
     stats = {
         "eligible": len(eligible), "droppedBeforeRun": len(rows) - len(upcoming),
-        "droppedCoorbiting": len(upcoming) - len(fast), "droppedNotDrawable": len(fast) - len(eligible),
+        "droppedCoorbiting": len(upcoming) - len(fast), "droppedSameFleet": len(fast) - len(foreign),
+        "droppedNotDrawable": len(foreign) - len(eligible),
         "candidates": len(candidates), "droppedDecayed": dropped_decayed,
         "droppedDuplicates": dropped_duplicates, "droppedOverCap": over_cap,
     }
@@ -242,6 +276,8 @@ def main() -> int:
     ap.add_argument("--gp", help="gp-* OMM snapshot id (default: the only one in data/snapshots)")
     ap.add_argument("--min-rel-speed-km-s", type=float, default=MIN_REL_SPEED_KM_S,
                     help="drop docked or co-orbiting pairs slower than this (default %(default)s; 0 keeps them)")
+    ap.add_argument("--keep-same-fleet", action="store_true",
+                    help="keep pairs whose two objects belong to one operator (STARLINK vs STARLINK, ...)")
     ap.add_argument("--all-pairs", action="store_true",
                     help="keep pairs whose objects are missing from the OMM snapshot (not drawable on the globe)")
     args = ap.parse_args()
@@ -273,7 +309,8 @@ def main() -> int:
                      and timedelta(0) < r["tca"] - run < timedelta(hours=RED_WITHIN_HOURS))
     red_at_run = sum(1 for r in rows if red(r))
 
-    chosen, stats = select(rows, run, satcat, args.min_rel_speed_km_s, None if args.all_pairs else omm_ids)
+    chosen, stats = select(rows, run, satcat, args.min_rel_speed_km_s, None if args.all_pairs else omm_ids,
+                           exclude_same_fleet=not args.keep_same_fleet)
     pairs = [(r, to_pair(r, satcat)) for r in chosen]
     pairs.sort(key=lambda t: (t[0]["tca"], int(t[1]["objectA"]["objectId"]), int(t[1]["objectB"]["objectId"])))
     selected_ids = {int(p[k]["objectId"]) for _, p in pairs for k in ("objectA", "objectB")}
@@ -281,6 +318,7 @@ def main() -> int:
 
     counts = {
         "socratesRows": len(rows), "redAtRunTime": red_at_run, "selected": len(pairs),
+        "droppedSameFleet": stats["droppedSameFleet"],
         "droppedDecayed": stats["droppedDecayed"], "droppedDuplicates": stats["droppedDuplicates"],
         "missingFromOmm": missing_omm,
     }
@@ -296,6 +334,7 @@ def main() -> int:
             "runTimeUtc": manifest["socratesRunUtc"],
             "tcaNotBeforeRunTime": True,
             "minRelSpeedKmS": args.min_rel_speed_km_s,
+            "sameFleet": None if args.keep_same_fleet else {"rule": "drop pairs whose objects share a name prefix", "fleets": FLEETS},
             "minMaxProb": MIN_MAX_PROB,
             "closestRangeCount": CLOSEST_COUNT,
             "dropDecayed": True,
@@ -314,8 +353,7 @@ def main() -> int:
     ids_over = sum(1 for _, p in pairs if int(p["objectA"]["objectId"]) >= 100000 or int(p["objectB"]["objectId"]) >= 100000)
     no_satcat = len(selected_ids - satcat.keys())
     both_omm = sum(1 for _, p in pairs if int(p["objectA"]["objectId"]) in omm_ids and int(p["objectB"]["objectId"]) in omm_ids)
-    same_fleet = sum(1 for r in sel if clean_name(r["name1"]).split("-")[0] == clean_name(r["name2"]).split("-")[0]
-                     and clean_name(r["name1"]).startswith(("STARLINK", "ONEWEB", "KUIPER")))
+    same_fleet_left = sum(1 for r in sel if same_fleet(r, satcat))
     print(f"snapshot            {sid} (SOCRATES run {manifest['socratesRunUtc']}, OMM {gp_id}, {GP_SOURCE_GROUP} fetched {catalog_fetched})")
     print(f"SOCRATES rows       {counts['socratesRows']}")
     print(f"red at run time     {red_at_run}  (MAX_PROB > 1e-4 and TCA within 72 h after the run)")
@@ -327,6 +365,8 @@ def main() -> int:
           f"  (with both objects in OMM: {sum(1 for r in rows if red(r) and not slow(r) and drawable(r))})")
     print(f"before run time     {stats['droppedBeforeRun']} rows dropped (TCA earlier than the run)")
     print(f"co-orbiting         {stats['droppedCoorbiting']} upcoming rows dropped (relative speed < {args.min_rel_speed_km_s} km/s)")
+    print(f"same fleet          {stats['droppedSameFleet']} rows dropped (one operator on both sides: {', '.join(FLEETS)})"
+          + ("  [kept: --keep-same-fleet]" if args.keep_same_fleet else ""))
     print(f"candidates          {stats['candidates']} (MAX_PROB >= 1e-5 or among the 200 closest)")
     print(f"dropped decayed     {counts['droppedDecayed']}")
     print(f"dropped duplicates  {counts['droppedDuplicates']}")
@@ -336,7 +376,7 @@ def main() -> int:
     print(f"  objects not in OMM groups  {missing_omm}  (pairs with both objects in OMM: {both_omm})")
     print(f"  objects not in SATCAT file {no_satcat}  (names fall back to SOCRATES, country/launch null)")
     print(f"  pairs with an id >= 100000 {ids_over}  (OMM only; TLE cannot hold these)")
-    print(f"  same-constellation pairs   {same_fleet}  (STARLINK/ONEWEB/KUIPER vs itself, by name)")
+    print(f"  same-fleet pairs left      {same_fleet_left}  (expected 0 unless --keep-same-fleet)")
     top = Counter(int(((r['tca'] - run).total_seconds()) // 86400) for r in sel)
     print(f"  TCA day offset from run    {sorted(top.items())}")
     print(f"wrote {folder / 'catalog-pairs.json'}")
