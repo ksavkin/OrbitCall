@@ -17,7 +17,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-async function setup(options: { wait?: boolean; demo?: boolean; debris?: boolean } = {}) {
+async function setup(options: { wait?: boolean; demo?: boolean; debris?: boolean; orbitLabel?: boolean } = {}) {
   const t = backend(); const eventId = await insertEvent(t, advocateEvent);
   const ids = await t.run(async ctx => {
     const a = await ctx.db.insert("companies", { key: "a", name: "A", simulated: true });
@@ -46,7 +46,9 @@ async function setup(options: { wait?: boolean; demo?: boolean; debris?: boolean
     await ctx.db.insert("roomEvents", { roomId, eventId, linkedAt: FIXTURE_NOW });
     return { a, b, users, assignments, policies, owners, demoRunId, roomId };
   });
-  const cards = advocateCandidates.filter(card => !options.debris || card.movingSide !== "B");
+  const cards = advocateCandidates.filter(card => !options.debris || card.movingSide !== "B").map(card => options.orbitLabel && card.candidateId === "P1"
+    ? { ...card, label: "Move SIM-1001 prograde 0.2 m/s, 6 h before closest approach",
+      assumptions: [...card.assumptions, "Computed maneuver closest approach: 2026-10-25T03:14:07Z; relative speed 7.6 km/s."] } : card);
   await t.mutation(internal.candidates.publish, { eventId, baseVersion: null, candidates: cards, start: false });
   const card = options.wait ? cards.find(c => c.kind === "wait")! : cards[0];
   const proposal = await t.run(ctx => ctx.db.query("proposals").withIndex("by_event_candidate", q =>
@@ -216,7 +218,7 @@ describe("summary edits through numerical rescreen and canonical publication", (
   });
 
   it("recomputes the new mover, direction and time and deduplicates equivalent field order", async () => {
-    const s = await setup(); const worker = orbit();
+    const s = await setup({ orbitLabel: true }); const worker = orbit();
     const burnTimeUtc = new Date(Date.parse(s.card.burnTimeUtc!) + 60_000).toISOString().replace(".000Z", "Z");
     await as(s.t, "a").mutation(api.summary.edit, { ...editArgs(s), changes: { movingSide: "B", direction: "retrograde", burnTimeUtc, deltaVMs: 0.7 } });
     await as(s.t, "a").mutation(api.summary.edit, { ...editArgs(s), changes: { deltaVMs: 0.7, burnTimeUtc, direction: "retrograde", movingSide: "B" } });
@@ -226,6 +228,24 @@ describe("summary edits through numerical rescreen and canonical publication", (
       maneuver: { burnTimeUtc, direction: "retrograde", deltaVMs: 0.7 } });
     expect((await as(s.t, "a").query(api.summary.get, { eventId: s.eventId })).form).toMatchObject({ revision: 2,
       movingSide: "B", direction: "retrograde", burnTimeUtc, deltaVMs: 0.7 });
+    const revision = await s.t.run(ctx => ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
+      q.eq("proposalId", s.proposalId).eq("revision", 2)).unique());
+    const candidate = await s.t.run(ctx => ctx.db.get(revision!.candidateRevisionId));
+    expect(candidate?.label).toBe(`Move SIM-1002 retrograde 0.7 m/s at ${burnTimeUtc}`);
+    expect(candidate?.label).not.toContain("6 h before");
+  });
+
+  it("replaces the old maneuver label and numerical assumptions when editing to wait", async () => {
+    const s = await setup({ orbitLabel: true }); const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    await as(s.t, "a").mutation(api.summary.edit, { ...editArgs(s), changes: {
+      movingSide: null, burnTimeUtc: null, deltaVMs: null, direction: null, note: "Wait for new tracking data." } });
+    await s.t.action(internal.summary.submit, { jobId: (await jobs(s))[0]._id });
+    expect(fetch).not.toHaveBeenCalled();
+    const revision = await s.t.run(ctx => ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
+      q.eq("proposalId", s.proposalId).eq("revision", 2)).unique());
+    const candidate = await s.t.run(ctx => ctx.db.get(revision!.candidateRevisionId));
+    expect(candidate).toMatchObject({ kind: "wait", label: "Wait for update", missAfterKm: null,
+      movingObjectId: null, assumptions: ["Waiting is not a maneuver or a claim of safety."] });
   });
 
   it("edits a wait note without inventing a burn or numerical call", async () => {

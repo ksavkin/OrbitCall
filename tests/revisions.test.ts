@@ -158,7 +158,7 @@ describe("discussion-driven publication", () => {
     expect(fetch).toHaveBeenCalledTimes(count);
   });
 
-  it("reopens the numerical grid when a checked correction releases a hard constraint", async () => {
+  it.each([false, true])("reopens the grid when a correction releases a hard constraint (also requested=%s)", async requested => {
     const s = await setup({ text: "Cannot maneuver" }); orbit(); await run(s);
     expect((await cards(s)).every(c => c.movingSide !== "A")).toBe(true);
     const old = (await s.t.run(ctx => ctx.db.query("understood").collect()))[0];
@@ -168,12 +168,20 @@ describe("discussion-driven publication", () => {
     const span: AgentSpan = { role: "coordination_host", provider: "google", model: "test", inputVersion: context.inputVersion,
       attempt: 1, startedAt: Date.now(), finishedAt: Date.now(), status: "succeeded", usage: null, errorCode: null, errorMessage: null };
     await s.t.mutation(internal.hostTriggers.finish, { hostRunId, span, check: null, output: {
-      inputVersion: context.inputVersion, summaries: [], clarifications: [], requestedRevisions: [],
+      inputVersion: context.inputVersion, summaries: [], clarifications: [], requestedRevisions: requested ? [{ eventId: s.eventId,
+        candidateId: context.events.find(e => e.eventId === s.eventId)!.candidates[0].candidateId,
+        reason: "Reconsider the plan after the operator corrected the constraint.", messageIds: [messageId] }] : [],
       understood: [{ eventId: s.eventId, kind: "correction", hard: false, text: "Actually, we prefer to maneuver later.", sourceMessageId: messageId, correctsId: old._id }],
     } });
     expect(await s.t.action(internal.revisions.fromHost, { hostRunId })).toEqual([expect.objectContaining({ status: "published", changed: true })]);
     expect((await cards(s)).some(c => c.movingSide === "A")).toBe(true);
     expect((await revisions(s)).some(r => r.changeSummary?.includes("corrected a hard constraint") && r.sourceMessageIds.length > 0)).toBe(true);
+  });
+
+  it.each([false, true])("never turns a soft directional preference into a hard grid restriction (hard flag=%s)", async hard => {
+    const s = await setup({ text: "Prefer retrograde", hard }); const fetch = orbit(), before = await cards(s);
+    expect(await run(s)).toEqual([expect.objectContaining({ status: "failed", code: "CLARIFICATION_REQUIRED" })]);
+    expect(fetch).not.toHaveBeenCalled(); expect(await cards(s)).toEqual(before);
   });
 
   it("applies the other company's active constraints to its own mover only", async () => {

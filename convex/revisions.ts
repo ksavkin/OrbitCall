@@ -124,6 +124,7 @@ async function loadDiscussion(ctx: QueryCtx, hostRunId: Id<"hostRuns">, eventId:
   const pair = await Promise.all([ctx.db.get(event.objectAId), ctx.db.get(event.objectBId)]);
   const pairIds = pair.flatMap(o => o ? [o.objectId] : []);
   const sources = new Map<string, Source>();
+  const hardSourceIds = new Set<string>(), releasedSourceIds = new Set<string>();
   const pins: unknown[] = [];
   for (const row of hard) {
     // A room-wide statement made by another involved company does not constrain this pair's spacecraft.
@@ -134,19 +135,24 @@ async function loadDiscussion(ctx: QueryCtx, hostRunId: Id<"hostRuns">, eventId:
     const source = await understoodSource(ctx, event, room, row);
     // Parse the full original line so an excerpt cannot strip "not", an exception, or a second restriction.
     if (/\b(?:prefer|hypothetical|if)\b/i.test(source.text)) return bad("CLARIFICATION_REQUIRED", "Clarify whether this statement is a binding constraint or a preference.");
-    sources.set(source.id, source); pins.push([row._id, row.kind, row.hard, row.text, row.sourceMessageId, row.correctedById, source.pin]);
+    sources.set(source.id, source); hardSourceIds.add(source.id);
+    pins.push([row._id, row.kind, row.hard, row.text, row.sourceMessageId, row.correctedById, source.pin]);
   }
-  for (const id of new Set(requests.flatMap(r => r.messageIds))) {
-    if (!sources.has(id)) sources.set(id, await humanSource(ctx, event, room, id));
-  }
-  const constraints = [...sources.values()].flatMap(s => parseDiscussionConstraints(s.text, s.objectId, pairIds));
   for (const row of releases) {
     const output = run.output.understood?.find(u => u.kind === "correction" && !u.hard && u.text === row.text && u.eventId === row.eventId);
     const oldId = output?.correctsId && ctx.db.normalizeId("understood", output.correctsId), old = oldId && await ctx.db.get(oldId);
     if (!old || !old.hard || old.status !== "corrected" || old.correctedById !== row._id || old.roomId !== row.roomId || old.eventId !== row.eventId) continue;
     const source = await understoodSource(ctx, event, room, row);
+    releasedSourceIds.add(source.id);
     sources.set(source.id, source); pins.push([row._id, row.text, old._id, old.status, old.correctedById, source.pin]);
   }
+  for (const id of new Set(requests.flatMap(r => r.messageIds))) {
+    if (!sources.has(id)) sources.set(id, await humanSource(ctx, event, room, id));
+  }
+  // A checked correction can also be the Host's reason to request a revision. Its original prose explains why
+  // the old hard rule was released; it is not a new binding numerical filter. Preserve that source in the audit.
+  const constraints = [...sources.values()].filter(s => hardSourceIds.has(s.id) || !releasedSourceIds.has(s.id))
+    .flatMap(s => parseDiscussionConstraints(s.text, s.objectId, pairIds));
   if (!sources.size) return bad("NO_REVISION_REQUEST", "There are no current human sources for this revision.");
   const sourceList = [...sources.values()].sort((a, b) => a.id.localeCompare(b.id));
   const inputVersion = await digest([eventId, room._id, room.demoRunId, targets, pins, sourceList.map(s => [s.id, s.pin]), constraints]);
