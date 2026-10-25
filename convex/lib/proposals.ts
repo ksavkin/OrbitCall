@@ -10,7 +10,8 @@ import { advanceSelection, classifyIfUnset } from "./approvals";
 /** Statuses before people decide: publishing options moves these to "proposal" (functionality §3). */
 const BEFORE_PROPOSAL = new Set(["new", "agents"]);
 
-export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, candidateRevisionIds: Id<"candidateRevisions">[]) {
+export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, candidateRevisionIds: Id<"candidateRevisions">[],
+  options: { candidateSetChanged?: boolean; preserveDecision?: boolean } = {}) {
   const now = Date.now();
   const offered = new Set<Id<"proposals">>();
   for (const id of candidateRevisionIds) {
@@ -31,6 +32,7 @@ export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, cand
     });
     offered.add(proposalId);
   }
+  if (options.preserveDecision) return;
   const classified = await classifyIfUnset(ctx, event);
   if (BEFORE_PROPOSAL.has(classified.status ?? "new")) await ctx.db.patch(event._id, { status: "proposal" });
   // A new revision of the selected card, or its withdrawal, is a reset (spec §4.1); the selection follows the card.
@@ -40,5 +42,8 @@ export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, cand
   if (!selected || !offered.has(selected._id)) await advanceSelection(ctx, classified, null, { kind: "agents" }, "proposal_withdrawn");
   else if (selected.latestRevision !== selection.revision) {
     await advanceSelection(ctx, classified, { proposalId: selected._id, revision: selected.latestRevision }, { kind: "agents" }, "revision_changed");
+  } else if (options.candidateSetChanged !== false) {
+    // The agreed comparison includes all offered options, not only the selected card.
+    await advanceSelection(ctx, classified, { proposalId: selected._id, revision: selected.latestRevision }, { kind: "agents" }, "candidate_set_changed");
   }
 }

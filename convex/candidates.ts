@@ -65,8 +65,6 @@ export const publish = internalMutation({
     const previous = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     if ((previous?.version ?? null) !== baseVersion) throw new ConvexError({ code: "STALE_REVISION", message: "Candidate set changed; reload it before publishing." });
     if (previous && previous.state !== "open") throw new ConvexError({ code: "INVALID_STATE", message: "Scheduled or closed plans cannot be rewritten by candidate publication." });
-    // After consensus a change flags the plan for review; publication never silently replaces it (spec §4.1).
-    if (RESOLVED_STATUSES.has(event.status ?? "new")) throw new ConvexError({ code: "INVALID_STATE", message: "This incident is decided; its candidates can no longer change." });
     const candidateRevisionIds: Id<"candidateRevisions">[] = [];
     for (const c of candidates) {
       const latest = await ctx.db.query("candidateRevisions").withIndex("by_event_candidate_revision", q =>
@@ -81,9 +79,15 @@ export const publish = internalMutation({
       } else candidateRevisionIds.push(await ctx.db.insert("candidateRevisions", { eventId, ...c }));
     }
     const evidenceKey = inputKey(facts);
-    if (previous && previous.evidenceKey === evidenceKey && JSON.stringify(previous.candidateRevisionIds) === JSON.stringify(candidateRevisionIds)) {
+    if (previous && !previous.reviewRequired && previous.companyAId === companyAId && previous.companyBId === companyBId &&
+      previous.evidenceKey === evidenceKey && JSON.stringify(previous.candidateRevisionIds) === JSON.stringify(candidateRevisionIds)) {
+      // Existing candidate sets predate the proposal projection. Repair missing projections even when calculations
+      // are unchanged, without moving an existing decision or scheduling another negotiation.
+      await syncProposals(ctx, event, candidateRevisionIds, { candidateSetChanged: false, preserveDecision: RESOLVED_STATUSES.has(event.status ?? "new") });
       return { version: previous.version, changed: false };
     }
+    // Consensus may be backfilled above, but changed calculations never silently replace an agreed plan.
+    if (RESOLVED_STATUSES.has(event.status ?? "new")) throw new ConvexError({ code: "INVALID_STATE", message: "This incident is decided; its candidates can no longer change." });
     const value = { eventId, companyAId, companyBId,
       version: (previous?.version ?? 0) + 1, evidenceKey, candidateRevisionIds, state: "open" as const, reviewRequired: false };
     if (previous) await ctx.db.replace(previous._id, value);
