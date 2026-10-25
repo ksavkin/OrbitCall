@@ -86,7 +86,6 @@ def node(spec: tuple) -> str:
     role_x = x + (35 if core else 27)
     parts = [f'<g id="{key}" class="node" data-label="{escape(title)}">']
     parts.append(f'<rect class="card" x="{x}" y="{y}" width="{w}" height="{h}" rx="22" fill="{fill}" stroke="{stroke}" stroke-width="{2.5 if core else 1.8}"/>')
-    parts.append(f'<path d="M{x + w - 77} {y + 30} H{x + w - 29}" stroke="{accent}" stroke-width="4" stroke-linecap="round" opacity=".65"/>')
     parts.append(f'<circle cx="{cx}" cy="{cy}" r="{badge/2}" fill="white"/>')
     parts.append(f'<clipPath id="badge-{key}"><circle cx="{cx}" cy="{cy}" r="{badge/2}"/></clipPath>')
     parts.append(f'<image class="brand-logo" x="{logo_x}" y="{logo_y}" width="{logo_size}" height="{logo_size}" href="{image_data(logo)}" clip-path="url(#badge-{key})"/>')
