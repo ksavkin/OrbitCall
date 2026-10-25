@@ -577,7 +577,7 @@ Counter uses `messages.send`, optionally referencing the selected proposal/revis
 | `rooms.byId` | query | `{ roomId }` → shared group-room projection | Membership required; no private policy/memory/context |
 | `rooms.listMine` | query | `{}` → shared room projections | Open rooms of the caller's incidents |
 | `rooms.join` / `rooms.leave` | mutation | `{ roomId }` → `null` | Presence for "is B in the room" [DSP-5]. Starting the workflow already joins; operators only. `INVALID_STATE` on a closed room |
-| `rooms.setInCall` | mutation | `{ roomId, inCall: boolean }` → `null` | Called on LiveKit connect/disconnect |
+| `rooms.setInCall` | mutation | `{ roomId, inCall: boolean }` → `null` | Room-level presence (`roomMembers.inCall`). The call screen writes the call's own presence through `call.presence.setInCall` (Section 5) |
 | `proposals.list` | query | `{ eventId }` → `ProposalCard[]` | Up to four computed candidate cards total, including wait when justified. Fewer/zero options are explicit; do not require exactly one shared recommendation [ROOM-5] |
 | `proposals.revisions` | query | `{ proposalId }` → `Revision[]` | History, oldest first |
 | `rooms.select` | mutation | `{ eventId, proposalId, revision, expectedGeneration }` → `null` | Selects an existing card for shared review, not a counter; checks expectedGeneration and increments generation on change; resets required approvals [ROOM-11]. While a decision is open only the side in turn may change it. Served as `api.proposals.select` (issue #6). `INVALID_STATE`, `STALE_REVISION` |
@@ -685,7 +685,7 @@ The room's chat is always there; the call is optional, like a Discord channel.
 1. The client calls `call.join({ roomId })` and gets `{ serverUrl, token, roomName, identity, language }`.
    - The room name is `coordination-<roomId>` and the identity is `user-<userId>`.
    - The token lasts 2 hours and carries participant attributes `{ lang, companyId }`. Approval sides are resolved separately per event. The observer monitor does not receive publish/approval rights.
-2. The client connects with the LiveKit JS client, publishes its microphone, and calls `rooms.setInCall({ roomId, inCall: true })`. Disconnect clears that user's room presence.
+2. The client connects with the LiveKit JS client, publishes its microphone, and calls `call.presence.setInCall({ roomId, inCall: true })`, repeating it every 30 s as a heartbeat. Disconnect clears that user's call presence; a member without a heartbeat for 75 s counts as having left.
 3. The translation worker (Python on DigitalOcean) uses Grok STT, protects values, translates with Claude, restores/checks them, then uses Cartesia for EN/ZH and Grok TTS for RU. It listens only to original human tracks and publishes:
    - `tr:<lang>:<identity>` — the translated voice of each speaker, one track per listener language;
    - `host:<lang>` — the Coordination Host's voice.
@@ -694,7 +694,7 @@ The room's chat is always there; the call is optional, like a Discord channel.
    - the `host:<myLang>` track;
    - the raw microphone of a speaker only when they speak the viewer's language.
 5. Captions are not read from LiveKit. The worker writes each phrase to Convex as a `voice` message with the original and translations, and the client shows it through `messages.list` [LANG-5].
-6. When the last participant leaves the call, the Coordination Host posts a room summary (`kind: "summary"`) and room members get a notification [ROOM-13]. Each linked incident retains its own selected revision and required approval form. Only `approvals.approve` records approval. Veto and conversational counters do not approve, and neither does speech or the summary.
+6. When the last operator leaves the call (disconnect, leaving the room, or no heartbeat for 75 s) and no operator returns within 15 s, the backend requests a `call_ended` Coordination Host run; an observer still listening does not keep the call open. From that run the Coordination Host posts a room summary (`kind: "summary"`) and room members get a notification [ROOM-13]. Each linked incident retains its own selected revision and required approval form. Only `approvals.approve` records approval. Veto and conversational counters do not approve, and neither does speech or the summary.
 
 Track names belong to the worker's implementation (Kostya). If they change, this section changes with them.
 
