@@ -32,6 +32,21 @@ const complete = (s: Test, extra: object = {}) => s.t.mutation(finish, { hostRun
 const published = (s: Test) => s.t.run(async ctx => (await ctx.db.query("messages").withIndex("by_room_created", q => q.eq("roomId", s.roomId)).collect()).filter(m => m.author.kind === "agent"));
 
 describe("checked Host publication", () => {
+  it("publishes a new UTC window from an actual operator statement before any card uses it", async () => {
+    const s = await setup();
+    const text = "Burn after 2026-10-24T20:17:00Z.";
+    const { messageId } = await as(s.t, "a").mutation(api.messages.send, { roomId: s.roomId, eventId: s.eventId, text });
+    const hostRunId = await s.t.mutation(request, { roomId: s.roomId, trigger: "final_message" });
+    const context = await s.t.query(contextRef, { roomId: s.roomId, trigger: "final_message" }) as HostContext;
+    expect(context.events.flatMap(event => event.candidates.map(card => card.burnTimeUtc))).not.toContain("2026-10-24T20:17:00Z");
+    await complete(s, { hostRunId, span: { ...s.span, inputVersion: context.inputVersion }, check: null,
+      output: { inputVersion: context.inputVersion, summaries: [], clarifications: [], requestedRevisions: [],
+        understood: [{ eventId: s.eventId, kind: "constraint", hard: true, text, sourceMessageId: messageId, correctsId: null }] } });
+    const [row] = await s.t.run(ctx => ctx.db.query("understood").collect());
+    expect(row).toMatchObject({ status: "active", hard: true, text, side: "A", hostRunId });
+    expect(await s.t.run(ctx => ctx.db.query("approvals").collect())).toEqual([]);
+  });
+
   it("atomically publishes summaries, clarifications and exact source audit references once", async () => {
     const s = await setup();
     await complete(s);

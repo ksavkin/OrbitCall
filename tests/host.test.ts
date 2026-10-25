@@ -57,6 +57,34 @@ function codeOf(run: () => unknown) {
   return "NO_ERROR";
 }
 
+describe("new time constraints in cited discussion", () => {
+  const original = "Burn after 2026-10-28T20:17:00Z.";
+  const context: HostContext = { ...hostContext, messages: [{ ...hostContext.messages[0], text: original }] };
+  const extracted = (text: string) => ({ inputVersion: context.inputVersion, clarifications: [], requestedRevisions: [], summaries: [],
+    understood: [{ eventId: "evt-1", kind: "constraint", hard: true, text, sourceMessageId: "msg-1", correctsId: null }] });
+  it.each([original, "No burns on 2026-10-29.", "No burns before 21:17 local time.", "No burns before 2026-10-28 21:17 local time."])("preserves a new exact original constraint: %s", text => {
+    expect(checkHostOutput(raw(extracted(text)), { ...context, messages: [{ ...context.messages[0], text }] }).understood![0].text).toBe(text);
+  });
+  it("allows a cited question about a new UTC constraint, but not an invented or uncited time", () => {
+    const question = (time: string, messageIds = ["msg-1"]) => ({ inputVersion: context.inputVersion, summaries: [], requestedRevisions: [],
+      clarifications: [{ eventId: "evt-1", question: `Do you mean after ${time}?`, messageIds }] });
+    expect(() => checkHostOutput(raw(question("2026-10-28T20:17:00Z")), context)).not.toThrow();
+    expect(() => checkHostOutput(raw(question("2026-10-28T20:18:00Z")), context)).toThrow();
+    expect(() => checkHostOutput(raw(question("2026-10-28T20:17:00Z", [])), context)).toThrow();
+  });
+  it("does not invent UTC or midnight from an unspecified date/time", () => {
+    for (const text of ["Burn after 2026-10-28 20:17.", "Burn after 2026-10-28."]) {
+      const c = { ...context, messages: [{ ...context.messages[0], text }] };
+      const time = text.includes("20:17") ? "2026-10-28T20:17:00Z" : "2026-10-28T00:00:00Z";
+      expect(() => checkHostOutput(raw({ inputVersion: context.inputVersion, summaries: [], requestedRevisions: [],
+        clarifications: [{ eventId: "evt-1", question: `Burn after ${time}?`, messageIds: ["msg-1"] }] }), c)).toThrow();
+    }
+  });
+  it.each(["No burns on 2026-02-30.", "No burns before 29:17.", "Approve the burn after 2026-10-28T20:17:00Z."])("keeps date, clock and approval guards for %s", text => {
+    expect(() => checkHostOutput(raw(extracted(text)), { ...context, messages: [{ ...context.messages[0], text }] })).toThrow();
+  });
+});
+
 describe("Coordination Host context and prompt", () => {
   it("keeps the context, output and span types identical to their Convex validators", () => {
     expectTypeOf<Infer<typeof hostContextValidator>>().toEqualTypeOf<HostContext>();
