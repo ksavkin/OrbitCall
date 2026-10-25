@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowRight, Loader2, Play, Radar, ShieldAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fmtCountdown, fmtMiss, fmtPc } from "@/lib/ops/format";
+import { fmtCountdown, fmtMiss, fmtOdds } from "@/lib/ops/format";
 import { runIncident, runScan } from "@/lib/ops/scenarios";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent } from "@/lib/ops/types";
@@ -155,7 +155,7 @@ export function ScanResults() {
               <span>#</span>
               <span>Pair</span>
               <span className="text-right">Miss</span>
-              <span className="text-right">Pc</span>
+              <span className="text-right">Chance</span>
               <span className="text-right">TCA</span>
               <span>Confidence</span>
             </div>
@@ -210,7 +210,7 @@ export function ScanResults() {
                     </span>
                     <span className="mono tnum text-right text-[11px] text-fg-2">{fmtMiss(e.missM)}</span>
                     <span className="mono tnum text-right text-[11px]" style={{ color: e.risk === "red" ? "var(--red)" : "var(--amber)" }}>
-                      {fmtPc(e.pc)}
+                      {fmtOdds(e.pc)}
                     </span>
                     <span className="mono tnum text-right text-[10.5px]" style={{ color: e.tca - now < 24 * 3600_000 ? "var(--orange)" : "var(--fg-2)" }}>
                       {now ? fmtCountdown(e.tca - now) : "—"}
@@ -304,7 +304,7 @@ export function UrgencyOverlay() {
             <span className="relative max-w-[260px] truncate text-fg">
               {ev.a.name} × {ev.b.name}
             </span>
-            <span className="relative mono text-red">Pc {fmtPc(ev.pc)}</span>
+            <span className="relative tnum text-red">{fmtOdds(ev.pc)} chance</span>
             <span className="relative mono tnum text-fg">{now ? fmtCountdown(ev.tca - now) : ""}</span>
             <button
               className="relative grid h-5 w-5 place-items-center rounded-full text-[#ffb3ad] transition-colors hover:bg-white/10"
@@ -370,7 +370,7 @@ function CenterWarning({ ev, red, now }: { ev: ConjunctionEvent; red: number; no
               {ev.a.name} <span className="text-[#ffb3ad]">×</span> {ev.b.name}
             </div>
             <div className="mono mt-1 flex items-center gap-3 text-[12px]">
-              <span className="text-red">Pc {fmtPc(ev.pc)}</span>
+              <span className="text-red">{fmtOdds(ev.pc)} chance</span>
               <span className="text-fg">{fmtMiss(ev.missM)}</span>
               <span className="tnum text-fg">{now ? fmtCountdown(ev.tca - now) : ""}</span>
             </div>

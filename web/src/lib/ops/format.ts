@@ -8,6 +8,21 @@ export function fmtPc(pc: number) {
   return `${m.toFixed(1)}e${e}`;
 }
 
+/** Probability as odds people can read: 3.1e-4 → "1 in 3,200" (two significant figures). */
+export function fmtOdds(pc: number) {
+  if (!(pc > 0)) return "—";
+  const n = 1 / pc;
+  const mag = 10 ** Math.max(Math.floor(Math.log10(n)) - 1, 0);
+  return `1 in ${(Math.round(n / mag) * mag).toLocaleString("en-US")}`;
+}
+
+/** Probability as a percentage: 3.1e-4 → "0.031%". */
+export function fmtChance(pc: number) {
+  if (!(pc > 0)) return "—";
+  const pct = pc * 100;
+  return `${pct.toPrecision(2).replace(/\.?0+$/, "")}%`;
+}
+
 export function fmtMiss(m: number) {
   if (m < 1000) return `${Math.round(m)} m`;
   return `${(m / 1000).toFixed(m < 10_000 ? 2 : 1)} km`;

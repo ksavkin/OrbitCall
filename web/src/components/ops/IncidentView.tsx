@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Loader2, Maximize2, Minimize2, ShieldAlert } from "lucide-react";
-import { fmtCountdown, fmtMiss, fmtPc, fmtWhen } from "@/lib/ops/format";
+import { fmtCountdown, fmtMiss, fmtChance, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { AGENTS, MODELS } from "@/lib/ops/roster";
 import { engine } from "@/lib/ops/engine";
 import { useOps } from "@/lib/ops/store";
@@ -174,7 +174,7 @@ function CaseColumn({ e }: { e: ConjunctionEvent }) {
       </p>
 
       <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5">
-        <Fact label="Probability of collision" value={fmtPc(e.pc)} tone={red ? "var(--red)" : "var(--amber)"} note={`${e.pcSource} · ${e.trend}`} />
+        <Fact label="Chance of collision" value={fmtOdds(e.pc)} tone={red ? "var(--red)" : "var(--amber)"} note={`${fmtChance(e.pc)} · ${e.pcSource} · ${e.trend}`} />
         <Fact label="Miss distance" value={fmtMiss(e.missM)} note={`±${fmtMiss(e.uncertaintyM)} between data sources`} />
         <Fact label="Relative speed" value={`${e.relVelKms.toFixed(1)} km/s`} note={cross ? `crossing at ${cross}°` : undefined} />
         <Fact label="Until closest approach" value={now ? fmtCountdown(e.tca - now).replace("T−", "") : "—"} note={red ? "inside the 72 h action window" : undefined} />

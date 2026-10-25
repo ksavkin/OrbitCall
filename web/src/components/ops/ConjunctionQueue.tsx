@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowDownRight, ArrowRight, ArrowUpRight, Check, CircleSlash, Clapperboard, DoorOpen, Loader2, Radar, ServerOff, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { fmtCountdown, fmtMiss, fmtPc, fmtWhen } from "@/lib/ops/format";
+import { fmtCountdown, fmtMiss, fmtChance, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { AGENTS, MODELS } from "@/lib/ops/roster";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent, Proposal } from "@/lib/ops/types";
@@ -261,7 +261,7 @@ function EventRow({ e, now }: { e: ConjunctionEvent; now: number }) {
           )}
           <span className="mono tnum text-fg-2">{fmtMiss(e.missM)}</span>
           <span className="mono tnum flex items-center gap-0.5" style={{ color: resolved ? "var(--muted)" : RISK_COLOR[e.risk] }}>
-            {fmtPc(e.pc)}
+            {fmtOdds(e.pc)}
             <TrendIcon size={10} />
           </span>
         </div>
@@ -291,7 +291,7 @@ function EventDetail({ e }: { e: ConjunctionEvent }) {
       {e.summary ? <SummaryCard lines={e.summary} /> : e.agentsWorking && <SummaryPending />}
       <div className="mt-2 grid grid-cols-2 overflow-hidden rounded-[9px] bg-white/[0.025] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.055)]">
         <Cell label="Miss distance" value={fmtMiss(e.missM)} hint={`±${fmtMiss(e.uncertaintyM)}`} />
-        <Cell label="Probability" value={fmtPc(e.pc)} hint={e.pcSource} border tone={RISK_COLOR[e.risk]} />
+        <Cell label="Chance of collision" value={fmtOdds(e.pc)} hint={`${fmtChance(e.pc)} · ${e.pcSource}`} border tone={RISK_COLOR[e.risk]} />
         <Cell label="Rel. velocity" value={`${e.relVelKms.toFixed(2)} km/s`} top />
         <Cell label="TCA" value={fmtWhen(e.tca)} top border />
       </div>

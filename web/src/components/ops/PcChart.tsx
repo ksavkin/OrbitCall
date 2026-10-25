@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { fmtPc } from "@/lib/ops/format";
+import { fmtChance, fmtOdds, fmtPc } from "@/lib/ops/format";
 import type { ConjunctionEvent } from "@/lib/ops/types";
 import { useNow } from "@/lib/useNow";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -11,14 +11,6 @@ import { Tooltip } from "@/components/ui/Tooltip";
 // is named, and the line turns red only where it is above that line.
 
 const ACTION = 1e-4;
-
-/** 3.1e-4 → "1 in 3,200": two significant figures, the way people say odds. */
-export function fmtOdds(pc: number) {
-  if (pc <= 0) return "—";
-  const n = 1 / pc;
-  const mag = 10 ** (Math.floor(Math.log10(n)) - 1);
-  return `1 in ${(Math.round(n / mag) * mag).toLocaleString("en-US")}`;
-}
 
 function story(e: ConjunctionEvent, now: number) {
   const h = e.pcHistory;
@@ -72,8 +64,8 @@ export function PcChart({ e }: { e: ConjunctionEvent }) {
   return (
     <div>
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[12px] font-semibold text-neutral-200">Collision probability</span>
-        <Tooltip label={`${fmtPc(last)} now · source ${e.pcSource}`}>
+        <span className="text-[12px] font-semibold text-neutral-200">Chance of collision</span>
+        <Tooltip label={`${fmtChance(last)} chance now · Pc ${fmtPc(last)} · ${e.pcSource}`}>
           <span className="tnum text-[12px] font-semibold" style={{ color: above ? "var(--red)" : "#d4d4d4" }}>
             {fmtOdds(last)}
           </span>

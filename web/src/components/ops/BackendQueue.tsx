@@ -8,7 +8,7 @@ import { agentSummaryRef } from "@/lib/backend/api";
 import { fmtAge, fmtObjectId, fmtStamp, pcMetric, pcSource, safeUrl, SOURCE_LABEL } from "@/lib/backend/format";
 import { QueryBoundary, briefError } from "@/lib/backend/QueryBoundary";
 import type { AgentSummary, Color, EventRow, Pc, SpaceObject } from "@/lib/backend/types";
-import { fmtCountdown, fmtMiss, fmtPc, fmtWhen } from "@/lib/ops/format";
+import { fmtCountdown, fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { AGENTS } from "@/lib/ops/roster";
 import { useOps } from "@/lib/ops/store";
 import { OWNER_FLAGS } from "@/lib/owners";
@@ -170,7 +170,7 @@ function PcInline({ pc, tone }: { pc: Pc; tone: string }) {
   const m = pcMetric(pc);
   return (
     <span className="mono tnum flex items-baseline gap-1" style={{ color: tone }} title={`${m.long} · ${pcSource(pc)}`}>
-      {fmtPc(pc.value)}
+      {fmtOdds(pc.value)}
       <span className="text-[8.5px] uppercase tracking-[0.08em] opacity-70">{m.short}</span>
     </span>
   );
@@ -274,7 +274,7 @@ function BackendDetail({ row }: { row: EventRow }) {
         <Stat label="Miss distance" value={missText(row)} />
         <Stat
           label="Probability"
-          value={hasPc(pc) ? fmtPc(pc.value) : "Pc unavailable"}
+          value={hasPc(pc) ? fmtOdds(pc.value) : "Chance unavailable"}
           hint={hasPc(pc) ? `${m.long}${pc.source === "socrates" ? "" : ` · ${pcSource(pc)}`}` : "No source supplied one"}
           tone={hasPc(pc) ? tone : "var(--muted)"}
           title={hasPc(pc) ? `${m.long} · ${pcSource(pc)} · epoch ${fmtStamp(pc.epochUtc)}` : undefined}
