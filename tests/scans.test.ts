@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFunctionReference as ref } from "convex/server";
 import { internal } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
 import { backend, registerSnapshot, catalogObject } from "./helpers";
 import { FIXTURE_NOW } from "../fixtures/events";
+import { isoUtc } from "../convex/lib/events";
 import { startScreen, getScreenJob } from "../convex/lib/orbitClient";
+import { connectTiger } from "../convex/lib/tiger";
 vi.mock("../convex/lib/orbitClient", async original => ({ ...await original<typeof import("../convex/lib/orbitClient")>(), startScreen: vi.fn(), getScreenJob: vi.fn() }));
-beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(FIXTURE_NOW); vi.resetAllMocks(); });
+// Tiger is never reached from these tests: a refused connection exercises the export failure path deterministically.
+vi.mock("../convex/lib/tiger", async original => ({ ...await original<typeof import("../convex/lib/tiger")>(), connectTiger: vi.fn() }));
+beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(FIXTURE_NOW); vi.resetAllMocks(); vi.mocked(connectTiger).mockRejectedValue(Object.assign(new Error("refused"),{code:"ECONNREFUSED"})); });
 afterEach(() => { vi.useRealTimers(); });
 const start = ref<"mutation">("scans:startMine"), get = ref<"query">("scans:getMine"), run = ref<"action">("scans:run");
 async function setup() {
@@ -207,4 +212,60 @@ it("preserves a matching closed-run encounter instead of adopting it into the ne
  expect(await as().query(get,{scanId})).toMatchObject({status:"completed",demoRunId,coverage:{reasons:[{reason:"publication_excluded_conflicting_encounters",count:1}]}});
  expect(await t.run(ctx=>ctx.db.get(eventId))).toEqual(before);
  expect(await t.run(ctx=>ctx.db.query("events").collect())).toHaveLength(2);
+});
+
+describe("scan history observations",()=>{
+ const exportsOf=(t:Awaited<ReturnType<typeof setup>>["t"])=>t.run(ctx=>ctx.db.query("observationExports").collect());
+ it("records one sourced missKm observation per published real encounter, and Tiger failure leaves the scan completed",async()=>{
+  const {t,as}=await setup();answers();
+  const {scanId}=await as().mutation(start,{requestId:"history"});await t.finishAllScheduledFunctions(vi.runAllTimers);
+  const scan=(await t.run(ctx=>ctx.db.get(scanId as Id<"scanRuns">)))!, [event]=await t.run(ctx=>ctx.db.query("events").collect());
+  expect(scan).toMatchObject({status:"completed"});
+  const rows=await exportsOf(t);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({eventId:event._id,demoRunId:null,source:"celestrak_gp",metric:"missKm",value:0.4,
+   evidenceVersion:"gp-20261024T2134Z",simulated:false,observedAtMs:scan.fromMs,exportState:"failed"});
+  expect(connectTiger).toHaveBeenCalled();
+ });
+ it("does not record again on a duplicate run or a replayed save with the spent lease",async()=>{
+  const {t,as}=await setup();answers();
+  const {scanId}=await as().mutation(start,{requestId:"dup"});await t.finishAllScheduledFunctions(vi.runAllTimers);
+  const before=await exportsOf(t);expect(before).toHaveLength(1);
+  await t.action(run,{scanId});await t.finishAllScheduledFunctions(vi.runAllTimers);
+  const job=await vi.mocked(getScreenJob).mock.results[0].value, leaseAt=(await t.run(ctx=>ctx.db.get(scanId as Id<"scanRuns">)))!.updatedAt;
+  await t.mutation(ref<"mutation">("scans:save"),{scanId,leaseAt,job});await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await exportsOf(t)).toHaveLength(1);
+  expect(await t.run(ctx=>ctx.db.system.query("_scheduled_functions").collect()).then(f=>f.filter(x=>x.name==="history:recordObservation"))).toHaveLength(1);
+ });
+ it("records nothing for a stale lease's completed result or a failed job",async()=>{
+  const {t,as}=await setup();answers();
+  const {scanId}=await as().mutation(start,{requestId:"fenced"});
+  const claim=ref<"mutation">("scans:claim"),save=ref<"mutation">("scans:save");
+  const first=await t.mutation(claim,{scanId});vi.setSystemTime(FIXTURE_NOW+31000);
+  const second=await t.mutation(claim,{scanId,recovery:true});
+  const r=(await t.run(ctx=>ctx.db.get(scanId as Id<"scanRuns">)))!;
+  await startScreen({scanId:String(scanId),snapshotId:r.snapshotId,primaryObjectIds:r.primaryObjectIds,fromUtc:isoUtc(r.fromMs),toUtc:isoUtc(r.toMs)});
+  const job=await getScreenJob(`screen-${scanId}`,{scanId:String(scanId),snapshotId:r.snapshotId});
+  await t.mutation(save,{scanId,leaseAt:first.leaseAt,job});
+  await t.mutation(save,{scanId,leaseAt:second.leaseAt,job:{jobId:`screen-${scanId}`,status:"failed",error:{code:"ERROR",message:"Screening failed."}}});
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await t.run(ctx=>ctx.db.get(scanId))).toMatchObject({status:"failed"});
+  expect(await t.run(ctx=>ctx.db.query("events").collect())).toHaveLength(0);
+  expect(await exportsOf(t)).toHaveLength(0);
+ });
+ it("records nothing for an encounter the scan matched instead of writing",async()=>{
+  const {t,as}=await setup();answers();
+  const snapshotId=await t.run(async ctx=>(await ctx.db.query("snapshots").first())!._id);
+  await t.mutation(internal.events.ingest,{snapshotId,simulated:false,objectA:catalogObject("100"),objectB:catalogObject("200"),tcaUtc:new Date(FIXTURE_NOW+3600000).toISOString(),missKm:0.7,relSpeedKmS:10,pcValue:0.00002});
+  await as().mutation(start,{requestId:"matched"});await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await as().query(get,{})).toMatchObject({status:"completed"});
+  expect(await exportsOf(t)).toHaveLength(0);
+ });
+ it("records simulated encounters under the scan's open demo run only",async()=>{
+  const {t,as,demoRunId}=await demoFleet({keepReal:true});simulatedAnswer();
+  await as().mutation(start,{requestId:"demo-history"});await t.finishAllScheduledFunctions(vi.runAllTimers);
+  const rows=await exportsOf(t);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({source:"simulated",simulated:true,demoRunId,metric:"missKm",value:0.4});
+ });
 });
