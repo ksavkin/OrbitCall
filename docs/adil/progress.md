@@ -15,6 +15,10 @@ The historical implementation notes below describe the simulator. Its Pc/time so
 
 Agent traces must identify the actual provider/model for each call, including the Gemini Host. Show provider results only after backend integration. A local simulator animation does not establish live sponsor use.
 
+## Decision, October 25: Orbit, Decision Center, Policy, Inbox
+
+Four tabs replace Orbit/Conjunctions/Rooms/Policy/Audit. Run Scan lives on Orbit (greyed with a hover when not signed in); results show the SOCRATES check with an explanation on hover; Run agents shows the agent graph and tool calls on Orbit; options that need a decision move the app to the Decision Center, which holds the case, the plan cards and the call (Voice and Text). Parties decide in turn (A, B, others), and only the deciding dispatcher's controls are active. Voice selects a card, a click approves. Audit log becomes Inbox with notifications. Policy shows realistic mock values for the demo accounts. Recorded in [user flow](../user-flow.md) "App navigation", [integration status](../integration-status.md) and [master roadmap](../master-roadmap.md) §2.
+
 ## Decision, October 25: the queue comes from our scan
 
 My Incidents shows only our own fleet-scan events and stays empty until Run Scan has run. SOCRATES is the reference each event is checked against: Matched in SOCRATES, Data differs, or Not in SOCRATES, with their TCA, miss and `max_prob` next to ours. The numerical screening is the orbital service (`POST /screen`), not an AI agent; agents analyze what the scan found. Run Scan is on Orbit and Conjunctions, visible but not runnable when signed out. Probability: "1 in N" first, the exact value next to it (two significant digits as a decimal from 0.0001 up, scientific below). Recorded in [integration status](../integration-status.md), [user flow](../user-flow.md) §3, [specification](../specification.md) `ReferenceCheck` and [master roadmap](../master-roadmap.md) §8. Backend: `convex/scans.ts` (Kostya, round 2). Frontend: queue under `web/src/components/queue/` (Adil, round 2).

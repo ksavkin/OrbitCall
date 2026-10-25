@@ -6,6 +6,21 @@ Accepted product decisions, October 24, 2026. This workflow follows the locked [
 
 The user confirmed: Dev on keeps the working TLE catalog and synthetic conjunction scenarios. Dev off is the real mode and requires backend OMM, with no silent TLE or simulation fallback. Until the OMM backend and frontend integration are ready, show an explicit unavailable/integration-pending state. This applies in both Git branches; `main` is not a runtime data mode. CelesTrak remains the source. OMM is an exchange format, not an automatic improvement in orbit accuracy. It supports larger object IDs and avoids legacy TLE format limits. See [CelesTrak format documentation](https://celestrak.org/NORAD/documentation/gp-data-formats.php).
 
+## App navigation and the decision flow (October 25)
+
+Decided by Adil on October 25, 2026. It replaces the separate Conjunctions and Rooms tabs. The app has four tabs: **Orbit**, **Decision Center**, **Policy** and **Inbox**.
+
+1. **Orbit** is the main screen: the globe, the catalog and, in the left column, My Fleet and the scan results. Run Scan is always visible. Without a provisioned sign-in it is greyed and says why on hover; it starts nothing.
+2. Run Scan lists the conjunctions our orbital service found for the fleet. Each row shows how it compares with SOCRATES (Matched, Data differs, Not in SOCRATES; spec `ReferenceCheck`). A hover explains what SOCRATES is: CelesTrak's published conjunction list, computed from older element sets on its own schedule, so it can lag our snapshot.
+3. **Run agents on this case** starts the agents. On Orbit, the agent graph shows their work on the right while the camera follows the case; tool calls sit under the graph. Agent calls stream slower and stay readable, with their latency.
+4. When the agents publish options that need a human decision, the app moves to the **Decision Center** for that case on its own.
+5. The Decision Center joins the case and its coordination channel: the case facts, up to four plan cards, the shared selection, and the call with a Voice and Text switch. The room is a channel of the case; the decision belongs to the event, not to the room.
+6. **Turns.** Parties decide in order: side A, then side B, then other involved operators. Everyone can discuss. When it is a party's turn to decide, only that dispatcher's Approve, Veto, voice and text are active; the others see who is deciding and wait. This keeps two or three sides from answering at once.
+7. **Voice selects, a click approves.** A dispatcher may say "option B"; the Decision Center then highlights that card and asks to confirm. Approval and veto always need the explicit button (spec §4.1: speech never approves).
+8. **Inbox** replaces Audit log: the shared audit record plus notifications such as "you were added to the coordination for CE-…".
+
+The full flow runs on the dev simulator (Dev switch, localhost only). In real mode Run Scan needs `scans.startMine` and Run agents needs a start-workflow mutation that publishes candidates and opens the channel (Kostya, round 2).
+
 ## 1. Responsibility and identity
 
 An authenticated dispatcher monitors an assigned fleet. A company owns or operates spacecraft. A server-managed assignment grants a particular user responsibility for particular objects within that company. A user's country, display flag and language do not determine spacecraft ownership, fleet membership or permissions.
