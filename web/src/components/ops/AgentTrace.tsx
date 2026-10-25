@@ -139,7 +139,37 @@ export function CallFeed({ className = "", eventId }: { className?: string; even
   );
 }
 
-function CallCard({ s, now, open }: { s: Span; now: number; open: boolean }) {
+/**
+ * Streamed text that never changes the box height: the full text reserves the space
+ * invisibly and the visible part is drawn on top of it.
+ */
+export function StreamText({ full, shown, running, className = "" }: { full: string; shown: string; running: boolean; className?: string }) {
+  return (
+    <p className={`relative ${className}`}>
+      <span aria-hidden className="invisible">
+        {full}
+      </span>
+      <span className={`absolute inset-0 ${running ? "caret" : ""}`}>{shown}</span>
+    </p>
+  );
+}
+
+/** Stay open a moment after losing "newest", so the new card slides in before the old one folds. */
+function useLingeringOpen(open: boolean) {
+  const [shown, setShown] = useState(open);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- opening is immediate, closing waits for the incoming card
+    if (open) setShown(true);
+    else {
+      const t = setTimeout(() => setShown(false), 420);
+      return () => clearTimeout(t);
+    }
+  }, [open]);
+  return shown;
+}
+
+function CallCard({ s, now, open: wantOpen }: { s: Span; now: number; open: boolean }) {
+  const open = useLingeringOpen(wantOpen);
   const agent = AGENTS[s.agent];
   const model = s.model ? MODELS[s.model] : null;
   const running = s.status === "running";
@@ -225,7 +255,7 @@ function CallCard({ s, now, open }: { s: Span; now: number; open: boolean }) {
                     Thinking · summarized
                     {running && <span className="h-1 w-1 animate-pulse rounded-full bg-blue" />}
                   </div>
-                  <p className={`text-[11px] leading-[1.55] text-fg-2 ${running ? "caret" : ""}`}>{shown}</p>
+                  <StreamText full={text} shown={shown} running={running} className="text-[11px] leading-[1.55] text-fg-2" />
                 </>
               ) : (
                 s.output !== undefined && (
