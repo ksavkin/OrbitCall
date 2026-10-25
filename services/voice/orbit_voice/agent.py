@@ -4,7 +4,8 @@ Joins `coordination-<roomId>` by explicit dispatch as identity `translator`; one
 room that already has a translator is rejected, lesson R5). Subscribes only to human microphones (`user-*`, lesson
 R1), runs one Grok STT session per speaker track, and for every utterance protects values, translates into the
 other languages present, posts the phrase to Convex and voices it on `tr:<lang>:<speaker>` in the speaker's voice
-gender (`voice` attribute, `TTS_DEFAULT_VOICE` otherwise).
+gender (`voice` attribute, `TTS_DEFAULT_VOICE` otherwise). Host speech from Convex arrives as a server data packet and
+is voiced on `host:<lang>` by a second connection with identity `host` (host.py); its tracks are never subscribed.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from livekit.agents import AutoSubscribe, JobContext, JobRequest, WorkerOptions,
 from .config import GENDERS, LANGS, Config
 from .convex import ConvexSink
 from .health import report
+from .host import HostPublisher, HostSpeech
 from .pipeline import Pipeline, split_long
 from .player import TrackPlayer
 from .scripts import plausible
@@ -49,6 +51,12 @@ def is_human_mic(publication: rtc.TrackPublication, participant: rtc.Participant
 def speaker_lang(participant: rtc.Participant) -> str | None:
     lang = participant.attributes.get("lang", "")
     return lang if lang in LANGS else None
+
+
+def listener_langs(participants) -> list[str]:
+    """The supported `lang` attributes of the human participants (`user-*`), sorted; never the host or translator."""
+    langs = {speaker_lang(p) for p in participants if p.identity.startswith(HUMAN_PREFIX)}
+    return sorted(lang for lang in langs if lang)
 
 
 def speaker_voice(participant: rtc.Participant, default: str) -> str:
@@ -179,10 +187,15 @@ class RoomTranslator:
         self.tts = TTS(cfg)
         self.sink = ConvexSink(cfg.convex_site_url, cfg.call_service_token)
         self.pipeline = Pipeline(self.translator, self.tts, self.sink, self.play)
+        self.host_voice = HostPublisher(cfg, self.room.name)
+        self.host = HostSpeech(self.room_id, self.translator, self.tts, self.host_voice.play, self.listener_langs,
+                               cfg.tts_default_voice)
+
+    def listener_langs(self) -> list[str]:
+        return listener_langs(self.room.remote_participants.values())
 
     def targets(self, src: str) -> list[str]:
-        langs = {speaker_lang(p) for p in self.room.remote_participants.values() if p.identity.startswith(HUMAN_PREFIX)}
-        return sorted(lang for lang in langs if lang and lang != src)
+        return [lang for lang in self.listener_langs() if lang != src]
 
     async def play(self, lang: str, identity: str, chunks: AsyncIterator[bytes]) -> asyncio.Future:
         """Enqueues on `tr:<lang>:<speaker>`; a player is registered only after its track was published."""
@@ -236,6 +249,11 @@ class RoomTranslator:
 
     def on_gone(self, participant: rtc.Participant) -> None:
         asyncio.create_task(self._leave(participant.identity))
+        humans = [p for p in self.room.remote_participants.values()
+                  if p.identity.startswith(HUMAN_PREFIX) and p.identity != participant.identity]
+        if participant.identity.startswith(HUMAN_PREFIX) and not humans:
+            # a lingering `host` would keep the empty room open; the generation guards a line that reconnects meanwhile
+            asyncio.create_task(self.host_voice.idle(self.host_voice.generation))
 
     def on_unsubscribed(self, track: rtc.Track, publication: rtc.TrackPublication, participant: rtc.Participant) -> None:
         self.on_unpublished(publication, participant)
@@ -259,11 +277,14 @@ class RoomTranslator:
         r.on("track_unsubscribed", self.on_unsubscribed)
         r.on("track_muted", self.on_muted)
         r.on("participant_disconnected", self.on_gone)
+        r.on("data_received", self.host.on_data)
         for p in r.remote_participants.values():
             for pub in p.track_publications.values():
                 self.on_published(pub, p)  # type: ignore[arg-type]
 
     async def close(self) -> None:
+        await self.host_voice.close()  # releases queued host lines with an error (never a hang)
+        await self.host.drain()
         for identity in list(self.speakers):
             await self._leave(identity)
         for pl in list(self.players.values()):
