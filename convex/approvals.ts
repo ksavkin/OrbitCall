@@ -1,13 +1,13 @@
 import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireParty, requireReader } from "./lib/operatorAccess";
 import { advanceSelection, allApproved, assignmentVersionOf, classifyIfUnset, countingApprovals, decisionInputs, turnOf } from "./lib/approvals";
 import { isResolved } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
 import { workflow } from "./lib/validators";
-import { closeRoomIfResolved } from "./rooms";
+import { closeRoomIfResolved, notify } from "./rooms";
 
 // Explicit human approval and veto of the selected proposal revision, per event (spec §3.4, §4.1; ROOM-7, ROOM-11,
 // ROOM-14; user-flow "App navigation and the decision flow"). Nothing moves without a human: a row is written only
@@ -56,6 +56,51 @@ async function requireTurn(ctx: MutationCtx, d: Awaited<ReturnType<typeof checkD
   if (turn !== d.side) throw error("INVALID_STATE", turn ? `It is side ${turn}'s turn to decide.` : "Every required side has approved.");
 }
 
+type Side = "A" | "B";
+
+/**
+ * The operators who may act for `sides` of the event now: the same rule as requireParty (the side object's owner
+ * company, an active fleet assignment, the operator role). A side without an owner (debris) has nobody. The actor is
+ * left out: a notice tells the others what someone did.
+ */
+export async function sideOperators(ctx: MutationCtx, event: Doc<"events">, sides: Side[], actor: Id<"users">) {
+  const users = new Map<Id<"users">, Doc<"users">>();
+  for (const s of new Set(sides)) {
+    const object = await ctx.db.get(s === "A" ? event.objectAId : event.objectBId);
+    if (!object) continue;
+    const owner = await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", object.objectId)).unique();
+    if (!owner) continue;
+    for (const a of await ctx.db.query("fleetAssignments").withIndex("by_object", q => q.eq("objectId", object.objectId)).collect()) {
+      if (!a.active || a.userId === actor || users.has(a.userId)) continue;
+      const user = await ctx.db.get(a.userId);
+      if (user?.role === "operator" && user.companyId === owner.companyId) users.set(user._id, user);
+    }
+  }
+  return [...users.values()];
+}
+
+/**
+ * Leaves one inbox notice (rooms.notify, the round 1.5 row) for the operators of `sides`. One string per person per
+ * mutation, because a notice replaces the previous one. Notices name the card, its revision and sides only: never a
+ * veto reason, a policy value or advocate text (ROOM-3, ROOM-15).
+ */
+export async function notifySides(ctx: MutationCtx, event: Doc<"events">, sides: Side[], actor: Id<"users">, summary: string) {
+  for (const user of await sideOperators(ctx, event, sides, actor)) await notify(ctx, user._id, event, summary);
+}
+
+/**
+ * Writes the same new summary onto the actor's existing inbox row and leaves it read. A person who has no row yet
+ * does not gain one: the row is created only when someone else notifies them. One row per person per event.
+ */
+export async function noteActor(ctx: MutationCtx, event: Doc<"events">, actor: Id<"users">, summary: string) {
+  const existing = await ctx.db.query("inbox").withIndex("by_user_event", q => q.eq("userId", actor).eq("eventId", event._id)).unique();
+  if (!existing) return;
+  await ctx.db.patch(existing._id, { lastUpdateSummary: summary, lastUpdateAt: Date.now(), unread: false });
+}
+
+const planName = async (ctx: MutationCtx, proposalId: Id<"proposals">, revision: number) =>
+  `${(await ctx.db.get(proposalId))?.label ?? "The plan"} revision ${revision}`;
+
 const approveResult = v.object({ allRequiredApproved: v.boolean(), requiredApprovalSides: v.array(side) });
 
 export const approve = mutation({
@@ -64,8 +109,9 @@ export const approve = mutation({
   handler: async (ctx, args) => {
     const d = await checkDecision(ctx, args);
     let counted = await countingApprovals(ctx, d.event, d.selection);
-    // Approving the same tick again is idempotent, even after the turn has moved on.
-    if (!counted.has(d.side)) {
+    // Approving the same tick again is idempotent, even after the turn has moved on; it leaves no notice either.
+    const inserted = !counted.has(d.side);
+    if (inserted) {
       await requireTurn(ctx, d);
       await ctx.db.insert("approvals", {
         eventId: d.event._id, side: d.side, status: "approved", userId: d.user._id, companyId: d.user.companyId,
@@ -80,6 +126,25 @@ export const approve = mutation({
       // spec §4.1 step 5; the room closes on consensus in the same mutation (rooms.closeRoomIfResolved).
       await ctx.db.patch(d.event._id, { status: "approved", situation: undefined });
       await closeRoomIfResolved(ctx, d.event._id);
+    }
+    if (inserted) {
+      const plan = await planName(ctx, args.proposalId, args.revision);
+      const required = d.event.requiredApprovalSides!;
+      const next = turnOf(d.event, counted);
+      // Consensus: every required side hears that the plan is agreed. Otherwise the approver's side hears that it
+      // is waiting, and the side now in turn hears that the decision is theirs. The actor's existing row gets the
+      // same summary as their side and stays read; a missing row is not created.
+      if (all) {
+        const summary = required.length > 1
+          ? `Both sides approved ${plan}. The plan is agreed.` : `Side ${d.side} approved ${plan}. The plan is agreed.`;
+        await notifySides(ctx, d.event, required, d.user._id, summary);
+        await noteActor(ctx, d.event, d.user._id, summary);
+      } else if (next) {
+        const waiting = `Side ${d.side} approved ${plan}. Waiting for side ${next}.`;
+        await notifySides(ctx, d.event, [d.side], d.user._id, waiting);
+        await noteActor(ctx, d.event, d.user._id, waiting);
+        await notifySides(ctx, d.event, [next], d.user._id, `Side ${d.side} approved ${plan}. It is your turn to decide.`);
+      }
     }
     return { allRequiredApproved: all, requiredApprovalSides: d.event.requiredApprovalSides! };
   },
@@ -103,6 +168,11 @@ export const veto = mutation({
       demoRunId: d.event.demoRunId ?? null, current: false, at: Date.now(),
     });
     await ctx.db.patch(d.event._id, { status: "agents", situation: undefined });
+    // The reason stays in the approval row: it is free text and may echo private policy.
+    const plan = await planName(ctx, args.proposalId, args.revision);
+    const summary = `Side ${d.side} vetoed ${plan}. Approvals were reset and the incident is back with the agents.`;
+    await notifySides(ctx, d.event, d.event.requiredApprovalSides!, d.user._id, summary);
+    await noteActor(ctx, d.event, d.user._id, summary);
     return null;
   },
 });
