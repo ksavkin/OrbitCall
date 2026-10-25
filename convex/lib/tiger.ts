@@ -31,7 +31,12 @@ export interface TigerObservation {
   evidenceVersion: string;
   simulated: boolean;
 }
-export interface TigerSeries { real: TigerObservation[]; simulated: TigerObservation[] }
+export interface TigerSeries {
+  real: TigerObservation[];
+  simulated: TigerObservation[];
+  // True when that series had more points than the limit; the chart should say so rather than show a complete line.
+  truncated: { real: boolean; simulated: boolean };
+}
 export interface TigerWriteResult { written: number; skipped: number }
 export interface SqlResult { rows: unknown[]; rowCount: number | null }
 
@@ -47,12 +52,18 @@ const singleLine = (value: unknown, max: number): value is string =>
 const METRIC = /^[a-z][a-zA-Z0-9_]{0,63}$/;
 const isSource = (value: unknown): value is TigerSource => typeof value === "string" && (TIGER_SOURCES as readonly string[]).includes(value);
 
-function utc(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) || !Number.isFinite(Date.parse(value))) return false;
+// One spelling per instant: whole seconds end in "Z", otherwise exactly three fractional digits. Postgres stores
+// microseconds and pg returns milliseconds, so more than three digits would be lost silently and is rejected.
+// The key and the stored time are both built from this form, so a time read back matches the key it was written with.
+export function canonicalUtc(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) || !Number.isFinite(Date.parse(value))) return null;
   // Date.parse normalizes impossible dates such as February 30; reject those too.
-  return new Date(value).toISOString().slice(0, 19) === value.slice(0, 19);
+  if (new Date(value).toISOString().slice(0, 19) !== value.slice(0, 19)) return null;
+  return new Date(value).toISOString().replace(/\.000Z$/, "Z");
 }
+// Key parts are joined with "|", so no part may contain it; otherwise two different observations could share a key.
+const keyPart = (value: unknown, max: number): value is string => singleLine(value, max) && !value.includes("|");
 
 // The exact object handed to pg.Client. The URL is parsed here and never passed through, because pg applies a
 // connection string's own options (sslmode, host, statement_timeout, ...) on top of explicit settings.
@@ -142,8 +153,23 @@ export async function withTiger<T>(work: (db: TigerSql) => Promise<T>, connect: 
   }
 }
 
-// Idempotent on every call. The primary key includes the partition column, as a hypertable requires.
+// Idempotent on every call. The primary key includes the partition column, as a hypertable requires. Concurrent
+// first exports would race on CREATE TABLE IF NOT EXISTS (Postgres raises 23505 or 42P07), so the setup runs in one
+// transaction under an advisory lock and only one caller creates while the others wait and find the table.
+export const SETUP_LOCK_KEY = 684_372_001;
 export async function ensureObservationTable(db: TigerSql): Promise<void> {
+  await db.sql("BEGIN");
+  try {
+    await db.sql("SELECT pg_advisory_xact_lock($1)", [SETUP_LOCK_KEY]);
+    await createObservationTable(db);
+    await db.sql("COMMIT");
+  } catch (error) {
+    await db.sql("ROLLBACK").catch(() => undefined);
+    throw error;
+  }
+}
+
+async function createObservationTable(db: TigerSql): Promise<void> {
   await db.sql(`CREATE TABLE IF NOT EXISTS ${OBSERVATION_TABLE} (
     observation_key text NOT NULL,
     event_id text NOT NULL,
@@ -161,28 +187,38 @@ export async function ensureObservationTable(db: TigerSql): Promise<void> {
   await db.sql(`CREATE INDEX IF NOT EXISTS ${OBSERVATION_TABLE}_event_idx ON ${OBSERVATION_TABLE} (event_id, observed_at)`);
 }
 
-// A deterministic key for one observation. It includes the observation time, so it can be the dedupe key
-// in Convex and the conflict target in Tiger at the same time.
-export function observationKey(input: Pick<TigerObservation, "eventId" | "source" | "metric" | "evidenceVersion" | "observedAt">): string {
-  const key = [input.eventId, input.source, input.metric, input.evidenceVersion, input.observedAt].join("|");
-  validateObservation({ ...input, observationKey: key, runId: null, value: null, simulated: input.source === "simulated" });
-  return key;
+type KeyInput = Pick<TigerObservation, "eventId" | "runId" | "source" | "metric" | "evidenceVersion" | "observedAt">;
+
+// The only accepted key for an observation: event, demo run, source, metric, evidence version and canonical time.
+// It is the dedupe key in Convex and, with the time, the conflict target in Tiger, so every producer must build
+// it here; validateObservation rejects any other key. A different demo run is a different observation.
+export function observationKey(input: KeyInput): string {
+  const parts = checkKeyInput(input);
+  return [parts.eventId, parts.runId ?? "", parts.source, parts.metric, parts.evidenceVersion, parts.observedAt].join("|");
 }
 
-export function validateObservation(row: unknown): TigerObservation {
-  if (!isRecord(row)) throw invalid("An observation must be an object.");
-  const { observationKey, eventId, runId, observedAt, source, metric, value, evidenceVersion, simulated } = row;
-  if (!singleLine(observationKey, 512)) throw invalid("An observation needs a single-line observation key.");
-  if (!singleLine(eventId, 128)) throw invalid("An observation needs its event ID.");
-  if (runId !== null && !singleLine(runId, 128)) throw invalid("A demo run ID must be null or a single-line value.");
-  if (!utc(observedAt)) throw invalid("Observation times must be UTC ISO strings.");
+function checkKeyInput(input: unknown): KeyInput {
+  if (!isRecord(input)) throw invalid("An observation must be an object.");
+  const { eventId, runId, observedAt, source, metric, evidenceVersion } = input;
+  if (!keyPart(eventId, 128)) throw invalid("An observation needs its event ID, without \"|\".");
+  if (runId !== null && !keyPart(runId, 128)) throw invalid("A demo run ID must be null or a single-line value without \"|\".");
+  const canonical = canonicalUtc(observedAt);
+  if (canonical === null) throw invalid("Observation times must be UTC ISO strings with at most millisecond precision.");
   if (!isSource(source)) throw invalid("An observation needs a known source name.");
   if (typeof metric !== "string" || !METRIC.test(metric)) throw invalid("An observation metric must be a short identifier.");
+  if (!keyPart(evidenceVersion, 128)) throw invalid("An observation needs its evidence version, without \"|\".");
+  return { eventId, runId, observedAt: canonical, source, metric, evidenceVersion };
+}
+
+// Returns the row with its time in canonical form. The key must be the one observationKey() builds for the row.
+export function validateObservation(row: unknown): TigerObservation {
+  const parts = checkKeyInput(row);
+  const { observationKey: key, value, simulated } = row as Record<string, unknown>;
+  if (key !== observationKey(parts)) throw invalid("An observation key must be built by observationKey() from the row's own fields.");
   if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) throw invalid("An observation value must be null or a finite number.");
-  if (!singleLine(evidenceVersion, 128)) throw invalid("An observation needs its evidence version.");
   if (typeof simulated !== "boolean") throw invalid("An observation must say whether it is simulated.");
-  if (source === "simulated" && !simulated) throw invalid("Simulated evidence must be labeled simulated.");
-  return { observationKey, eventId, runId, observedAt, source, metric, value, evidenceVersion, simulated };
+  if (parts.source === "simulated" && !simulated) throw invalid("Simulated evidence must be labeled simulated.");
+  return { observationKey: key, ...parts, value, simulated };
 }
 
 const COLUMNS = ["observation_key", "event_id", "run_id", "observed_at", "source", "metric", "value", "evidence_version", "simulated"] as const;
@@ -203,18 +239,22 @@ export async function writeObservations(db: TigerSql, rows: readonly unknown[]):
   const text = `INSERT INTO ${OBSERVATION_TABLE} (${COLUMNS.join(", ")}) VALUES ${tuples.join(", ")} ` +
     "ON CONFLICT (observation_key, observed_at) DO NOTHING";
   const result = await db.sql(text, checked.flatMap(rowValues));
-  const written = result.rowCount ?? 0;
-  if (!Number.isInteger(written) || written < 0 || written > checked.length) {
+  // An INSERT always reports its count; null would hide a write (or a driver fault) as "all skipped".
+  const written = result.rowCount;
+  if (written === null || !Number.isInteger(written) || written < 0 || written > checked.length) {
     throw new AnalystError("HISTORY_INVALID_RESPONSE", "The history database returned an unexpected write result.");
   }
   return { written, skipped: checked.length - written };
 }
 
+const NUMERIC_TEXT = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 function toObservation(row: unknown): TigerObservation {
   if (!isRecord(row)) throw new AnalystError("HISTORY_INVALID_RESPONSE", "The history database returned an unexpected row.");
-  // Domain timestamps are UTC ISO strings; a whole-second time comes back without a fractional part.
-  const observedAt = row.observed_at instanceof Date ? row.observed_at.toISOString().replace(/\.000Z$/, "Z") : row.observed_at;
-  const value = row.value === null || row.value === undefined ? null : typeof row.value === "string" ? Number(row.value) : row.value;
+  // pg returns timestamptz as a Date; canonicalUtc() gives it the same spelling the key was built with.
+  const observedAt = row.observed_at instanceof Date ? row.observed_at.toISOString() : row.observed_at;
+  // float8 comes back as a number. Numeric text is accepted; anything else (including "") fails validation below.
+  const value = row.value === null || row.value === undefined ? null
+    : typeof row.value === "string" && NUMERIC_TEXT.test(row.value) ? Number(row.value) : row.value;
   try {
     return validateObservation({
       observationKey: row.observation_key, eventId: row.event_id, runId: row.run_id ?? null, observedAt,
@@ -225,13 +265,22 @@ function toObservation(row: unknown): TigerObservation {
   }
 }
 
-// Observations for one event, oldest first. Real and simulated points come back as separate series and a
-// missing value stays null. This is history only: no forecast, no interpolation.
-export async function readSeries(
-  db: TigerSql, input: { eventId: string; metric?: string; limit?: number },
-): Promise<TigerSeries> {
-  if (!singleLine(input.eventId, 128)) throw invalid("A series needs its event ID.");
-  if (input.metric !== undefined && !METRIC.test(input.metric)) throw invalid("A series metric must be a short identifier.");
+export interface SeriesQuery {
+  eventId: string;
+  metric?: string;
+  // undefined: every run; null: real observations outside any demo run; a string: that demo run only.
+  runId?: string | null;
+  limit?: number;
+}
+
+// Observations for one event, oldest first. Real and simulated points come back as separate series, each
+// holding its own newest `limit` points, so a flood of simulated rows cannot push the real series out. A
+// series that had more points than the limit is marked truncated. Missing values stay null. This is history
+// only: no forecast, no interpolation.
+export async function readSeries(db: TigerSql, input: SeriesQuery): Promise<TigerSeries> {
+  if (!isRecord(input) || !singleLine(input.eventId, 128)) throw invalid("A series needs its event ID.");
+  if (input.metric !== undefined && (typeof input.metric !== "string" || !METRIC.test(input.metric))) throw invalid("A series metric must be a short identifier.");
+  if (input.runId !== undefined && input.runId !== null && !keyPart(input.runId, 128)) throw invalid("A series run ID must be null or a single-line value.");
   const limit = input.limit ?? DEFAULT_SERIES_POINTS;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_SERIES_POINTS) throw invalid(`A series limit must be an integer from 1 to ${MAX_SERIES_POINTS}.`);
   const values: unknown[] = [input.eventId];
@@ -240,13 +289,29 @@ export async function readSeries(
     values.push(input.metric);
     where += ` AND metric = $${values.length}`;
   }
-  values.push(limit);
-  const text = `SELECT ${COLUMNS.join(", ")} FROM ${OBSERVATION_TABLE} ${where} ` +
-    `ORDER BY observed_at ASC, source ASC, metric ASC LIMIT $${values.length}`;
+  if (input.runId === null) where += " AND run_id IS NULL";
+  else if (input.runId !== undefined) {
+    values.push(input.runId);
+    where += ` AND run_id = $${values.length}`;
+  }
+  // One row past the limit per series tells us whether the series was cut.
+  values.push(limit + 1);
+  const columns = COLUMNS.join(", ");
+  const order = "observed_at DESC, source DESC, metric DESC, observation_key DESC";
+  const text = `SELECT ${columns} FROM (SELECT ${columns}, row_number() OVER (PARTITION BY simulated ORDER BY ${order}) AS newest ` +
+    `FROM ${OBSERVATION_TABLE} ${where}) AS ranked WHERE newest <= $${values.length} ` +
+    "ORDER BY observed_at ASC, source ASC, metric ASC, observation_key ASC";
   const result = await db.sql(text, values);
   if (!Array.isArray(result.rows)) throw new AnalystError("HISTORY_INVALID_RESPONSE", "The history database returned an unexpected result.");
   const points = result.rows.map(toObservation);
-  return { real: points.filter(point => !point.simulated), simulated: points.filter(point => point.simulated) };
+  const series = (simulated: boolean) => {
+    const matching = points.filter(point => point.simulated === simulated);
+    // Oldest first, so the extra row (if any) is the oldest one and is dropped.
+    return { points: matching.length > limit ? matching.slice(matching.length - limit) : matching, truncated: matching.length > limit };
+  };
+  const real = series(false);
+  const simulated = series(true);
+  return { real: real.points, simulated: simulated.points, truncated: { real: real.truncated, simulated: simulated.truncated } };
 }
 
 // pg errors carry a SQLSTATE in `code`; connection errors carry a Node errno code. Their messages can name
@@ -263,6 +328,7 @@ function toTigerError(error: unknown): AnalystError {
   if (code === "42883" && /create_hypertable/.test(message)) return new AnalystError("HISTORY_QUERY_REJECTED", "The history database does not provide TimescaleDB.");
   if (/^(42|22|23|0A)[0-9A-Z]{3}$/.test(code)) return new AnalystError("HISTORY_QUERY_REJECTED", `The history database rejected the statement (SQLSTATE ${code}).`);
   if (code === "53300") return new AnalystError("RATE_LIMITED", "The history database has no free connections. Retry later.");
+  if (code === "57014") return new AnalystError("UPSTREAM_UNAVAILABLE", "The history database statement timed out. Retry later.");
   return new AnalystError("UPSTREAM_UNAVAILABLE", "The history database could not complete this request. Retry later.");
 }
 
