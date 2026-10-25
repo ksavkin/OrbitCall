@@ -5,16 +5,14 @@ with a service token; the browser never does. It computes candidate maneuvers, s
 catalog, re-screens a planned maneuver, checks maneuvers against element sets, classifies objects
 (kind / maneuverability), measures validation against SOCRATES, and builds the demo satellite.
 
-The deal module works without it for simulated events (demo provider) and refuses to invent numbers for real events
-(`UPSTREAM_UNAVAILABLE`).
+Without it Convex publishes no computed candidates and reports `UPSTREAM_UNAVAILABLE`; it never invents numbers.
 
-Code: [`orbit-service/`](orbit-service/). HTTP contract (v2.1 plus the [v2.2] and [v2.3] additions): [`orbit-service/docs/contract.md`](orbit-service/docs/contract.md).
-Why each choice (O1–O34): [`orbit-service/docs/decisions.md`](orbit-service/docs/decisions.md).
+Code: this folder, `services/orbit/`. HTTP contract (v2.1 plus the [v2.2] and [v2.3] additions): [`docs/contract.md`](docs/contract.md).
+Why each choice (O1–O34): [`docs/decisions.md`](docs/decisions.md).
 Owner: the numerical-service owner (roadmap §15 work areas).
 
 ## Where it goes
-`services/orbit/` in the OrbitCall repo (roadmap §12 repository layout): copy the content of `orbit-service/` there as
-is. Deployment (roadmap §12 deployment map): a Python container on the DigitalOcean Droplet, behind Caddy (HTTPS,
+It lives in `services/orbit/` of the OrbitCall repo (roadmap §12 repository layout). Deployment (roadmap §12 deployment map): a Python container on the DigitalOcean Droplet, behind Caddy (HTTPS,
 explicit route), with a **persistent volume** for the data folder — the team's pinned snapshots, the job records and
 the simulated satellites. Convex reaches it at its HTTPS URL.
 
@@ -62,14 +60,14 @@ one catalog, and a job that names a snapshotId is not refused with 409 `SNAPSHOT
 ## Layout
 | Path | What |
 |---|---|
-| `orbit-service/src/orbit/` | FastAPI app (`app.py`), jobs (`jobs.py`), the physics (`candidates.py`, `rescreen.py`, `screen.py`, `verify.py`, `validation.py`, `objects.py`, `simulate.py`, `impulse.py`, `track.py`, `conjunction.py`, `catalog.py`) |
-| `orbit-service/src/tests/` | pytest suite (92 tests), reads the data folder at `../data` (`/service/data` in the image) |
-| `orbit-service/src/tools/` | the measurements behind decisions O3 and O5, the replay builder, `run_validation.py` |
-| `orbit-service/data/omm/<fetch>/` | the service's own CelesTrak GP **OMM** fetch (six groups, 19,473 objects, fetched 2026-10-24T22:52:29Z, manifest with sha256 checked at load): an alternative used only with an explicit `ORBIT_SNAPSHOT_DIR`, and read by the tests. Real mode uses the team's snapshot |
-| `orbit-service/data/replay/` | NASA's public ISS ephemeris (OEM, sha256 in the meta file) and the **simulated** reboost replay built from it, labeled simulated |
-| `orbit-service/data/validation/` | the cached `/validation` result (rebuilt by `tools/run_validation.py`, ~12 min) |
-| `orbit-service/setup-data.sh` | builds the data folder: the OrbitCall repo's snapshot files plus the files above |
-| `orbit-service/Dockerfile` | python 3.12-slim, pinned requirements, code only; the data folder is the volume |
+| `src/orbit/` | FastAPI app (`app.py`), jobs (`jobs.py`), the physics (`candidates.py`, `rescreen.py`, `screen.py`, `verify.py`, `validation.py`, `objects.py`, `simulate.py`, `impulse.py`, `track.py`, `conjunction.py`, `catalog.py`) |
+| `src/tests/` | pytest suite (93 tests; 2 skip without the service's own OMM fetch), reads the data folder at `../data` (`/service/data` in the image) |
+| `src/tools/` | the measurements behind decisions O3 and O5, the replay builder, `run_validation.py` |
+| `data/omm/<fetch>/` | the service's own CelesTrak GP **OMM** fetch (six groups, 19,473 objects, fetched 2026-10-24T22:52:29Z, manifest with sha256 checked at load): an alternative used only with an explicit `ORBIT_SNAPSHOT_DIR`, and read by two tests. **Not in git** (~8 MB): unpack it from the delivery archive `orbitcall-orbit-service-20261024-1831.zip` if needed. Real mode uses the team's snapshot |
+| `data/replay/` | NASA's public ISS ephemeris (OEM, sha256 in the meta file) and the **simulated** reboost replay built from it, labeled simulated |
+| `data/validation/` | the cached `/validation` result (rebuilt by `tools/run_validation.py`, ~12 min) |
+| `setup-data.sh` | builds the data folder: the OrbitCall repo's snapshot files plus the files above |
+| `Dockerfile` | python 3.12-slim, pinned requirements, code only; the data folder is the volume |
 
 ## Data folder (`ORBIT_DATA`, the persistent volume)
 | Path | Source |
@@ -82,7 +80,7 @@ one catalog, and a job that names a snapshotId is not refused with 409 `SNAPSHOT
 | `jobs/`, `sim/` | written at runtime: job records and simulated satellites |
 
 ```bash
-cd orbit-service
+cd services/orbit
 ./setup-data.sh /path/to/OrbitCall /srv/orbit-data      # or no second argument: fills ./data in place
 # /srv/orbit-data: OMM snapshot gp-20261024T2134Z (as recorded in socrates-20261024T0147Z/catalog-pairs.json) | ...
 ```
@@ -96,7 +94,7 @@ data is not supported.
 
 ## Run
 ```bash
-cd orbit-service
+cd services/orbit
 ./setup-data.sh /path/to/OrbitCall /srv/orbit-data
 docker build -t orbitcall-orbit .
 docker run -d --name orbitcall-orbit -p 127.0.0.1:3610:3610 \
@@ -104,7 +102,7 @@ docker run -d --name orbitcall-orbit -p 127.0.0.1:3610:3610 \
 curl http://127.0.0.1:3610/health      # {"ok":true,"snapshotId":"gp-20261024T2134Z","objects":19468}
 docker exec orbitcall-orbit python -m pytest -q -p no:cacheprovider tests      # 92 passed (about 2 min)
 ```
-A smoke check of the two calls the deal module makes (token as chosen above):
+A smoke check of `/candidates` and a `/rescreen` job (token as chosen above):
 ```bash
 T='X-Service-Token: <token>'; J='Content-Type: application/json'; U=http://127.0.0.1:3610
 curl -s -H "$T" -H "$J" -X POST $U/candidates \
@@ -117,7 +115,7 @@ curl -s -H "$T" $U/jobs/smoke-1                        # poll until "status":"co
 On the Droplet, Caddy terminates HTTPS and proxies one explicit route to port 3610; do not publish 3610 publicly.
 Without Docker: Python 3.12, `pip install -r src/requirements.txt`, then from `src/`:
 `ORBIT_DATA=/srv/orbit-data ORBIT_SERVICE_TOKEN=… python -m uvicorn orbit.app:app --port 3610 --workers 1`.
-The tests always read `orbit-service/data` (fill it with `./setup-data.sh /path/to/OrbitCall`), then
+The tests always read `services/orbit/data` (git-ignored; fill it with `./setup-data.sh ../..` from this folder), then
 `python -m pytest -q tests` from `src/`.
 
 Keep one process: the catalog lives in memory, jobs run in its thread pool and `/simulate` changes the catalog.
@@ -143,21 +141,20 @@ npx convex env set ORBIT_SERVICE_TOKEN     # the token the service was started w
 Suggested Convex action timeouts: `/candidates` 15 s, `/rescreen` 120 s (or poll the job), `/verify` 30 s,
 `/simulate` 10 s, `/screen` submit 5 s then poll, `/validation` 5 s, `/objects` 5 s.
 
-What the deal module sends today:
-- `/candidates` synchronously, with `notBeforeUtc` = now, so no burn in the past is offered, and
-  `allowedMovingObjectIds` when only one object may move (a debris room: only the active satellite);
-- `/rescreen` as a **job**: `jobId` = `rescreen-<claim key>-a<attempt>` from the Scheduler (the reserved intent, so a
-  retry of the same attempt reuses the job), or a random id for the re-screens done before cards are shown; it sends
-  `objectId`, `partnerObjectId`, `tcaUtc`, the maneuver, `proposalId` and `revision` (echoed), then polls `GET /jobs/{jobId}` every 1 s for up to
-  240 s (a failed or unfinished job becomes `UPSTREAM_UNAVAILABLE` and the Scheduler retries);
-- `/verify` synchronously.
-
-It maps the answers to the spec's `Revision`, `Rescreen` and `Verification` shapes and drops the extra diagnostics. It
-does not send `snapshotId`, `evidenceVersion` or `fromUtc` / `toUtc` yet, and sends `allowedMovingObjectIds` only on
-`/candidates` for debris. Until Convex sends `snapshotId`, the service makes no 409 `SNAPSHOT_MISMATCH` check; it
-echoes the id it used in every result, which Convex can compare with its own. Run Scan
-(`scans.startMine` → `POST /screen` + `GET /jobs`), `validation.latest` (→ `GET /validation`) and object
-classification (→ `/objects`, the input of `deal/rooms:open` for debris) are the team's backend functions to write.
+What this repo's Convex does today:
+- `convex/lib/orbit.ts` is the typed client for every endpoint above, with these timeouts and job polling
+  (`waitForJob`: every 1 s, up to 240 s). Errors the caller can fix keep their code; everything else is
+  `UPSTREAM_UNAVAILABLE`.
+- `orbit.computeCandidates` (`convex/orbit.ts`) calls `/candidates` with `notBeforeUtc` = now for an event between two
+  registered operators, keeps the cheapest passing maneuver per side plus wait (at most three, the limit is four) and
+  publishes them through `candidates.publish`. Ids are rewritten to the characters publish accepts
+  (`A:T-12h:-0.02` → `A-T12h-retro-20mms`); `missBeforeKm` is the event's figure, the service's own is in the
+  assumptions; `estimatedFuelKg` stays null for the Advocates.
+- The Incident Analyst (`agents/analyst.start`) schedules it after each run, only when both env vars are set.
+- Not written yet: `/rescreen` before scheduling, `/verify`, Run Scan (`/screen`), `validation.latest`,
+  `/objects` for debris rooms and `demo.launchSatellite` (`/simulate`). The client already covers them.
+- Convex does not send `snapshotId` or `evidenceVersion` yet, so the service makes no 409 `SNAPSHOT_MISMATCH` check;
+  it echoes the id it used, which `computeCandidates` returns.
 
 ## Limits (say them in the pitch)
 - Public mean elements: SGP4 positions are good to about 1 km, so a 1 km threshold is at the method's resolution.
@@ -170,6 +167,4 @@ classification (→ `/objects`, the input of `deal/rooms:open` for debris) are t
 - One orbit source (CelesTrak GP): no SupGP spread (SCR-4).
 - `/validation` is measured on the TLE validation snapshot (08:02:43Z, 6 h after the SOCRATES run), not on the OMM
   snapshot of real mode (21:34Z, 20 h after it), whose element sets would make almost no SOCRATES row comparable.
-- The deal module sends `/rescreen` as a job but does not send `snapshotId`, `evidenceVersion` or `fromUtc` / `toUtc`
-  yet; `allowedMovingObjectIds` goes only with `/candidates` for debris rooms (see "Connect Convex").
-- Not done here: the move into `services/orbit/` of the OrbitCall repo and the DigitalOcean deployment (roadmap §12).
+- Not done here: the DigitalOcean deployment (roadmap §12).
