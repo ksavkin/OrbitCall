@@ -8,6 +8,7 @@ import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
 import { workflow } from "./lib/validators";
 import { closeRoomIfResolved, notify } from "./rooms";
+import { planFor, syncPlans } from "./trajectoryPlans";
 
 // Explicit human approval and veto of the selected proposal revision, per event (spec §3.4, §4.1; ROOM-7, ROOM-11,
 // ROOM-14; user-flow "App navigation and the decision flow"). Nothing moves without a human: a row is written only
@@ -108,6 +109,11 @@ export const approve = mutation({
   returns: approveResult,
   handler: async (ctx, args) => {
     const d = await checkDecision(ctx, args);
+    // Selection writes keep shared plans current; this catches a change that bypassed them (a room link). If it had
+    // to reset this event, the click is not recorded: the reset and its message stand, and throwing would undo them.
+    if (await syncPlans(ctx, d.event)) return { allRequiredApproved: false, requiredApprovalSides: d.event.requiredApprovalSides! };
+    // A shared mover's approval also signs the plan version every affected event must approve (spec §4.1).
+    const plan = await planFor(ctx, d.event, d.selection);
     let counted = await countingApprovals(ctx, d.event, d.selection);
     // Approving the same tick again is idempotent, even after the turn has moved on; it leaves no notice either.
     const inserted = !counted.has(d.side);
@@ -116,9 +122,10 @@ export const approve = mutation({
       await ctx.db.insert("approvals", {
         eventId: d.event._id, side: d.side, status: "approved", userId: d.user._id, companyId: d.user.companyId,
         proposalId: args.proposalId, revision: args.revision, selectionGeneration: args.selectionGeneration,
-        approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null,
-        demoRunId: d.event.demoRunId ?? null, current: true, at: Date.now(), assignmentVersion: assignmentVersionOf(d.user),
+        approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanId: plan?._id ?? null, trajectoryPlanVersion: plan?.planVersion ?? null,
+        reason: null, demoRunId: d.event.demoRunId ?? null, current: true, at: Date.now(), assignmentVersion: assignmentVersionOf(d.user),
       });
+      if (plan?.state === "draft") await ctx.db.patch(plan._id, { state: "authorizing", updatedAt: Date.now() });
       counted = await countingApprovals(ctx, d.event, d.selection);
     }
     const all = allApproved(d.event, counted);
@@ -159,12 +166,14 @@ export const veto = mutation({
     if (text && text.length > MAX_REASON) throw error("VALIDATION", `A veto reason is at most ${MAX_REASON} characters.`);
     const d = await checkDecision(ctx, args);
     await requireTurn(ctx, d);
+    // The version this veto rejects; the selection advance below supersedes it and resets the other affected events.
+    const vetoed = await planFor(ctx, d.event, d.selection);
     await advanceSelection(ctx, d.event, { proposalId: args.proposalId, revision: args.revision }, { kind: "human", userId: d.user._id }, "vetoed");
     // History only: a veto never counts as an approval state of the new generation.
     await ctx.db.insert("approvals", {
       eventId: d.event._id, side: d.side, status: "vetoed", userId: d.user._id, companyId: d.user.companyId,
       proposalId: args.proposalId, revision: args.revision, selectionGeneration: args.selectionGeneration,
-      approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: text,
+      approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanId: vetoed?._id ?? null, trajectoryPlanVersion: vetoed?.planVersion ?? null, reason: text,
       demoRunId: d.event.demoRunId ?? null, current: false, at: Date.now(),
     });
     await ctx.db.patch(d.event._id, { status: "agents", situation: undefined });
