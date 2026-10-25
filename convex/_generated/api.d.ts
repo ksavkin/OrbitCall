@@ -54,6 +54,11 @@ import type * as riskMonitor from "../riskMonitor.js";
 import type * as schema_agents from "../schema/agents.js";
 import type * as schema_call from "../schema/call.js";
 import type * as schema_data from "../schema/data.js";
+import type * as schema_demo from "../schema/demo.js";
+import type * as schema_records from "../schema/records.js";
+import type * as schema_rooms from "../schema/rooms.js";
+import type * as schema_scans from "../schema/scans.js";
+import type * as schema_schedule from "../schema/schedule.js";
 import type * as session from "../session.js";
 
 import type {
@@ -109,6 +114,11 @@ declare const fullApi: ApiFromModules<{
   "schema/agents": typeof schema_agents;
   "schema/call": typeof schema_call;
   "schema/data": typeof schema_data;
+  "schema/demo": typeof schema_demo;
+  "schema/records": typeof schema_records;
+  "schema/rooms": typeof schema_rooms;
+  "schema/scans": typeof schema_scans;
+  "schema/schedule": typeof schema_schedule;
   session: typeof session;
 }>;
 
