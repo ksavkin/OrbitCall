@@ -11,7 +11,6 @@ import { sfx } from "@/lib/sound";
 import { AGENTS, MODELS } from "@/lib/ops/roster";
 import { useOps } from "@/lib/ops/store";
 import type { AgentId, ConjunctionEvent, Reply, Span } from "@/lib/ops/types";
-import { useRealMode } from "@/lib/backend/live";
 import { LiveMeeting } from "@/components/roomChat/LiveMeeting";
 import { Message } from "@/components/roomChat/RoomTimeline";
 import { ProposalPanel } from "@/components/proposals/ProposalPanel";
