@@ -1,10 +1,10 @@
-import { ConvexError, v } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { internalMutation, internalQuery, query, type MutationCtx } from "./_generated/server";
-import { requireParty } from "./lib/operatorAccess";
+import { internalMutation, internalQuery, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { exportFields, historyPoint, sameContent } from "./lib/tigerExport";
 import { sourceName } from "./lib/validators";
+import { requireUser } from "./session";
 
 // Observation history copied to Tiger Data and the versioned cache the chart reads (roadmap §10, spec §3.4).
 // Tiger is an analytics copy: these functions write only observationExports and historySeries, and a failed
@@ -141,22 +141,53 @@ export const storeSeries = internalMutation({
   },
 });
 
+// Spec §1 read scope: an operator with an active assignment on either object of the event, or the head of ops of a
+// company that owns one of them. No candidate set is needed, so the chart is available as soon as the event exists.
+async function requireHistoryReader(ctx: QueryCtx, eventId: Id<"events">) {
+  const { user } = await requireUser(ctx);
+  const event = await ctx.db.get(eventId);
+  const objects = event ? await Promise.all([ctx.db.get(event.objectAId), ctx.db.get(event.objectBId)]) : [];
+  for (const object of objects) {
+    if (!object) continue;
+    if (user.role === "operator") {
+      const assignment = await ctx.db.query("fleetAssignments")
+        .withIndex("by_user_object", q => q.eq("userId", user._id).eq("objectId", object.objectId)).unique();
+      if (assignment?.active) return;
+    } else if (user.role === "head_of_ops") {
+      const owner = await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", object.objectId)).unique();
+      if (owner?.companyId === user.companyId) return;
+    }
+  }
+  throw new ConvexError({ code: "FORBIDDEN", message: "You are not assigned to this incident." });
+}
+
+const seriesPoint = v.object({ atUtc: v.string(), pc: v.union(v.number(), v.null()), missKm: v.union(v.number(), v.null()), source: sourceName });
+
 /**
- * The cached Tiger history of one incident, for a current party operator (requireParty).
+ * The cached Tiger history of one incident (read scope: requireHistoryReader).
  * Returns { real: Point[], simulated: Point[], stale, error, fetchedAt, seriesVersion } where
  * Point = { atUtc, pc: number | null, missKm: number | null, source: SourceName }, oldest first.
- * - real and simulated are separate series and are never merged; simulated holds the event's current demo run only.
+ * This intentionally differs from the flat array in spec §3.4: real and simulated evidence are separate series and
+ * are never merged, and the chart needs the cache state. Simulated holds the event's current demo run only.
  * - Observations only: no forecast or interpolation. A metric that was not observed is null.
- * - stale: an observation failed to reach Tiger or the last read failed; the points are the last good copy and
- *   `error` is the sanitized reason. fetchedAt and seriesVersion are null before the first successful read.
+ * - Points are per instant, source, evidence version and run, so two points may share atUtc and source when the
+ *   evidence version differs. The cache schema has no evidenceVersion field, so the point cannot name it.
+ * - stale: an observation is not yet (or failed to be) in Tiger, or the last read failed; the points are the last
+ *   good copy and `error` is the sanitized failure, if any. fetchedAt and seriesVersion are null before the first
+ *   successful read.
  */
 export const series = query({
   args: { eventId: v.id("events") },
+  returns: v.object({
+    real: v.array(seriesPoint), simulated: v.array(seriesPoint), stale: v.boolean(), error: v.union(v.string(), v.null()),
+    fetchedAt: v.union(v.number(), v.null()), seriesVersion: v.union(v.number(), v.null()),
+  }),
   handler: async (ctx, { eventId }) => {
-    await requireParty(ctx, eventId);
+    await requireHistoryReader(ctx, eventId);
     const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     const points = cache?.points ?? [];
-    const shape = ({ atUtc, pc, missKm, source }: typeof points[number]) => ({ atUtc, pc, missKm, source });
+    // Only Tiger rows that passed the client's source check reach the cache.
+    const shape = ({ atUtc, pc, missKm, source }: typeof points[number]) => ({ atUtc, pc, missKm, source: source as Infer<typeof sourceName> });
     const fetched = cache !== null && cache.seriesVersion > 0;
     return {
       real: points.filter(point => !point.simulated).map(shape),
