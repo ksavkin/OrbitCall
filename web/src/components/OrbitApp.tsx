@@ -189,8 +189,8 @@ function useShortcuts() {
       } else if (k === "e" && useOps.getState().incident) {
         const ops = useOps.getState();
         setIncidentView(ops.tab === "decision" ? "collapsed" : "expanded");
-      } else if (k === " ") {
-        e.preventDefault();
+      } else if (k === "p") {
+        // Space is the call's push-to-talk, so pause has its own key
         sfx.toggle(s.paused);
         s.set({ paused: !s.paused });
       } else if (k === "f" && s.selected !== null) {
