@@ -127,7 +127,7 @@ describe("mapCandidates", () => {
   it("keeps the first four distinct candidates in service order when given more", () => {
     const items = [
       maneuver({ deltaVMs: 0.02 }), maneuver({ deltaVMs: 0.02 }), maneuver({ deltaVMs: 0.05 }),
-      maneuver({ deltaVMs: 0.1 }), maneuver({ deltaVMs: 0.2 }), wait(),
+      maneuver({ deltaVMs: 0.1 }), maneuver({ deltaVMs: 0.2 }), maneuver({ deltaVMs: 0.3 }),
     ];
     const cards = mapCandidates(response(items), context());
     expect(cards.map(c => c.deltaVMs)).toEqual([0.02, 0.05, 0.1, 0.2]);
@@ -136,12 +136,26 @@ describe("mapCandidates", () => {
   it("rejects a maneuver that moves an object outside the event", () => {
     expectValidation(() => mapCandidates(response([maneuver({ movingObjectId: "99999" })]), context()));
   });
-  it("rejects invalid service geometry instead of repairing it", () => {
-    for (const bad of [
-      maneuver({ deltaVMs: 0 }), maneuver({ deltaVMs: -0.05 }), maneuver({ burnTimeUtc: at(-1) }),
-      maneuver({ burnTimeUtc: null }), maneuver({ direction: null }), maneuver({ reviewCondition: "later" }),
-      wait({ reviewCondition: null }), wait({ reviewCondition: "  " }), wait({ deltaVMs: 0.05 }), wait({ movingObjectId: "SIM-1001" }),
-    ]) expectValidation(() => mapCandidates(response([bad]), context()));
+  const invalidGeometry = [
+    maneuver({ deltaVMs: 0 }), maneuver({ deltaVMs: -0.05 }), maneuver({ burnTimeUtc: at(-1) }),
+    maneuver({ burnTimeUtc: at(0) }), maneuver({ burnTimeUtc: null }), maneuver({ direction: null }),
+    maneuver({ reviewCondition: "later" }), wait({ reviewCondition: null }), wait({ reviewCondition: "  " }),
+    wait({ deltaVMs: 0.05 }), wait({ movingObjectId: "SIM-1001" }),
+  ];
+  it("drops a card with invalid geometry instead of repairing it", () => {
+    for (const bad of invalidGeometry) expect(mapCandidates(response([bad]), context())).toEqual([]);
+  });
+  it("does not let dropped cards consume one of the four slots", () => {
+    const good = [0.02, 0.05, 0.1, 0.2].map(deltaVMs => maneuver({ deltaVMs }));
+    const cards = mapCandidates(response([...invalidGeometry, ...good]), context());
+    expect(cards.map(c => c.deltaVMs)).toEqual([0.02, 0.05, 0.1, 0.2]);
+  });
+  it("keeps a valid wait card after four maneuvers by keeping only three maneuvers", () => {
+    const four = [0.02, 0.05, 0.1, 0.2].map(deltaVMs => maneuver({ deltaVMs }));
+    const cards = mapCandidates(response([...four, wait()]), context());
+    expect(cards.map(c => c.kind)).toEqual(["maneuver", "maneuver", "maneuver", "wait"]);
+    expect(cards.map(c => c.deltaVMs)).toEqual([0.02, 0.05, 0.1, null]);
+    expect(mapCandidates(response([...four, wait({ reviewCondition: null })]), context()).map(c => c.deltaVMs)).toEqual([0.02, 0.05, 0.1, 0.2]);
   });
   it("rejects results that echo a different event, evidence version or snapshot", () => {
     for (const over of [{ eventId: "event-2" }, { evidenceVersion: "evidence-6" }, { snapshotId: "snapshot-2" }]) {

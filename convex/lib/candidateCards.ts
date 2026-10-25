@@ -1,5 +1,6 @@
 import { invalid, validateCandidates, type Candidate, type Side } from "./policies";
 import type { EventFacts } from "./analyst";
+import { ConvexError } from "convex/values";
 
 // Mirrors the orbit service /candidates response; must match orbitClient.ts.
 export interface OrbitCandidatesResponse {
@@ -110,9 +111,17 @@ function label(c: OrbitCandidatesResponse["candidates"][number], tcaUtc: string)
   return (full.length <= 80 ? full : move).slice(0, 80);
 }
 
-// Selection when the service returns more than four: drop past burns, keep the first occurrence of each
-// candidate ID, then keep the first four in service order. Nothing is invented or reordered.
-// Every returned maneuver is still checked for its moving object, including ones that are not kept.
+const validCard = (card: Candidate, facts: EventFacts) => {
+  try { validateCandidates([card], facts); return true; } catch (error) {
+    if (error instanceof ConvexError) return false;
+    throw error;
+  }
+};
+
+// Identity problems (shape, echo, object outside the event, debris side) reject the whole response, even for
+// cards that would not be kept. Past burns and cards with invalid geometry are dropped without using a slot.
+// Of the rest, the first occurrence of each ID is kept in service order: a valid wait card always keeps
+// its slot, so at most three maneuvers accompany it, otherwise up to four. Nothing is invented or reordered.
 export function mapCandidates(response: OrbitCandidatesResponse, context: CardContext): Candidate[] {
   const result = parseCandidatesResponse(response);
   const { facts, activeSide, counterpartSide, previous, nowMs } = context;
@@ -120,7 +129,7 @@ export function mapCandidates(response: OrbitCandidatesResponse, context: CardCo
   if (result.eventId !== context.eventId || result.evidenceVersion !== context.evidenceVersion ||
     result.snapshotId !== context.snapshotId) invalid("Candidate results do not match the requested event evidence.");
   const simulated = facts.simulated || result.simulated;
-  const cards: Candidate[] = [];
+  const accepted: Candidate[] = [];
   for (const c of result.candidates) {
     let movingSide: Side | null = null;
     if (c.kind === "maneuver") {
@@ -130,7 +139,7 @@ export function mapCandidates(response: OrbitCandidatesResponse, context: CardCo
       if (c.burnTimeUtc !== null && Date.parse(c.burnTimeUtc) <= nowMs) continue;
     }
     const candidateId = stableCandidateId(c);
-    if (cards.length === 4 || cards.some(card => card.candidateId === candidateId)) continue;
+    if (accepted.some(card => card.candidateId === candidateId)) continue;
     const card: Candidate = {
       candidateId, revision: 1, label: label(c, facts.tcaUtc), kind: c.kind, movingSide,
       movingObjectId: c.movingObjectId, burnTimeUtc: c.burnTimeUtc, deltaVMs: c.deltaVMs, direction: c.direction,
@@ -139,8 +148,10 @@ export function mapCandidates(response: OrbitCandidatesResponse, context: CardCo
     };
     const prior = latestRevision(previous, candidateId);
     if (prior) card.revision = sameContent(card, prior) ? prior.revision : prior.revision + 1;
-    cards.push(card);
+    if (validCard(card, facts)) accepted.push(card);
   }
+  let maneuvers = accepted.some(card => card.kind === "wait") ? 3 : 4;
+  const cards = accepted.filter(card => card.kind === "wait" || maneuvers-- > 0);
   validateCandidates(cards, facts);
   return cards;
 }
