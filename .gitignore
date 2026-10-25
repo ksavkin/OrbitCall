@@ -7,3 +7,8 @@ coverage/
 *.tsbuildinfo
 # raw CelesTrak responses kept between runs of scripts/fetch_*.py; never commit
 data/snapshots/_incoming/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
