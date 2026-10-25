@@ -128,7 +128,7 @@ function Marker({ e, bind }: { e: ConjunctionEvent; bind: (k: "tca" | "b" | "a" 
       <div ref={(el) => bind("b", el)} className="absolute left-0 top-0 transition-opacity duration-200" style={{ opacity: 0 }}>
         <span className="absolute left-3 top-[-8px] flex items-center gap-1 whitespace-nowrap rounded-full bg-black/55 px-1.5 py-px text-[10px] backdrop-blur-sm">
           <span style={{ color: c }}>{e.b.name}</span>
-          <span className="mono text-[8.5px] uppercase tracking-[0.1em] text-orange">syn</span>
+          {e.b.synthetic && <span className="mono text-[8.5px] uppercase tracking-[0.1em] text-orange">syn</span>}
         </span>
       </div>
 

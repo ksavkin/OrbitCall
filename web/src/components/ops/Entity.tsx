@@ -39,7 +39,8 @@ export function ObjectChip({ e, side, size = "md" }: { e: ConjunctionEvent; side
         <span className="block">
           <span className="block font-medium text-fg">{ref.name}</span>
           <span className="block text-muted">
-            {ref.operator.replace(/\s*\(synthetic\)/i, "")} · NORAD {ref.norad}
+            {ref.operator.replace(/\s*\(synthetic\)/i, "")}
+            {ref.norad > 0 ? ` · NORAD ${ref.norad}` : ""}
             {ref.synthetic ? " · synthetic" : ""}
           </span>
           <span className="mt-0.5 block text-[10px] text-fg-2">Click to show it on the globe</span>
