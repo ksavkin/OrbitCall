@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { requireFleetScope, type FleetScope } from "./fleetQuery";
+import { fleetEvents, fleetIds, requireFleetScope, resolveFleet, type FleetScope } from "./fleetQuery";
 import { isoUtc, TCA_MATCH_MS } from "./lib/events";
 import { color, eventStatus, workflow } from "./lib/validators";
 import { side } from "./lib/policyValidators";
@@ -182,15 +182,13 @@ async function project(ctx: QueryCtx, scope: FleetScope, room: Doc<"rooms">, pai
 // module (call/core.ts memberOf) finds call members by this subject.
 const subjectOf = (tokenIdentifier: string) => tokenIdentifier.slice(tokenIdentifier.indexOf("|") + 1);
 
-// A demo fleet is a handful of assignments; fleetAssignments has no index by object, so one bounded read finds the
-// assigned operators of the room's objects.
-const MAX_ASSIGNMENTS = 2000;
-
 /** Joins every operator currently assigned to a party object; returns the users joined for the first time. */
 async function autoJoin(ctx: MutationCtx, room: Doc<"rooms">, pairs: Pair[], starter: Id<"users">) {
   const objectIds = new Set(pairs.flatMap(p => [p.a, p.b]));
-  const assignments = (await ctx.db.query("fleetAssignments").take(MAX_ASSIGNMENTS))
-    .filter(a => a.active && objectIds.has(a.objectId));
+  // fleetAssignments has no index by object (the next schema widening can add one), so the whole table is read: a
+  // truncated read would silently leave an assigned operator out of the room.
+  const assignments: Doc<"fleetAssignments">[] = [];
+  for await (const a of ctx.db.query("fleetAssignments")) if (a.active && objectIds.has(a.objectId)) assignments.push(a);
   const now = Date.now();
   const added: Doc<"users">[] = [];
   for (const userId of new Set(assignments.map(a => a.userId))) {
@@ -298,19 +296,22 @@ export const byId = query({
   },
 });
 
-// One room per started encounter: far below the index-range limits noted in convex/events.ts.
-const MAX_ROOMS = 500;
-
 /** The open rooms the caller is a member of, by earliest linked TCA. An empty scope lists nothing. */
 export const listMine = query({
   args: {},
   returns: v.array(roomProjection),
   handler: async ctx => {
     const scope = await requireFleetScope(ctx);
-    const rooms = await ctx.db.query("rooms").withIndex("by_state", q => q.eq("state", "open")).take(MAX_ROOMS);
+    // Rooms are found through the caller's own active incidents, not by scanning every open room.
+    const ids = fleetIds(await resolveFleet(ctx, scope.objects));
+    const roomIds = new Set<Id<"rooms">>();
+    for (const event of await fleetEvents(ctx, ids, true)) {
+      for (const link of await ctx.db.query("roomEvents").withIndex("by_event", q => q.eq("eventId", event._id)).collect()) roomIds.add(link.roomId);
+    }
     const mine = [];
-    for (const room of rooms) {
-      if (!await isOpenRoom(ctx, room)) continue;
+    for (const roomId of roomIds) {
+      const room = await ctx.db.get(roomId);
+      if (!room || !await isOpenRoom(ctx, room)) continue;
       const pairs = await roomPairs(ctx, room._id);
       if (pairs.length && responsibleFor(scope, pairs)) mine.push(await project(ctx, scope, room, pairs));
     }
