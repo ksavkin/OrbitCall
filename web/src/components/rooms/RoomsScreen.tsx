@@ -142,8 +142,8 @@ function RoomList({ rooms, active, onPick }: { rooms: ConjunctionEvent[]; active
               <div className="mt-1.5 flex items-center gap-1">
                 {(e.parties ?? []).map((p) =>
                   p.country ? (
-                    <span key={p.id} className="overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
-                      <Flag code={p.country} h={14} />
+                    <span key={p.id} className="h-3.5 w-3.5 overflow-hidden rounded-[3px] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
+                      <Flag code={p.country} h={14} square />
                     </span>
                   ) : null,
                 )}
@@ -200,7 +200,7 @@ function CaseSide({ e }: { e: ConjunctionEvent | undefined }) {
             const color = a === "approved" ? "var(--green)" : a === "vetoed" ? "var(--red)" : a === "countered" ? "var(--orange)" : "#737373";
             return (
               <div key={x.id} className="flex items-center gap-2.5">
-                <span className="overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">{x.country && <Flag code={x.country} h={20} />}</span>
+                <span className="h-5 w-5 shrink-0 overflow-hidden rounded-[4px] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">{x.country && <Flag code={x.country} h={20} square />}</span>
                 <span className="min-w-0 flex-1 truncate text-[13px] text-white">{x.operator.replace(/\s*\(synthetic\)/i, "")}</span>
                 <span className="text-[12px] font-medium" style={{ color }}>
                   {a === "vetoed" ? "rejected" : a === "pending" ? "waiting" : a}

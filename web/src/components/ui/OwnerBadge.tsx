@@ -3,16 +3,21 @@
 import { Building2 } from "lucide-react";
 import type { OwnerInfo } from "@/lib/owners";
 
-export function Flag({ code, h = 11 }: { code: string; h?: number }) {
+/**
+ * A country flag. Inline it is a 4:3 rectangle. `square` fills an h × h box (center crop) for avatars, so the
+ * flag always covers its tile: a 4:3 image in a round or square avatar left uneven edges.
+ */
+export function Flag({ code, h = 11, square = false }: { code: string; h?: number; square?: boolean }) {
+  const w = square ? h : Math.round((h * 4) / 3);
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={`/flags/${code}.svg`}
       alt=""
-      width={Math.round((h * 4) / 3)}
+      width={w}
       height={h}
-      className="shrink-0 rounded-[2px] object-cover shadow-[0_0_0_0.5px_rgba(255,255,255,0.25)]"
-      style={{ width: Math.round((h * 4) / 3), height: h }}
+      className={`shrink-0 object-cover ${square ? "h-full w-full" : "rounded-[2px] shadow-[0_0_0_0.5px_rgba(255,255,255,0.25)]"}`}
+      style={square ? { width: "100%", height: "100%" } : { width: w, height: h }}
       draggable={false}
     />
   );

@@ -52,8 +52,8 @@ export function ProfileSheet() {
 function Header({ me, onClose }: { me: Me; onClose: () => void }) {
   return (
     <div className="flex items-start gap-4 border-b border-white/[0.06] px-6 py-5">
-      <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.16)]">
-        {(me.company?.country ?? me.dispatcherCountry) && <Flag code={(me.company?.country ?? me.dispatcherCountry)!} h={44} />}
+      <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-[9px] shadow-[0_0_0_1px_rgba(255,255,255,0.16)]">
+        {(me.company?.country ?? me.dispatcherCountry) && <Flag code={(me.company?.country ?? me.dispatcherCountry)!} h={44} square />}
       </span>
       <div className="min-w-0 flex-1">
         <div className="text-[18px] font-semibold tracking-[-0.01em] text-white">{me.name ?? "Name not set"}</div>

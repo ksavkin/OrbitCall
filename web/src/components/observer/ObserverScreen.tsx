@@ -163,7 +163,7 @@ function CaseColumn({ e }: { e: ConjunctionEvent }) {
         <div className="text-[12px] font-semibold text-neutral-500">Who decides</div>
         {(e.parties ?? []).map((p) => (
           <div key={p.id} className="flex items-center gap-3">
-            <span className="overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">{p.country && <Flag code={p.country} h={24} />}</span>
+            <span className="h-6 w-6 shrink-0 overflow-hidden rounded-[5px] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">{p.country && <Flag code={p.country} h={24} square />}</span>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[15px] text-white">{clean(p.operator)}</div>
               <div className="text-[12px] text-neutral-500">

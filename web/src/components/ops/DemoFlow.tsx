@@ -400,8 +400,8 @@ function OperatorLine({ e, side }: { e: ConjunctionEvent; side: "a" | "b" }) {
   const info = ownerInfo(ref.owner, owners);
   return (
     <div className="flex items-center gap-3">
-      <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
-        {info?.flags[0] && <Flag code={info.flags[0]} h={28} />}
+      <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-[6px] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
+        {info?.flags[0] && <Flag code={info.flags[0]} h={28} square />}
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13.5px] font-medium text-white">{ref.name}</div>

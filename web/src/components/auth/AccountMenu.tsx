@@ -62,8 +62,8 @@ function AccountButton() {
         aria-label="Account"
         aria-expanded={open}
       >
-        <span className="grid h-5 w-5 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.18)]">
-          {me.company?.country ? <Flag code={me.company.country} h={20} /> : <UserRound size={12} className="text-neutral-400" />}
+        <span className="grid h-5 w-5 place-items-center overflow-hidden rounded-[4px] shadow-[0_0_0_1px_rgba(255,255,255,0.18)]">
+          {me.company?.country ? <Flag code={me.company.country} h={20} square /> : <UserRound size={12} className="text-neutral-400" />}
         </span>
         <span className="max-w-[150px] truncate text-[11.5px] text-fg-2">{me.company?.name ?? me.name}</span>
         <ChevronDown size={12} className="text-muted" />

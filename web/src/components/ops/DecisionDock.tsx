@@ -205,7 +205,7 @@ export function Waiting({ e, other, mine, now }: { e: ConjunctionEvent; other: "
       <span className="relative grid h-11 w-11 shrink-0 place-items-center">
         <span className="absolute inset-0 rounded-[12px] border border-white/20" style={{ animation: "ping 1.8s var(--ease-out) infinite" }} />
         <span className="relative grid h-11 w-11 place-items-center overflow-hidden rounded-[12px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)]">
-          {them?.country && <Flag code={them.country} h={44} />}
+          {them?.country && <Flag code={them.country} h={44} square />}
         </span>
       </span>
       <div className="min-w-0 flex-1">
@@ -258,7 +258,7 @@ export function TheirReply({ e, r }: { e: ConjunctionEvent; r: Reply }) {
     <div className="px-4 py-3.5">
       <div className="flex items-center gap-2.5">
         <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-[9px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)]">
-          {them?.country && <Flag code={them.country} h={32} />}
+          {them?.country && <Flag code={them.country} h={32} square />}
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-semibold tracking-[-0.01em]" style={{ color }}>

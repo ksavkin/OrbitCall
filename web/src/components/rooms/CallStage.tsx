@@ -122,11 +122,11 @@ function Participants({ list, flagOf }: { list: CallParticipant[]; flagOf: FlagO
               className="flex items-center gap-2.5 rounded-full bg-white/[0.04] py-1.5 pl-1.5 pr-3.5 transition-shadow duration-200"
               style={p.speaking ? { boxShadow: "0 0 0 1.5px var(--green), 0 0 18px -4px rgba(61,220,151,0.7)" } : { boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.07)" }}
             >
-              <span className="relative grid h-8 w-8 place-items-center overflow-hidden rounded-full bg-[#16171b] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
+              <span className="relative grid h-8 w-8 place-items-center overflow-hidden rounded-[7px] bg-[#16171b] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
                 {p.isTranslator ? (
                   <ClaudeGlyph size={15} />
                 ) : flag ? (
-                  <Flag code={flag} h={32} />
+                  <Flag code={flag} h={32} square />
                 ) : (
                   // no flag known for this person: their initials, never an empty circle
                   <span className="text-[11px] font-semibold tracking-[0.02em] text-neutral-300">{initials(p.name)}</span>
