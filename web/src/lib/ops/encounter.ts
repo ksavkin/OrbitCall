@@ -162,9 +162,29 @@ export function realEncounter(a: Elements, b: Elements, tca: number): Encounter 
   };
 }
 
-/** B's TEME position at time t (ms). */
+/**
+ * How far A's orbit plane has turned about Earth's axis between TCA and t (rad). Earth's bulge turns a LEO plane a few
+ * degrees a day (J2), and SGP4 carries that for A. B and the meeting point turn with it, so far from TCA the drawn
+ * orbits are still the ones the dots fly on and still cross at the meeting point. At TCA the turn is zero.
+ */
+export function nodeTurn(enc: Encounter, t: number) {
+  return enc.satrec.nodedot * ((t - enc.tca) / 60_000);
+}
+
+const turnZ = (p: V3, ang: number): V3 => {
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  return [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]];
+};
+
+/** B's TEME position at time t (ms): two-body from its TCA state, turned with A's plane. */
 export function posB(enc: Encounter, t: number): V3 {
-  return kepler(enc.rB, enc.vB, (t - enc.tca) / 1000).r;
+  return turnZ(kepler(enc.rB, enc.vB, (t - enc.tca) / 1000).r, nodeTurn(enc, t));
+}
+
+/** Where the two orbits cross as seen at time t: the TCA point, turned with the planes. Exact at TCA. */
+export function meetPoint(enc: Encounter, t: number): V3 {
+  return turnZ(enc.rA, nodeTurn(enc, t));
 }
 
 /** A's TEME position at time t from SGP4. */
@@ -180,13 +200,13 @@ export function toScene(p: V3, out: { set: (x: number, y: number, z: number) => 
   return out;
 }
 
-/** Points along one revolution centered on TCA, scene units. */
-export function orbitPath(enc: Encounter, which: "a" | "b", steps = 360): Float32Array {
+/** Points along one revolution centered on `center` (ms; TCA by default), scene units. */
+export function orbitPath(enc: Encounter, which: "a" | "b", center = enc.tca, steps = 360): Float32Array {
   const periodS = which === "b" ? enc.periodB : (2 * Math.PI) / enc.satrec.no / (1 / 60);
   const out = new Float32Array((steps + 1) * 3);
   const R = EARTH_RADIUS_KM;
   for (let s = 0; s <= steps; s++) {
-    const t = enc.tca + ((s / steps - 0.5) * periodS * 0.995) * 1000;
+    const t = center + ((s / steps - 0.5) * periodS * 0.995) * 1000;
     const p = which === "a" ? posA(enc, t) : posB(enc, t);
     if (!p) continue;
     out[s * 3] = p[0] / R;

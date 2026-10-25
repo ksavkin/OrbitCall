@@ -1,14 +1,15 @@
 import * as THREE from "three";
 import type { Line2 } from "three/examples/jsm/lines/Line2.js";
 import type { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import { orbitPath, posB, toScene, type Encounter } from "@/lib/ops/encounter";
+import { meetPoint, orbitPath, posB, toScene, type Encounter } from "@/lib/ops/encounter";
 import type { ConjunctionEvent } from "@/lib/ops/types";
 import { makeLine, setCenteredLine } from "./lines";
 import type { ScreenPoint } from "./GlobeScene";
 
 // Conjunctions on the globe: both orbits of the focused event, the synthetic objects,
 // and the Risk Monitor's screening sweep. Everything here lives in the inertial frame,
-// like the satellites, so the two orbits really cross at the TCA point.
+// like the satellites. The focused orbits are drawn for the clock's time, so each dot flies on its own line and the
+// lines cross at the meeting point (see nodeTurn in lib/ops/encounter.ts).
 
 export const RISK_COLORS: Record<ConjunctionEvent["risk"], string> = { red: "#ff5a4f", yellow: "#f5c451" };
 
@@ -197,15 +198,22 @@ export class ConjunctionLayer {
     return this.items.find((i) => i.id === id) ?? null;
   }
 
+  /** Sim time the focused orbits were drawn for; they follow the clock so each dot stays on its own line. */
+  private drawnAt = 0;
+  private redrawAt = 0;
+  private sim = 0;
+
   private drawOrbits() {
     const it = this.focused ? this.item(this.focused) : null;
+    this.drawnAt = this.sim;
     const lines = [this.orbitA, this.orbitB, this.glowA, this.glowB];
     if (!it) {
       lines.forEach((l) => (l.visible = false));
       return;
     }
-    const a = orbitPath(it.enc, "a");
-    const b = orbitPath(it.enc, "b");
+    const at = this.sim || it.enc.tca;
+    const a = orbitPath(it.enc, "a", at);
+    const b = orbitPath(it.enc, "b", at);
     const risk = new THREE.Color(RISK_COLORS[it.risk]);
     const aCol = new THREE.Color("#9cc2ff");
     setCenteredLine(this.orbitA, a, new THREE.Color("#ffffff"), aCol, 0.16);
@@ -234,7 +242,7 @@ export class ConjunctionLayer {
   tcaPoint(id: string, out = new THREE.Vector3()) {
     const it = this.item(id);
     if (!it) return null;
-    return toScene(it.enc.rA, out) as THREE.Vector3;
+    return toScene(meetPoint(it.enc, this.sim || it.enc.tca), out) as THREE.Vector3;
   }
 
   update(
@@ -254,6 +262,13 @@ export class ConjunctionLayer {
     this.sweep.visible = this.scanLevel > 0.01;
     this.bMat.uniforms.uTime.value = now / 1000;
 
+    // the focused orbits are drawn for the clock's time: redraw when it has moved ~20 s of orbit (or jumped)
+    this.sim = sim;
+    if (this.focused && Math.abs(sim - this.drawnAt) > 20_000 && now - this.redrawAt > 250) {
+      this.redrawAt = now;
+      this.drawOrbits();
+    }
+
     // synthetic objects and screen anchors
     const pos = this.bPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
     const out: ConjScreen[] = [];
@@ -270,7 +285,7 @@ export class ConjunctionLayer {
           rangeKm = pa.distanceTo(this.v) * 6378.135;
         }
       }
-      const tca = project(toScene(it.enc.rA, this.v2) as THREE.Vector3);
+      const tca = project(toScene(meetPoint(it.enc, sim), this.v2) as THREE.Vector3);
       out.push({ id: it.id, risk: it.risk, quiet: it.quiet, focused: it.id === this.focused, tca, a, b, rangeKm });
     });
     pos.needsUpdate = true;
