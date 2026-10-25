@@ -78,10 +78,14 @@ Explain priorities in words: "High supplied probability, closest approach in 2 h
 
 A room can contain several linked pair incidents. The main demo contains US/RU and US/CN, with three active dispatchers. Call/chat are room-scoped. Selection, approvals, scheduling, and verification stay event-scoped. The fourth screen is an authenticated read-only observer projection. No participant approves every event merely by joining the room.
 
+### Start workflow and the room
+
+The room is an optional communication channel that connects automatically. On the incident, a dispatcher presses **Start workflow**. That creates the coordination room for the encounter and joins every dispatcher currently assigned to an involved spacecraft, from every involved company, to the room and its call. The other dispatchers get an inbox notice ("You were added to the coordination room") and stay on the screen they are on; nobody is redirected. When they open Rooms, they are already inside, see who is present, and can talk the details through before deciding. Deciding never requires opening the room. A head of operations reads the room and cannot start, join or post. The room closes when every linked incident is resolved, approved or no longer needing action; it stays readable as history, and a later Start workflow opens a new room.
+
 
 ### Two active spacecraft with participating operators
 
-1. Open the incident from My Incidents or Inbox. Review the five-line summary, both objects, sources and missing evidence.
+1. Open the incident from My Incidents or Inbox, and press Start workflow when the other operator should be involved. Review the five-line summary, both objects, sources and missing evidence.
 2. Show **up to four** computed candidate cards, including wait when justified. Show fewer if fewer exist. Feasibility and the source of recommendations are explicit. Do not manufacture alternatives or force agreement between the two advocates.
 3. Selecting a card publishes the shared selected proposal ID and immutable revision. Selection does not approve it. Choosing an existing alternative is not automatically a counter or a request to recompute it.
 4. Each authorized dispatcher independently presses Approve for the same selection. Veto is explicit. A counter is ordinary text or transcribed speech that agents interpret, not an approval status or structured counter form. Speech never approves.
