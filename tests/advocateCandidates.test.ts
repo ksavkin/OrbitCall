@@ -216,7 +216,7 @@ describe("advocates.publishFromOrbit", () => {
     expect((await currentCards(t, eventId)).map(c => c.kind)).toEqual(["wait"]);
   });
 
-  it("refuses a service geometry that disagrees with the event beyond its resolution", async () => {
+  it("refuses mixed source geometry while allowing the service's numerical output rounding", async () => {
     const { t, eventId } = await pairSetup();
     mockOrbit({ missBeforeKm: 2.5 });
     const outcome = await publish(t, eventId);
@@ -228,10 +228,45 @@ describe("advocates.publishFromOrbit", () => {
     mockOrbit({ missBeforeKm: 1.05 });
     expect(await publish(t, eventId)).toMatchObject({ status: "failed", code: "GEOMETRY_MISMATCH" });
     expect(await candidateSet(t, eventId)).toBeNull();
-    // Within a kilometre and on the same side of 1 km, the event's own miss distance stays on the cards.
+    // Being on the same side of the demo threshold does not make two source baselines interchangeable.
     mockOrbit({ missBeforeKm: 0.95 });
+    expect(await publish(t, eventId)).toMatchObject({ status: "failed", code: "GEOMETRY_MISMATCH" });
+    expect(await candidateSet(t, eventId)).toBeNull();
+    // The service rounds miss distance to 0.001 km; one output unit of rounding is allowed, not 1 km uncertainty.
+    mockOrbit({ missBeforeKm: 0.181 });
     expect(await publish(t, eventId)).toMatchObject({ status: "published" });
     expect((await currentCards(t, eventId)).every(c => c.missBeforeKm === 0.18)).toBe(true);
+    expect((await currentCards(t, eventId)).every(c => c.assumptions.some(a => a.includes("baseline miss 0.181 km")))).toBe(true);
+  });
+
+  it.each(["time", "speed", "grid baseline"])("rejects a contradictory service %s before publishing", async field => {
+    const { t, eventId } = await pairSetup();
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const answer = orbitAnswer(JSON.parse(String(init.body)));
+      if (field === "time") answer.tcaUtc = iso(TCA_MS + 120_000);
+      if (field === "speed") answer.relSpeedKmS = 2.6;
+      if (field === "grid baseline") answer.candidates[0].missBeforeKm = 0.8;
+      return json(answer);
+    }));
+    expect(await publish(t, eventId)).toMatchObject({ status: "failed", code: "GEOMETRY_MISMATCH" });
+    expect(await candidateSet(t, eventId)).toBeNull();
+    expect(await revisions(t, eventId)).toEqual([]);
+    expect(await pendingAdvocateStarts(t)).toHaveLength(0);
+  });
+
+  it("preserves the existing cards and assessments when new source geometry disagrees", async () => {
+    const { t, eventId } = await pairSetup();
+    mockOrbit();
+    await publish(t, eventId); await finish(t);
+    const before = await candidateSet(t, eventId);
+    const beforeRevisions = await revisions(t, eventId);
+    const beforeRuns = await t.run(ctx => ctx.db.query("agentRuns").collect());
+    mockOrbit({ missBeforeKm: 0.95 });
+    expect(await publish(t, eventId)).toMatchObject({ status: "failed", code: "GEOMETRY_MISMATCH" });
+    expect(await candidateSet(t, eventId)).toEqual(before);
+    expect(await revisions(t, eventId)).toEqual(beforeRevisions);
+    expect(await t.run(ctx => ctx.db.query("agentRuns").collect())).toEqual(beforeRuns);
+    expect(await pendingAdvocateStarts(t)).toHaveLength(0);
   });
 
   it("checks the pair threshold from above 1 km and drops maneuvers that do not widen the miss", async () => {
@@ -307,6 +342,25 @@ describe("advocates.publishFromOrbit", () => {
     expect(await revisions(t, eventId)).toEqual(beforeRevisions);
     expect(await t.run(ctx => ctx.db.query("agentRuns").collect())).toEqual(beforeRuns);
     expect(await pendingAdvocateStarts(t)).toHaveLength(0);
+  });
+
+  it("keeps the computed snapshot and geometry on immutable cards even when a new catalog returns identical numbers", async () => {
+    const { t, eventId } = await pairSetup();
+    const snapshotId = await t.run(async ctx => {
+      const id = (await ctx.db.get(eventId))!.snapshotId;
+      await ctx.db.patch(id, { snapshotId: "socrates-20261024T0147Z", ommUrl: "/snapshots/gp-20261024T2134Z/catalog.json" });
+      return id;
+    });
+    mockOrbit();
+    await publish(t, eventId);
+    const original = await currentCards(t, eventId);
+    expect(original.every(c => c.assumptions.some(a => a.includes("gp-20261024T2134Z") && a.includes("baseline miss 0.18 km") && a.includes(advocateEvent.tcaUtc)))).toBe(true);
+    await t.run(ctx => ctx.db.patch(snapshotId, { ommUrl: "/snapshots/gp-20261025T2134Z/catalog.json" }));
+    expect(await publish(t, eventId)).toMatchObject({ status: "published", changed: true, version: 2 });
+    const changed = await currentCards(t, eventId);
+    expect(changed.map(c => c.candidateId)).toEqual(original.map(c => c.candidateId));
+    expect(changed.every(c => c.revision === 2 && c.assumptions.some(a => a.includes("gp-20261025T2134Z")))).toBe(true);
+    expect((await revisions(t, eventId)).filter(c => c.revision === 1)).toEqual(original);
   });
 
   it("lets candidates.publish pin the evidence key and snapshot it was computed on", async () => {

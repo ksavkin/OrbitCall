@@ -34,9 +34,13 @@ export interface PublishInput {
   sharedMovers: SharedMover[];
 }
 
-// The service propagates public mean elements: its miss distance carries kilometre-level uncertainty, so only a
-// larger disagreement means it computed a different encounter than the stored event. To confirm with Kostya.
-export const GEOMETRY_TOLERANCE_KM = 1;
+// The v1 cards require the event's baseline. Do not splice materially different SOCRATES/OMM results into one
+// before/after comparison. These tolerances cover one output rounding unit in the landed screen/candidates
+// service (three decimals for km and km/s; whole-second UTC), not an orbital accuracy or uncertainty estimate.
+export const GEOMETRY_TOLERANCE_KM = 0.001;
+const SPEED_TOLERANCE_KM_S = 0.001;
+const TCA_TOLERANCE_MS = 1_000;
+const ROUNDING_EPSILON = 1e-9;
 const PAIR_THRESHOLD_KM = 1;
 
 const WAIT_REVIEW = "Reassess when new orbital evidence or a new screening result arrives.";
@@ -74,9 +78,12 @@ export function ommSnapshotId(snapshot: { snapshotId: string; ommUrl?: string })
 export const wholeSecondUtc = (ms: number, round: (x: number) => number = Math.round) =>
   new Date(round(ms / 1000) * 1000).toISOString().replace(".000Z", "Z");
 
-// Same encounter: miss distances within the tolerance and on the same side of the 1 km pair threshold.
+// Every grid point must use the same computed baseline, including those not selected for a card.
 export const geometryMatches = (response: CandidatesResponse, facts: EventFacts) =>
-  Math.abs(response.missBeforeKm - facts.missKm) <= GEOMETRY_TOLERANCE_KM &&
+  Math.abs(response.missBeforeKm - facts.missKm) <= GEOMETRY_TOLERANCE_KM + ROUNDING_EPSILON &&
+  Math.abs(response.relSpeedKmS - facts.relSpeedKmS) <= SPEED_TOLERANCE_KM_S + ROUNDING_EPSILON &&
+  Math.abs(Date.parse(response.tcaUtc) - Date.parse(facts.tcaUtc)) <= TCA_TOLERANCE_MS &&
+  response.candidates.every(c => c.missBeforeKm === response.missBeforeKm) &&
   response.wait.passesPairThreshold === (facts.missKm >= PAIR_THRESHOLD_KM);
 
 // Policy-free choice from the ranked grid: maneuvers that clear the pair threshold and widen the miss, the cheapest
@@ -100,7 +107,11 @@ export function toCardResponse(response: CandidatesResponse, eventId: string, sh
   const fewer = response.failed.length > 0 || response.notMovable.length > 0 ? [FEWER_OPTIONS] : [];
   const assumptionsFor = (c: ServiceCandidate) => {
     const shared = sharedMovers.find(m => m.objectId === c.movingObjectId);
-    const extras = [`Method: ${response.method}`, ...fewer, ...(shared ? [sharedLine(shared.eventIds)] : [])];
+    const extras = [
+      `Orbit calculation: snapshot ${response.snapshotId}; baseline miss ${response.missBeforeKm} km at ${response.tcaUtc}; relative speed ${response.relSpeedKmS} km/s.`,
+      ...(c.kind === "maneuver" ? [`Computed maneuver closest approach: ${c.tcaAfterUtc}; relative speed ${c.relSpeedKmS} km/s. The miss distances are indicative and do not establish a collision probability reduction.`] : []),
+      `Method: ${response.method}`, ...fewer, ...(shared ? [sharedLine(shared.eventIds)] : []),
+    ];
     return [...base.slice(0, MAX_ASSUMPTIONS - extras.length), ...extras].map(text => text.slice(0, MAX_TEXT));
   };
   const card = (c: ServiceCandidate): OrbitCandidatesResponse["candidates"][number] => ({
