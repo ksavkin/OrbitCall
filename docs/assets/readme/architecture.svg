@@ -20,14 +20,14 @@
 <rect width="100%" height="100%" fill="white"/>
 <text x="1000" y="65" class="page-title" text-anchor="middle">OrbitCall</text>
 <text x="1000" y="105" class="page-subtitle" text-anchor="middle">System architecture</text>
-<text x="45" y="328" class="layer" text-anchor="start">01  ACCESS &amp; CLIENTS</text>
-<text x="45" y="653" class="layer" text-anchor="start">02  STATE &amp; VOICE</text>
-<text x="45" y="961" class="layer" text-anchor="start">03  SPEECH SERVICES</text>
-<text x="45" y="1297" class="layer" text-anchor="start">04  AGENTS &amp; ORBITAL COMPUTATION</text>
-<text x="45" y="1635" class="layer" text-anchor="start">05  MEMORY, HISTORY &amp; ARTIFACTS</text>
+<text x="1000.0" y="328" class="layer" text-anchor="middle">01  ACCESS &amp; CLIENTS</text>
+<text x="1000.0" y="664" class="layer" text-anchor="middle">02  STATE &amp; VOICE</text>
+<text x="1000.0" y="961" class="layer" text-anchor="middle">03  SPEECH SERVICES</text>
+<text x="1000.0" y="1297" class="layer" text-anchor="middle">04  AGENTS &amp; ORBITAL COMPUTATION</text>
+<text x="1000.0" y="1635" class="layer" text-anchor="middle">05  MEMORY, HISTORY &amp; ARTIFACTS</text>
 <path class="edge default" d="M1400 305 V342 H1000 V380" marker-end="url(#arrow-default)"/>
 <path class="edge default" d="M1400 342 H1700 V400" marker-end="url(#arrow-default)"/>
-<text x="1162" y="328" class="label" text-anchor="middle">Authenticate</text>
+<text x="1230" y="328" class="label" text-anchor="middle">Authenticate</text>
 <text x="1610" y="328" class="label" text-anchor="middle">Authenticate</text>
 <path class="edge media" d="M530 490 H750" marker-start="url(#arrow-media)" marker-end="url(#arrow-media)"/>
 <text x="640" y="463" class="label" text-anchor="middle">Live audio</text>
@@ -51,8 +51,8 @@
 <path class="edge core" d="M755 1315 V1380" marker-end="url(#arrow-core)"/>
 <path class="edge core" d="M1245 1315 V1380" marker-end="url(#arrow-core)"/>
 <path class="edge core" d="M1735 1315 V1380" marker-end="url(#arrow-core)"/>
-<path class="edge core" d="M1000 1315 V1660"/>
-<path class="edge core" d="M265 1660 H1245"/>
+<path class="edge core" d="M1490 1315 V1660"/>
+<path class="edge core" d="M265 1660 H1490"/>
 <path class="edge core" d="M265 1660 V1745" marker-end="url(#arrow-core)"/>
 <path class="edge core" d="M755 1660 V1745" marker-end="url(#arrow-core)"/>
 <path class="edge core" d="M1245 1660 V1745" marker-end="url(#arrow-core)"/>
