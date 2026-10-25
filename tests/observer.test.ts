@@ -38,6 +38,32 @@ describe("observer projection",()=>{
  });
 });
 
+describe("observer run lookup",()=>{
+ const myRun=ref<"query">("observer:myRun");
+ it("returns null until a run is granted, then the granted open run",async()=>{
+  const {t,run,userId,as}=await setup();
+  expect(await as().query(myRun,{})).toBeNull();
+  await t.mutation(grant,{demoRunId:run,userId});
+  expect(await as().query(myRun,{})).toEqual({demoRunId:run,scenario:"demo"});
+  expect(await as("other").query(myRun,{})).toBeNull();
+ });
+ it("drops a closed run and follows a new grant after a reset",async()=>{
+  const {t,run,userId,as}=await setup();await t.mutation(grant,{demoRunId:run,userId});
+  await t.run(ctx=>ctx.db.patch(run,{state:"closed",closedAt:Date.now()}));
+  expect(await as().query(myRun,{})).toBeNull();
+  const next=await t.run(ctx=>ctx.db.insert("demoRuns",{scenario:"rerun",state:"open",startedBy:null,manifest:null,startedAt:Date.now(),closedAt:null}));
+  await t.mutation(grant,{demoRunId:next,userId});
+  expect(await as().query(myRun,{})).toEqual({demoRunId:next,scenario:"rerun"});
+ });
+ it("is refused to anyone but a demonstration observer and returns no manifest",async()=>{
+  const {t,run,userId,as}=await setup();await t.mutation(grant,{demoRunId:run,userId});
+  await expect(t.query(myRun,{})).rejects.toThrow();
+  await expect(as("op").query(myRun,{})).rejects.toThrow(/FORBIDDEN|observer/);
+  await expect(as("head").query(myRun,{})).rejects.toThrow(/FORBIDDEN|observer/);
+  expect(JSON.stringify(await as().query(myRun,{}))).not.toMatch(/private-memory|observerUserId/);
+ });
+});
+
 async function approved() {
  const s=await setup(); const {t,run,eventId,userId}=s;
  await t.mutation(grant,{demoRunId:run,userId});
