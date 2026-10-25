@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { internal } from "../convex/_generated/api";
+import { api, internal } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { FIXTURE_NOW } from "../fixtures/events";
-import { advocateCandidates, advocateEvent } from "../fixtures/policies";
+import { advocateCandidates, advocateEvent, policyA } from "../fixtures/policies";
 import { buildHostContext } from "../convex/lib/hostContext";
 import { insertEvent, type Backend } from "./helpers";
 import { as, code, companyA, fn, pick, seed, selection, tick, userId, withCard } from "./decision";
@@ -147,6 +147,27 @@ describe("approval resets", () => {
     await as(t, "a").mutation(fn.approve, await tick(t, eventId));
     await t.mutation(internal.operators.provision, companyA([]));
     expect(await read(t, "b", eventId)).toMatchObject({ allRequiredApproved: false, approvals: { A: { status: "pending" } } });
+  });
+
+  it("never revives a revoked approval when the assignment comes back, and keeps A's turn", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    await t.mutation(internal.operators.provision, companyA([]));
+    await t.mutation(internal.operators.provision, companyA());
+    expect(await read(t, "b", eventId)).toMatchObject({ turn: "A", selectionGeneration: 2, approvals: { A: { status: "pending" } },
+      lastReset: { reason: "assignment_revoked" } });
+    expect(await code(as(t, "b").mutation(fn.approve, await tick(t, eventId)))).toBe("INVALID_STATE");
+    expect(await as(t, "a").mutation(fn.approve, await tick(t, eventId))).toMatchObject({ allRequiredApproved: false });
+  });
+
+  it("resets approvals on a policy edit and refuses decisions on stale evidence", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    await as(t, "a").mutation(api.policies.update, { satellites: [{ ...policyA, minFuelReserveKg: 7.5 }] });
+    expect(await read(t, "b", eventId)).toMatchObject({ turn: "A", approvals: { A: { status: "pending" } }, lastReset: { reason: "policy_changed" } });
+    await t.run(ctx => ctx.db.patch(eventId, { missKm: 0.3 }));
+    expect(await code(as(t, "a").mutation(fn.approve, await tick(t, eventId)))).toBe("STALE_REVISION");
+    expect(await rows(t, eventId)).toHaveLength(1);
   });
 });
 
