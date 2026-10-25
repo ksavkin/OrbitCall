@@ -2,7 +2,7 @@
 
 import { useQuery } from "convex/react";
 import { useEffect, useState } from "react";
-import { rowFromInbox, rowFromQueue, toEvent, upsertCaseEvent, useCaseRow } from "@/lib/backend/adapt";
+import { rowFromInbox, rowFromQueue, setNoRoom, toEvent, upsertCaseEvent, useCaseRow } from "@/lib/backend/adapt";
 import { inboxGetRef, roomByEventRef, roomForEventRef } from "@/lib/backend/api";
 import { backendError } from "@/lib/backend/errors";
 import { setCaseRoom, setLiveError, useLive } from "@/lib/backend/live";
@@ -74,6 +74,8 @@ function QueueRow({ eventId, error }: { eventId: EventId; error: string }) {
 function OpenRoom({ eventId }: { eventId: EventId }) {
   const room = useQuery(roomByEventRef, { eventId });
   useEffect(() => {
+    if (room === undefined) return;
+    setNoRoom("open", room === null);
     if (room) setCaseRoom(eventId, room.roomId);
   }, [eventId, room]);
   return null;
@@ -83,6 +85,8 @@ function OpenRoom({ eventId }: { eventId: EventId }) {
 function LatestRoom({ eventId }: { eventId: EventId }) {
   const room = useQuery(roomForEventRef, { eventId });
   useEffect(() => {
+    if (room === undefined) return;
+    setNoRoom("latest", room === null);
     if (room) setCaseRoom(eventId, room.roomId);
   }, [eventId, room]);
   return null;

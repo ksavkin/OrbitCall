@@ -2,11 +2,12 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useMemo, useState } from "react";
-import { Loader2, Maximize2, Minimize2 } from "lucide-react";
+import { Loader2, Maximize2, Minimize2, Play } from "lucide-react";
 import { useCaseRow } from "@/lib/backend/adapt";
 import { fmtStamp, pcSource } from "@/lib/backend/format";
 import { useLive, useRealMode } from "@/lib/backend/live";
 import type { ApprovalStatus, Side } from "@/lib/backend/types";
+import { runAgentsOn } from "@/lib/backend/workflow";
 import { fmtCountdown, fmtMiss, fmtChance, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { AGENTS, MODELS } from "@/lib/ops/roster";
 import { engine } from "@/lib/ops/engine";
@@ -25,6 +26,7 @@ import { PcTrend } from "./PcTrend";
 import { Meeting } from "./Meeting";
 import { useRoomState } from "./DecisionDock";
 import { ObjectChip, RichLine } from "./Entity";
+import { RESOLVED } from "./meta";
 import { RoomCall } from "@/components/rooms/RoomsScreen";
 
 // The incident command view: one near-full-screen place for the case being worked.
@@ -502,9 +504,10 @@ function CenterColumn({ e, now, room, real }: { e: ConjunctionEvent; now: number
         <span className="ml-auto text-[12px] text-neutral-600">{view === "run" ? "Every model and tool call · newest first · with latency" : "Shared record of the case · newest at the bottom"}</span>
       </div>
 
-      {/* after consensus: waiting for linked incidents, re-screening, the schedule entry (wiring map §1.5) */}
+      {/* before the workflow: start it here; after consensus: linked incidents, re-screening, the schedule entry (wiring map §1.5) */}
       {real && (
-        <div className="shrink-0 px-6 pb-3 empty:hidden">
+        <div className="shrink-0 space-y-3 px-6 pb-3 empty:hidden">
+          <RunAgents e={e} />
           <SchedulerStatus eventId={e.id} />
         </div>
       )}
@@ -536,6 +539,45 @@ function CenterColumn({ e, now, room, real }: { e: ConjunctionEvent; now: number
       <div className="shrink-0 border-t border-white/[0.07] bg-black/25">
         <RoomCall e={e} compact />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Real mode: a case opened from My Incidents or the Inbox before anyone started it (rooms.get and rooms.forEvent both
+ * answered with no room). runAgentsOn starts the workflow and moves the view to Orbit to watch the agents. A head of
+ * ops has no side (approvals.status.mySide is null) and cannot start one, so the action is hidden for them.
+ */
+function RunAgents({ e }: { e: ConjunctionEvent }) {
+  const roomId = useLive((s) => s.roomId);
+  const roomless = useCaseRow((s) => s.noRoom.open && s.noRoom.latest);
+  const side = useLive((s) => (s.approvals?.eventId === e.id ? s.approvals.mySide : null));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (roomId !== null || !roomless || !side || RESOLVED.includes(e.status)) return null;
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const err = await runAgentsOn(e.id);
+      if (err) setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-4 rounded-[12px] bg-white/[0.03] px-4 py-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]">
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] font-medium text-white">No agents on this case yet</div>
+        <div className={`mt-0.5 text-[12px] ${error ? "text-red" : "text-neutral-500"}`}>
+          {error ?? "Opens the coordination room for both operators and starts the Incident Analyst."}
+        </div>
+      </div>
+      <button className="btn btn-primary h-9 shrink-0 gap-1.5 px-4 text-[13px]" disabled={busy} onClick={run}>
+        {busy ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} Run agents on this case
+      </button>
     </div>
   );
 }

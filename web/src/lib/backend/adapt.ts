@@ -197,8 +197,18 @@ export function toEvent(row: CaseRow, live: CaseLive, catalog: Catalog | null): 
 
 /* ---------------------------------------------------------------- the open case in the stores */
 
-/** The open case's row as CaseSync last read it. Kept here until useLive has a field for it. */
-export const useCaseRow = create<{ row: CaseRow | null }>(() => ({ row: null }));
+type RoomLookup = "open" | "latest";
+const NOT_ANSWERED: Record<RoomLookup, boolean> = { open: false, latest: false };
+
+/**
+ * The open case's row as CaseSync last read it, and whether rooms.get ("open") and rooms.forEvent ("latest") answered
+ * with no room. Kept here until useLive has fields for them.
+ */
+export const useCaseRow = create<{ row: CaseRow | null; noRoom: Record<RoomLookup, boolean> }>(() => ({ row: null, noRoom: NOT_ANSWERED }));
+
+export function setNoRoom(lookup: RoomLookup, none: boolean) {
+  useCaseRow.setState((s) => (s.noRoom[lookup] === none ? s : { noRoom: { ...s.noRoom, [lookup]: none } }));
+}
 
 const adapted = new Set<string>();
 
@@ -225,5 +235,5 @@ useOps.subscribe((s, p) => {
   const devOn = s.dev && !p.dev;
   if (devOn) dropCaseEvents([...adapted]);
   else if (s.incident !== p.incident && p.incident) dropCaseEvents([p.incident]);
-  if (devOn || s.incident !== p.incident) useCaseRow.setState({ row: null });
+  if (devOn || s.incident !== p.incident) useCaseRow.setState({ row: null, noRoom: NOT_ANSWERED });
 });
