@@ -179,7 +179,9 @@ async def test_server_error_event_raises():
 
 def cfg(monkeypatch, **env):
     base = {"CARTESIA_API_KEY": "ck", "CARTESIA_VOICE_EN": "ven", "XAI_API_KEY": "xk", "XAI_TTS_VOICE_ID": "eve"}
-    for k in ("CARTESIA_VOICE_ZH", "CARTESIA_MODEL_ID"):
+    for k in ("CARTESIA_VOICE_ZH", "CARTESIA_MODEL_ID", "CARTESIA_VOICE_EN_MALE", "CARTESIA_VOICE_EN_FEMALE",
+              "CARTESIA_VOICE_ZH_MALE", "CARTESIA_VOICE_ZH_FEMALE", "XAI_TTS_VOICE_RU_MALE", "XAI_TTS_VOICE_RU_FEMALE",
+              "TTS_DEFAULT_VOICE"):
         monkeypatch.delenv(k, raising=False)
     for k, v in {**base, **env}.items():
         monkeypatch.setenv(k, v)
@@ -197,7 +199,7 @@ async def test_cartesia_request_shape_and_odd_chunks(monkeypatch):
         seen["url"], seen["body"], seen["auth"] = str(req.url), json.loads(req.content), req.headers["authorization"]
         return httpx.Response(200, content=b"\x01\x02\x03\x04\x05", headers={"content-type": "application/octet-stream"})
     tts = TTS(cfg(monkeypatch), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
-    chunks = await collect(tts.stream("hello", "en"))
+    chunks = await collect(tts.stream("hello", "en", "female"))
     assert b"".join(chunks) == b"\x01\x02\x03\x04" and all(len(c) % 2 == 0 for c in chunks)  # whole samples only
     assert seen["url"] == "https://api.cartesia.ai/tts/bytes" and seen["auth"] == "Bearer ck"
     assert seen["body"]["output_format"] == {"container": "raw", "encoding": "pcm_s16le", "sample_rate": 24000}
@@ -211,7 +213,7 @@ async def test_grok_ru_request_shape(monkeypatch):
         seen["url"], seen["body"] = str(req.url), json.loads(req.content)
         return httpx.Response(200, content=b"\0\0" * 10, headers={"content-type": "audio/pcm"})
     tts = TTS(cfg(monkeypatch), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
-    assert len(b"".join(await collect(tts.stream("privet", "ru")))) == 20
+    assert len(b"".join(await collect(tts.stream("privet", "ru", "female")))) == 20
     assert seen["url"] == "https://api.x.ai/v1/tts"
     assert seen["body"]["output_format"] == {"codec": "pcm", "sample_rate": 24000}
     assert seen["body"]["voice_id"] == "eve" and seen["body"]["language"] == "ru"
@@ -222,15 +224,27 @@ async def test_tts_failure_has_no_provider_body(monkeypatch):
         return httpx.Response(401, content=b'{"error": "secret echo"}')
     tts = TTS(cfg(monkeypatch), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     with pytest.raises(TTSError) as e:
-        await collect(tts.stream("hello", "en"))
+        await collect(tts.stream("hello", "en", "female"))
     assert "401" in str(e.value) and "secret" not in str(e.value)
 
 
 async def test_tts_without_voice_is_an_error_not_a_substitute(monkeypatch):
     tts = TTS(cfg(monkeypatch), httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500))))
-    assert not tts.available("zh")
-    with pytest.raises(TTSError, match="no voice"):
-        await collect(tts.stream("ni hao", "zh"))
+    assert not tts.available("zh", "female")
+    with pytest.raises(TTSError, match="no female voice"):
+        await collect(tts.stream("ni hao", "zh", "female"))
+
+
+async def test_gendered_voice_id_wins_over_the_legacy_one(monkeypatch):
+    seen = []
+
+    def handler(req):
+        seen.append(json.loads(req.content)["voice_id"])
+        return httpx.Response(200, content=b"\0\0", headers={"content-type": "audio/pcm"})
+    tts = TTS(cfg(monkeypatch, XAI_TTS_VOICE_RU_MALE="adam"), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    await collect(tts.stream("privet", "ru", "male"))
+    await collect(tts.stream("privet", "ru", "female"))  # no female id: the legacy XAI_TTS_VOICE_ID voices her
+    assert seen == ["adam", "eve"]
 
 
 # ---- Convex ----------------------------------------------------------------------------------------------------

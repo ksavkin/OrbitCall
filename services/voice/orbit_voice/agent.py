@@ -3,7 +3,8 @@
 Joins `coordination-<roomId>` by explicit dispatch as identity `translator`; one job per room (a second request for a
 room that already has a translator is rejected, lesson R5). Subscribes only to human microphones (`user-*`, lesson
 R1), runs one Grok STT session per speaker track, and for every utterance protects values, translates into the
-other languages present, posts the phrase to Convex and voices it on `tr:<lang>:<speaker>`.
+other languages present, posts the phrase to Convex and voices it on `tr:<lang>:<speaker>` in the speaker's voice
+gender (`voice` attribute, `TTS_DEFAULT_VOICE` otherwise).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from collections.abc import AsyncIterator
 from livekit import api, rtc
 from livekit.agents import AutoSubscribe, JobContext, JobRequest, WorkerOptions, WorkerPermissions, cli
 
-from .config import LANGS, Config
+from .config import GENDERS, LANGS, Config
 from .convex import ConvexSink
 from .health import report
 from .pipeline import Pipeline, split_long
@@ -48,6 +49,13 @@ def is_human_mic(publication: rtc.TrackPublication, participant: rtc.Participant
 def speaker_lang(participant: rtc.Participant) -> str | None:
     lang = participant.attributes.get("lang", "")
     return lang if lang in LANGS else None
+
+
+def speaker_voice(participant: rtc.Participant, default: str) -> str:
+    """The speaker's voice gender from the signed `voice` attribute (Convex sets it in the join token); anything
+    else is the configured default."""
+    voice = participant.attributes.get("voice", "")
+    return voice if voice in GENDERS else default
 
 
 class Speaker:
@@ -132,12 +140,13 @@ class Speaker:
             u, session_start, lang = item
             # wall-clock epoch ms of the utterance start (contract)
             started = int((session_start + u.started_s) * 1000) if u.started_s is not None else int(time.time() * 1000)
+            gender = speaker_voice(self.participant, self.room.cfg.tts_default_voice)  # re-read per phrase, like lang
             # the raw recognized text is split and stored; each part is normalized for protection in the pipeline
             for part in split_long(u.text):
                 try:
                     await self.room.pipeline.handle(room_id=self.room.room_id, identity=self.identity, src=lang,
-                                                    text=part, started_at_ms=started, segment=self.ids.next_segment(),
-                                                    targets=self.room.targets(lang))
+                                                    gender=gender, text=part, started_at_ms=started,
+                                                    segment=self.ids.next_segment(), targets=self.room.targets(lang))
                 except Exception as e:
                     log.exception("phrase from %s failed", self.identity)
                     report("pipeline", type(e).__name__)

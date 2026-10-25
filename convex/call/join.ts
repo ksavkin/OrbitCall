@@ -1,6 +1,7 @@
-// call.join (spec §3.4, §5 step 1): a 2-hour LiveKit token for this coordination room, with the member's language
-// and company as signed participant attributes. The room name is `coordination-<roomId>`, the identity
-// `user-<userId>`; the worker publishes `tr:<lang>:<identity>` tracks for it.
+// call.join (spec §3.4, §5 step 1): a 2-hour LiveKit token for this coordination room, with the member's language,
+// company and voice gender as signed participant attributes (`lang`, `companyId`, `voice` when set). The room name is
+// `coordination-<roomId>`, the identity `user-<userId>`; the worker publishes `tr:<lang>:<identity>` tracks for it and
+// voices them in the member's gender.
 
 import { v } from "convex/values";
 import { makeFunctionReference } from "convex/server";
@@ -29,7 +30,8 @@ export const join = action({
     const roomName = roomNameOf(roomId);
     const token = await mintLiveKitToken({
       apiKey, apiSecret, identity, name: member.name, room: roomName,
-      attributes: { lang: member.lang, companyId: member.companyId }, ttlS: TOKEN_TTL_S, nowS: Math.floor(Date.now() / 1000),
+      attributes: { lang: member.lang, companyId: member.companyId, ...(member.voice ? { voice: member.voice } : {}) },
+      ttlS: TOKEN_TTL_S, nowS: Math.floor(Date.now() / 1000),
       canPublish: member.role === "operator", agentName: process.env.LIVEKIT_AGENT_NAME || "orbit-translator",
     });
     return { serverUrl, token, roomName, identity, language: member.lang, role: member.role };

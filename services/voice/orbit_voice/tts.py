@@ -1,6 +1,7 @@
 """Voice for a listener language (W4): Cartesia for en/zh, Grok TTS for ru; both 24 kHz mono 16-bit PCM, streamed
-in chunks so the first audio reaches the track before synthesis ends. A language without a provider or voice id is
-text-only: there is no provider substitution (lesson R13)."""
+in chunks so the first audio reaches the track before synthesis ends. Each language has one voice id per speaker
+gender, with the legacy per-language id as the fallback for both genders. A language and gender without a provider
+or voice id is text-only: there is no provider substitution and no cross-gender substitution (lesson R13)."""
 
 from __future__ import annotations
 
@@ -26,14 +27,15 @@ class TTS:
         self.cfg = cfg
         self.http = http or httpx.AsyncClient(timeout=TIMEOUT)
 
-    def available(self, lang: str) -> bool:
-        return self.cfg.tts_provider(lang) is not None
+    def available(self, lang: str, gender: str) -> bool:
+        return self.cfg.tts_provider(lang, gender) is not None
 
-    async def stream(self, text: str, lang: str) -> AsyncIterator[bytes]:
-        """PCM s16le chunks for the text; raises TTSError on a provider failure (the caller marks the language)."""
-        provider = self.cfg.tts_provider(lang)
+    async def stream(self, text: str, lang: str, gender: str) -> AsyncIterator[bytes]:
+        """PCM s16le chunks for the text in the speaker's voice gender; raises TTSError on a provider failure (the
+        caller marks the language)."""
+        provider = self.cfg.tts_provider(lang, gender)
         if provider is None:
-            raise TTSError(f"no voice configured for {lang}")
+            raise TTSError(f"no {gender} voice configured for {lang}")
         name, voice = provider
         if name == "cartesia":
             req = self.http.build_request("POST", "https://api.cartesia.ai/tts/bytes", headers={
