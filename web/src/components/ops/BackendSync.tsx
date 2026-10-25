@@ -2,7 +2,7 @@
 
 import { useQuery } from "convex/react";
 import { useEffect } from "react";
-import { catalogPairsRef, catalogSnapshotRef, QUEUE_LIMIT } from "@/lib/backend/api";
+import { catalogPairsRef, catalogSnapshotRef } from "@/lib/backend/api";
 import { briefError, QueryBoundary } from "@/lib/backend/QueryBoundary";
 import { useOps } from "@/lib/ops/store";
 
@@ -53,7 +53,8 @@ function OmmPairsSync() {
 }
 
 function PairsSync() {
-  const rows = useQuery(catalogPairsRef, { limit: QUEUE_LIMIT });
+  // the whole active queue (the backend caps it); the list filters and pages it in the browser
+  const rows = useQuery(catalogPairsRef, {});
   useEffect(() => {
     useOps.setState({ backendRows: rows, backendError: null });
   }, [rows]);

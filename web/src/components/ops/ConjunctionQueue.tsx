@@ -18,7 +18,8 @@ import { ClaudeGlyph } from "./Glyphs";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { toggleDev } from "@/components/ui/Navbar";
 import { CONVEX_ENABLED } from "@/lib/backend/provider";
-import { BackendListSafe, BackendSnapshotLine } from "./BackendQueue";
+import { BackendListSafe, BackendSnapshotLine, useBackendView } from "./BackendQueue";
+import { QueueControls } from "./QueueControls";
 import { RESOLVED, RISK_COLOR, STATUS_META } from "./meta";
 import { ScanButton } from "./DemoFlow";
 import { PcChart } from "./PcChart";
@@ -123,6 +124,7 @@ export function ConjunctionQueue() {
           ))}
         </div>
       )}
+      {!dev && CONVEX_ENABLED && backendRows !== undefined && <BackendControls now={now} />}
       <div className="mx-3 h-px bg-white/[0.06]" />
 
       {/* list */}
@@ -474,4 +476,10 @@ function SideState({ label, state }: { label: string; state: ConjunctionEvent["a
       </span>
     </div>
   );
+}
+
+/** Search, sort and filters over the backend queue, with how many rows match. */
+function BackendControls({ now }: { now: number }) {
+  const { all, list } = useBackendView(now);
+  return <QueueControls shown={list?.length ?? 0} total={all?.length ?? 0} />;
 }
