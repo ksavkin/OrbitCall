@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import type { CallMessage } from "@/call/api";
 import type { CatalogSnapshot, EventRow } from "@/lib/backend/types";
 import type { AgentId, ConjunctionEvent, HumanPrompt, LogLine, Reply, Span } from "./types";
 
@@ -46,7 +47,7 @@ interface OpsState {
   /** A plan named by voice in the case's call ("option B"); the plan panel asks for a click to confirm it. */
   voiceIntent: { eventId: string; label: string; said: string; at: number } | null;
   /** The case call as this screen sees it: party ids in the call and speaking now (the parties bar reads it). */
-  callLive: { eventId: string; inCall: string[]; speaking: string[] } | null;
+  callLive: { eventId: string; inCall: string[]; speaking: string[]; messages: CallMessage[]; me: string | null } | null;
   /** Risk Monitor screening pass in progress (drives the globe sweep). */
   scanning: boolean;
   lastScan: { at: number; objects: number; pairs: number; flagged: number; ms: number } | null;

@@ -6,6 +6,8 @@ import { FIXTURE_NOW } from "../fixtures/events";
 import { advocateEvent } from "../fixtures/policies";
 import { as, companyA, seed, userId } from "./decision";
 import { insertEvent } from "./helpers";
+import { rationaleTemplates, type RationaleResult } from "../convex/lib/rationale";
+import type { PublicSpan } from "../convex/spans";
 
 const spans = makeFunctionReference<"query">("spans:list"), logs = makeFunctionReference<"query">("agentLogs:list");
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(FIXTURE_NOW); });
@@ -184,4 +186,163 @@ it("fails visibly on an oversized room history instead of silently losing old ac
     for (let i = 0; i < 1000; i++) await ctx.db.insert("hostRuns", row);
   });
   await expect(as(s.t, "a").query(spans, { eventId: s.eventId, limit: 1 })).rejects.toThrow(/LIMIT_EXCEEDED/);
+});
+
+
+// Exercise the real immutable receipt writer so these fixtures track the publication contract.
+async function rationale(s: Test, options: { failedCheck?: boolean; superseded?: boolean; disagrees?: boolean } = {}) {
+  const claim = await s.t.mutation(internal.lib.rationale.begin, { eventId: s.eventId });
+  if (!claim) throw new Error("Expected a rationale claim");
+  const startedAt = Date.now();
+  const results: RationaleResult[] = claim.cards.map(card => {
+    const inputVersion = `${claim.inputVersion}:${card.candidateId}`;
+    return { candidateId: card.candidateId, raw: JSON.stringify({ template: rationaleTemplates(card)[0] }),
+      span: { role: "candidate_rationale", provider: "anthropic", model: "measured-claude", inputVersion, attempt: claim.attempt,
+        startedAt, finishedAt: startedAt + 30, status: "succeeded", usage: { inputTokens: 19, outputTokens: 11 }, errorCode: null, errorMessage: null },
+      check: { span: { role: "rationale_check", provider: "xai", model: "measured-grok", inputVersion, attempt: claim.attempt,
+        startedAt: startedAt + 30, finishedAt: startedAt + 50, status: "succeeded", usage: { inputTokens: 37, outputTokens: 13 }, errorCode: null, errorMessage: null },
+      result: { agrees: !options.disagrees, reason: "PRIVATE_CHECKER_REASON_7070", flaggedCandidateIds: options.disagrees ? [card.candidateId] : [] } } };
+  });
+  if (options.failedCheck) {
+    results[0].check!.span.status = "failed"; results[0].check!.span.errorCode = "PRIVATE_CODE";
+    results[0].check!.span.errorMessage = "PRIVATE_PROVIDER_ERROR"; results[0].check!.result = null;
+  }
+  if (options.superseded) await s.t.run(ctx => ctx.db.patch(s.eventId, { missKm: 0.19 }));
+  vi.setSystemTime(startedAt + 50);
+  const outcome = await s.t.mutation(internal.lib.rationale.finish, { requestId: claim.requestId, results });
+  const end = await s.t.run(async ctx => (await ctx.db.query("log").collect()).find(row => row.after?.requestId === claim.requestId)!);
+  return { claim, end, outcome, startedAt };
+}
+
+it("projects each recorded candidate explanation and independent check with stable IDs and actual metadata", async () => {
+  const s = await seed(); const { claim, outcome, startedAt } = await rationale(s, { disagrees: true });
+  expect(outcome).toEqual({ status: "succeeded", published: 4 });
+  const rows: PublicSpan[] = await as(s.t, "a").query(spans, { eventId: s.eventId });
+  expect(rows).toHaveLength(8);
+  expect(new Set(rows.map(row => row.id)).size).toBe(8);
+  for (const card of claim.cards) {
+    const id = `${claim.requestId}:candidate:${card.candidateId}`;
+    expect(rows.find(row => row.id === `${id}:analyst`)).toMatchObject({ parent: null, agent: "analyst", target: "analyst", kind: "llm",
+      status: "ok", model: "measured-claude", provider: "anthropic", t0: startedAt, t1: startedAt + 30, ms: 30,
+      tokensIn: 19, tokensOut: 11, progress: null, costUsd: null,
+      output: { runStatus: "succeeded", callStatus: "succeeded", stage: "candidate_rationale", candidateId: card.candidateId, attempt: 1, numbersChecked: true, details: "not_exposed" } });
+    expect(rows.find(row => row.id === `${id}:checker`)).toMatchObject({ parent: `${id}:analyst`, agent: "checker", target: "checker", kind: "check",
+      status: "ok", model: "measured-grok", provider: "xai", t0: startedAt + 30, t1: startedAt + 50, ms: 20,
+      tokensIn: 37, tokensOut: 13, output: { runStatus: "succeeded", callStatus: "succeeded", stage: "rationale_check", candidateId: card.candidateId, attempt: 1 } });
+  }
+  // A successful check is not necessarily agreement. Historical receipts do not store that verdict.
+  expect(JSON.stringify(rows)).not.toMatch(/PRIVATE|inputVersion|agrees|reason|flaggedCandidate|template|protectedWindows/);
+  expect(await as(s.t, "b").query(spans, {})).toEqual(rows);
+  expect(await as(s.t, "head").query(logs, {})).toHaveLength(8);
+  expect(JSON.stringify(await as(s.t, "a").query(logs, {}))).not.toMatch(/PRIVATE|rationale-[a-f0-9]{64}/);
+  expect(await s.t.run(ctx => ctx.db.query("agentRuns").collect())).toEqual([]);
+});
+
+it("retains measured successful drafts when a checker fails, with a distinct overall failure", async () => {
+  const s = await seed(); const { outcome, claim } = await rationale(s, { failedCheck: true });
+  expect(outcome.status).toBe("failed");
+  const rows: PublicSpan[] = await as(s.t, "a").query(spans, {});
+  expect(rows).toHaveLength(8);
+  expect(rows.find(row => row.id === `${claim.requestId}:candidate:${claim.cards[0].candidateId}:analyst`))
+    .toMatchObject({ status: "ok", output: { runStatus: "failed", callStatus: "succeeded" } });
+  expect(rows.find(row => row.output.callStatus === "failed"))
+    .toMatchObject({ status: "error", model: "measured-grok", tokensIn: 37, tokensOut: 13, output: { runStatus: "failed" }, error: expect.any(String) });
+  expect(rows.every(row => row.output.numbersChecked === undefined)).toBe(true);
+  expect(JSON.stringify(rows)).not.toContain("PRIVATE");
+  expect((await as(s.t, "a").query(logs, {})).every((row: { level: string }) => row.level === "error")).toBe(true);
+});
+
+it("retains superseded rationale metadata as stale history without making it a checked publication", async () => {
+  const s = await seed(); const { outcome } = await rationale(s, { superseded: true });
+  expect(outcome.status).toBe("superseded");
+  await s.t.run(ctx => ctx.db.patch(s.eventId, { active: false }));
+  const rows: PublicSpan[] = await as(s.t, "a").query(spans, {});
+  expect(rows).toHaveLength(8);
+  expect(rows.every(row => row.status === "waiting" && row.output.runStatus === "superseded" && row.output.callStatus === "succeeded")).toBe(true);
+  expect(rows.every(row => row.output.numbersChecked === undefined)).toBe(true);
+  expect((await as(s.t, "a").query(logs, {})).every((row: { level: string }) => row.level === "warn")).toBe(true);
+});
+
+it("represents an unfinished rationale batch as orchestration, retains it ahead of recent work and marks a lost attempt stalled", async () => {
+  const s = await seed(); const claim = await s.t.mutation(internal.lib.rationale.begin, { eventId: s.eventId });
+  const started = await s.t.run(ctx => ctx.db.get(claim!.requestId));
+  vi.setSystemTime(started!.at + 10 * 60_000);
+  await run(s);
+  const [row] = await as(s.t, "a").query(spans, { limit: 1 });
+  expect(row).toMatchObject({ id: `${claim!.requestId}:rationale`, kind: "handoff", status: "waiting", output: { runStatus: "running", attempt: 1, stalled: true } });
+  for (const key of ["model", "provider", "tokensIn", "tokensOut", "t1", "ms"]) expect(row).not.toHaveProperty(key);
+  expect(row.output).not.toHaveProperty("candidateId");
+  expect(row.output).not.toHaveProperty("numbersChecked");
+});
+
+it("keeps rationale attempts scoped to current assigned ownership and excludes other demo histories", async () => {
+  const s = await seed(); await rationale(s);
+  for (const fn of [spans, logs]) {
+    expect(await as(s.t, "unassigned").query(fn, {})).toEqual([]);
+    await expect(as(s.t, "c").query(fn, { eventId: s.eventId })).rejects.toThrow(/FORBIDDEN/);
+    await expect(as(s.t, "eye").query(fn, {})).rejects.toThrow(/FORBIDDEN/);
+  }
+  await s.t.mutation(internal.operators.provision, companyA([]));
+  expect(await as(s.t, "a").query(spans, {})).toEqual([]);
+  await s.t.run(async ctx => {
+    const demoRunId = await ctx.db.insert("demoRuns", { scenario: "other", state: "open", startedBy: null, manifest: null, startedAt: Date.now(), closedAt: null });
+    await ctx.db.patch(s.eventId, { demoRunId });
+  });
+  expect(await as(s.t, "b").query(spans, { eventId: s.eventId })).toEqual([]);
+});
+
+it.each(["json", "duplicate", "foreign source", "wrong role", "negative usage", "reversed timing", "missing draft", "oversized"])(
+  "does not expose malformed rationale provider metadata: %s", async defect => {
+    const s = await seed(); const { end } = await rationale(s);
+    const recorded = JSON.parse(String(end.after!.spans));
+    if (defect === "duplicate") recorded[2] = recorded[0];
+    if (defect === "foreign source") recorded[0].inputVersion = `rationale-${"b".repeat(64)}:P1`;
+    if (defect === "wrong role") recorded[0].role = "operator_advocate";
+    if (defect === "negative usage") recorded[0].usage.inputTokens = -1;
+    if (defect === "reversed timing") recorded[0].finishedAt = recorded[0].startedAt - 1;
+    if (defect === "missing draft") recorded.shift();
+    await s.t.run(ctx => ctx.db.patch(end._id, { after: { ...end.after,
+      spans: defect === "json" ? "PRIVATE_INVALID_JSON" : defect === "oversized" ? " ".repeat(32_001) : JSON.stringify(recorded) } }));
+    const rows = await as(s.t, "a").query(spans, {});
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("handoff");
+    expect(rows[0]).not.toHaveProperty("tokensIn");
+    expect(rows[0]).not.toHaveProperty("provider");
+    expect(rows[0].output).not.toHaveProperty("numbersChecked");
+    expect(JSON.stringify(rows)).not.toContain("PRIVATE");
+  });
+
+it("does not link a finished receipt to another batch or expose extra raw fields", async () => {
+  const s = await seed(); const { claim, end } = await rationale(s);
+  const recorded = JSON.parse(String(end.after!.spans));
+  recorded[0].prompt = "PRIVATE_PROMPT"; recorded[1].errorMessage = "PRIVATE_TOKEN"; recorded[1].result = { reason: "PRIVATE_REASON" };
+  await s.t.run(ctx => ctx.db.patch(end._id, { summary: "PRIVATE_SUMMARY", after: { ...end.after, spans: JSON.stringify(recorded) } }));
+  expect(JSON.stringify(await as(s.t, "a").query(spans, {}))).not.toContain("PRIVATE");
+  await s.t.run(ctx => ctx.db.patch(end._id, { after: { ...end.after, requestId: "foreign_request" } }));
+  expect(await as(s.t, "a").query(spans, {})).toEqual([expect.objectContaining({ id: `${claim.requestId}:rationale`, kind: "handoff", output: expect.objectContaining({ runStatus: "running" }) })]);
+});
+
+it("fails visibly on oversized audit history rather than silently dropping an old rationale attempt", async () => {
+  const s = await seed(); const claim = await s.t.mutation(internal.lib.rationale.begin, { eventId: s.eventId });
+  await s.t.run(async ctx => {
+    const { _id, _creationTime, ...row } = (await ctx.db.get(claim!.requestId))!;
+    for (let i = 0; i < 1000; i++) await ctx.db.insert("log", { ...row, actor: { kind: "system" }, after: null });
+  });
+  for (const fn of [spans, logs]) await expect(as(s.t, "a").query(fn, { eventId: s.eventId, limit: 1 })).rejects.toThrow(/LIMIT_EXCEEDED/);
+});
+
+
+it("keeps bounded retry attempts separate without repeating measured usage within either API", async () => {
+  const s = await seed(); const first = await rationale(s, { failedCheck: true });
+  const second = await rationale(s);
+  expect(second.claim.attempt).toBe(2);
+  const rows: PublicSpan[] = await as(s.t, "a").query(spans, {});
+  expect(rows).toHaveLength(16);
+  expect(new Set(rows.map(row => row.id)).size).toBe(16);
+  expect(rows.filter(row => row.id.startsWith(String(first.claim.requestId)))).toHaveLength(8);
+  expect(rows.filter(row => row.id.startsWith(String(second.claim.requestId)))).toHaveLength(8);
+  expect(rows.reduce((sum, row) => sum + (row.tokensIn ?? 0), 0)).toBe(2 * 4 * (19 + 37));
+  expect(await as(s.t, "a").query(spans, { eventId: s.eventId })).toEqual(rows);
+  expect(await as(s.t, "a").query(spans, { eventId: s.eventId, limit: 3 })).toHaveLength(3);
+  expect(await as(s.t, "a").query(logs, {})).toHaveLength(16);
 });
