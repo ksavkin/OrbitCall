@@ -25,6 +25,9 @@ const client = makeClient();
 const AUTH0_DOMAIN = process.env.NEXT_PUBLIC_AUTH0_DOMAIN;
 const AUTH0_CLIENT_ID = process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID;
 
+/** The page's client, for mutations and actions outside React (lib/backend/run.ts). Null without a backend. */
+export const convexClient = client;
+
 /** True when a Convex client exists, so `useQuery` may run. */
 export const CONVEX_ENABLED = client !== null;
 
