@@ -14,13 +14,12 @@ Convex deploy separately (§13 Steps 5–6).
 
 | Service | Image | Network | Persistent state | Health check |
 |---|---|---|---|---|
-| `orbit` | `ghcr.io/ksavkin/orbitcall-orbit:$RELEASE_TAG`, built from `services/orbit/` | Port 8000 on the Compose network only, reached through Caddy | `orbit_snapshots` (read-only, pinned snapshots), `orbit_results` (numerical jobs and results) | `GET http://127.0.0.1:8000/health` inside the container, with Python's `urllib` |
+| `orbit` | `ghcr.io/ksavkin/orbitcall-orbit:$RELEASE_TAG`, built from `services/orbit/` | Port 3610 on the Compose network only, reached through Caddy. One Uvicorn worker: the catalog lives in memory | `orbit_data` at `/service/data` (writable): pinned snapshots, TLE groups, replay and cached validation in; `jobs/`, `sim/` and `validation/` written at runtime | `GET http://127.0.0.1:3610/health` inside the container, with Python's `urllib` |
 | `voice` | `ghcr.io/ksavkin/orbitcall-voice:$RELEASE_TAG`, built from `services/voice/` | Outbound only, to LiveKit Cloud, xAI, Anthropic, Cartesia and Convex. No published port, no Caddy route | None. Phrase buffers are short-lived; final phrases go to Convex | None yet; add one when `services/voice/` lands (see assumptions) |
 | `caddy` | `caddy:2.11.7` | Publishes 80 and 443 (TCP, plus UDP for HTTP/3) | `caddy_data` (certificates), `caddy_config` | None; check through the routes below |
 
 All three restart `unless-stopped` and log as JSON files rotated at 10 MB × 5. Compose uses the fixed project name
-`orbitcall`, so volumes are named `orbitcall_orbit_snapshots`, `orbitcall_orbit_results`, `orbitcall_caddy_data` and
-`orbitcall_caddy_config`.
+`orbitcall`, so volumes are named `orbitcall_orbit_data`, `orbitcall_caddy_data` and `orbitcall_caddy_config`.
 
 The voice worker connects outward to LiveKit Cloud. It is not the LiveKit media server, and nothing on the Droplet
 accepts audio connections.
@@ -32,8 +31,8 @@ own workspace volume and a `/scheduler/*` route when that service exists.
 
 | Public URL | Goes to | Authentication |
 |---|---|---|
-| `https://$ORBITCALL_API_HOST/orbit/health` | `orbit:8000/health` | None (readiness and loaded snapshot version) |
-| `https://$ORBITCALL_API_HOST/orbit/<path>` | `orbit:8000/<path>`, prefix stripped | The orbit service's `ORBIT_SERVICE_TOKEN` |
+| `https://$ORBITCALL_API_HOST/orbit/health` | `orbit:3610/health` | None (readiness and loaded snapshot version) |
+| `https://$ORBITCALL_API_HOST/orbit/<path>` | `orbit:3610/<path>`, prefix stripped | The orbit service's `ORBIT_SERVICE_TOKEN` |
 | Anything else | `404` | n/a |
 
 Caddy only terminates HTTPS and routes. It does not check credentials: the orbit service itself must reject every
@@ -64,7 +63,7 @@ receives just the names listed for it, so the voice worker never sees the orbit 
 | `RELEASE_TAG` | Compose (image tags) | No | The release commit SHA the host has checked out; images must carry the same tag |
 | `ORBITCALL_API_HOST` | `caddy` | No | The controlled hostname, e.g. `api.<demo-domain>` |
 | `ORBIT_SERVICE_TOKEN` | `orbit` | Yes | Same value as Convex's `ORBIT_SERVICE_TOKEN` |
-| `ORBIT_SNAPSHOT_ID` | `orbit` | No | Pinned snapshot folder; defaults to `gp-20261024T2134Z` |
+| `ORBIT_SNAPSHOT_ID` | `orbit` | No | The team snapshot to load (`snapshots/<id>/` in the data volume); defaults to `gp-20261024T2134Z`. Set it here when the team pins a new snapshot |
 | `LIVEKIT_URL` | `voice` | No | LiveKit Cloud project URL |
 | `LIVEKIT_API_KEY` | `voice` | Yes | LiveKit project key |
 | `LIVEKIT_API_SECRET` | `voice` | Yes | LiveKit project secret |
@@ -80,9 +79,10 @@ receives just the names listed for it, so the voice worker never sees the orbit 
 | `CONVEX_SITE_URL` | `voice` | No | The shared Convex deployment's `.convex.site` URL (HTTP actions) |
 | `VOICE_CALLBACK_TOKEN` | `voice` | Yes | Narrowly scoped credential the worker presents to Convex HTTP actions; Convex holds the same value |
 
-`ORBIT_SNAPSHOT_DIR=/data/snapshots` and `ORBIT_RESULTS_DIR=/data/results` are fixed in the Compose file because they
-are the container-side mount points, not host settings. Locked model IDs come from the roadmap §4 registry; changing
-one is a lock revision.
+The orbit image already sets `ORBIT_DATA=/service/data` and `ORBIT_CATALOG_MODE=omm`; the volume is mounted there.
+Its other settings keep their defaults (`ORBIT_SCREEN_DEADLINE_S` 480, `ORBIT_JOB_WORKERS` 2); add them to the
+Compose file only to change them. Do not set `ORBIT_SNAPSHOT_DIR`: it is not the data folder but an override that loads
+one alternative OMM snapshot. Locked model IDs come from the roadmap §4 registry; changing one is a lock revision.
 
 Generate the two shared tokens on the host, for example `openssl rand -hex 32`, and set the same values in Convex.
 
@@ -90,19 +90,26 @@ Generate the two shared tokens on the host, for example `openssl rand -hex 32`, 
 
 Run from the checked-out release commit at the repository root.
 
-### 1. Seed the snapshot volume (first deploy, or a new pinned snapshot)
+### 1. Seed the orbit data volume (first deploy, or a new pinned snapshot)
 
-Snapshot folders are immutable, so copying all of `data/snapshots/` from the checkout is safe and repeatable:
+The orbit service reads one data folder built by its own script from the checkout: the pinned OMM and SOCRATES
+snapshots (`data/snapshots/`), the TLE groups (`web/data/snapshot/`), and the replay and cached validation shipped in
+`services/orbit/data/`. Build it outside the checkout (the script refuses a target inside it), then copy it into the
+volume:
 
 ```sh
+services/orbit/setup-data.sh "$PWD" /tmp/orbit-data
+docker volume create orbitcall_orbit_data
 docker run --rm \
-  -v orbitcall_orbit_snapshots:/dst \
-  -v "$PWD/data/snapshots:/src:ro" \
+  -v orbitcall_orbit_data:/dst \
+  -v /tmp/orbit-data:/src:ro \
   alpine cp -a /src/. /dst/
 ```
 
-On the first deploy, create the volume before copying: `docker volume create orbitcall_orbit_snapshots`. For a new
-snapshot on a running host, copy it, then `docker compose ... restart orbit`.
+The volume must stay writable: the service writes `jobs/`, `sim/` and `validation/` into it, and copying a new seed
+over it keeps existing job records. The service refuses to start if the pinned snapshot is missing or fails its sha256
+check. After the team pins a new snapshot, rerun both commands, set `ORBIT_SNAPSHOT_ID` if it changed, and
+`docker compose ... restart orbit`.
 
 ### 2. Start the services (roadmap §13 Step 3)
 
@@ -132,10 +139,9 @@ through Convex and join one LiveKit room with speech in each language before cal
 ## Assumed names, confirm with the service code
 
 These were chosen here because the roadmap does not name them. Rename them in this folder if the services use
-different ones.
+different ones. The orbit variables (`ORBIT_SERVICE_TOKEN`, `ORBIT_SNAPSHOT_ID`) are the service's own, from
+`services/orbit/README.md`.
 
-- `ORBIT_SNAPSHOT_DIR`, `ORBIT_RESULTS_DIR`: the snapshot and results paths the orbit service reads.
-- `ORBIT_SNAPSHOT_ID`: which pinned snapshot folder under `ORBIT_SNAPSHOT_DIR` it loads and reports in `/health`.
 - `VOICE_CALLBACK_TOKEN`: the voice worker's Convex callback credential.
 - `CARTESIA_VOICE_ID_EN`, `CARTESIA_VOICE_ID_ZH`: the per-language Cartesia voice IDs.
 - `ORBITCALL_API_HOST`: Caddy's site address.
@@ -144,11 +150,9 @@ different ones.
 
 Other assumptions about the services:
 
-- Each service has a `Dockerfile` at its directory root, and the orbit image includes `python` (used by its health check).
-- The orbit service listens on port 8000 (Uvicorn), serves `/health` without the token, and checks
-  `ORBIT_SERVICE_TOKEN` itself on every other route.
-- The orbit service only reads snapshots (the volume is mounted read-only) and writes jobs and results under
-  `ORBIT_RESULTS_DIR`.
+- The voice service has a `Dockerfile` at its directory root. The orbit service's (`python:3.12-slim`, Uvicorn on
+  3610, one worker) is confirmed: its `/health` needs no token and returns the loaded `snapshotId` and object count,
+  and every other route checks `X-Service-Token`.
 - The voice worker exposes no HTTP route, so it has no health check yet. A process check would always pass while the
   container runs. If it is built on LiveKit Agents, add a check against its worker health server (port 8081 by default).
 - The orbit service has no backend callback credential; roadmap §13 Step 4 adds one only if that path is implemented.
