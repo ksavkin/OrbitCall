@@ -1,17 +1,17 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUpRight, DoorOpen, ServerOff } from "lucide-react";
+import { ArrowUpRight, DoorOpen } from "lucide-react";
 import { useMemo, useState } from "react";
 import { fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent } from "@/lib/ops/types";
 import { sfx } from "@/lib/sound";
 import { Flag } from "@/components/ui/OwnerBadge";
-import { toggleDev } from "@/components/ui/Navbar";
 import { STATUS_META } from "@/components/ops/meta";
 import { CallStage, type FlagOf } from "./CallStage";
 import { useSimCall } from "./simCall";
+import { LiveRoom, useLiveTarget, type LiveTarget } from "./LiveRoom";
 
 // Rooms: one coordination room per incident, with the live call in the middle and the case beside it.
 // Dev mode runs a simulated call with the same shape as the real hook; live mode waits for the backend's
@@ -44,6 +44,7 @@ export function RoomsScreen() {
   const [pick, setPick] = useState<string | null>(null);
   const roomId = pick && rooms.some((r) => r.id === pick) ? pick : (rooms[0]?.id ?? null);
   const e = rooms.find((r) => r.id === roomId);
+  const [live, setLive] = useLiveTarget();
 
   return (
     <motion.div
@@ -53,10 +54,10 @@ export function RoomsScreen() {
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="pointer-events-auto absolute inset-x-2.5 bottom-[42px] top-[58px] z-[38] grid grid-cols-[280px_minmax(0,1fr)_320px] overflow-hidden rounded-[18px] bg-[rgba(4,4,5,0.94)] text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_40px_100px_-30px_rgba(0,0,0,0.9)] backdrop-blur-2xl"
     >
-      <RoomList rooms={rooms} active={roomId} onPick={setPick} />
+      {dev ? <RoomList rooms={rooms} active={roomId} onPick={setPick} /> : <LiveList target={live} onClose={() => setLive(null)} />}
       <div className="flex min-h-0 flex-col border-x border-white/[0.06]">
         {!dev ? (
-          <LiveUnavailable />
+          <LiveRoom target={live} onOpen={setLive} onLeave={() => setLive(null)} />
         ) : e ? (
           <RoomCall key={e.id} e={e} />
         ) : (
@@ -66,7 +67,7 @@ export function RoomsScreen() {
           />
         )}
       </div>
-      <CaseSide e={dev ? e : undefined} />
+      {dev ? <CaseSide e={e} /> : <LiveSide />}
     </motion.div>
   );
 }
@@ -208,18 +209,44 @@ function CaseSide({ e }: { e: ConjunctionEvent | undefined }) {
   );
 }
 
-function LiveUnavailable() {
+function LiveList({ target, onClose }: { target: LiveTarget | null; onClose: () => void }) {
   return (
-    <Empty
-      icon={<ServerOff size={18} />}
-      title="Live rooms need the call backend"
-      body="The call module is installed in the app. Live rooms start once the backend deploys its call functions (convex/call) and the voice worker runs with its keys. The /call test page checks the real path with a seeded room."
-      action={
-        <button className="btn btn-ghost-line mt-4 h-9 px-3 text-[12.5px]" onClick={() => toggleDev()}>
-          Try a simulated room <span className="kbd">D</span>
-        </button>
-      }
-    />
+    <div className="flex min-h-0 flex-col">
+      <div className="px-5 pb-3 pt-5">
+        <div className="text-[16px] font-semibold text-white">Rooms</div>
+        <div className="text-[12px] text-neutral-500">Live calls · voice translated by the worker</div>
+      </div>
+      <div className="px-2.5">
+        {target ? (
+          <div className="relative rounded-[12px] bg-white/[0.07] px-3 py-2.5">
+            <span className="absolute inset-y-2 left-0 w-[2px] rounded-full bg-white" />
+            <div className="text-[11px] text-neutral-500">Open room</div>
+            <div className="mono mt-1 truncate text-[13px] text-white">{target.roomId}</div>
+            <button className="mt-2 text-[12px] text-neutral-400 underline-offset-2 hover:text-white hover:underline" onClick={onClose}>
+              Open another room
+            </button>
+          </div>
+        ) : (
+          <div className="px-3 py-6 text-[12.5px] text-neutral-600">No room open.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LiveSide() {
+  return (
+    <div className="px-5 py-5">
+      <div className="text-[12px] font-semibold text-neutral-500">How the room works</div>
+      <ul className="mt-2.5 space-y-2 text-[12.5px] leading-[1.55] text-neutral-400">
+        <li>Each person speaks their own language. The translator repeats every phrase in the other languages.</li>
+        <li>Numbers, times and IDs are copied exactly, never translated.</li>
+        <li>You hear only the translations, never the other person&rsquo;s raw microphone.</li>
+      </ul>
+      <p className="mt-5 rounded-[12px] bg-white/[0.03] px-3.5 py-3 text-[12.5px] leading-[1.55] text-neutral-400">
+        Talking never approves anything. Approve or reject the plan in the case.
+      </p>
+    </div>
   );
 }
 
