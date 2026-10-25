@@ -3,6 +3,8 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { roomOfEvent } from "../rooms";
 import { inputKey } from "./analyst";
 import { loadFacts } from "./events";
+import { isResolved } from "./decision";
+import { fleetEvents, fleetIds, resolveFleet } from "../fleetQuery";
 
 // Approval rules shared by proposals.ts, approvals.ts and candidates.publish (spec §4.1, ROOM-7, ROOM-11, ROOM-14).
 // Main's write-time model: a reset marks approval rows not current and advances the selection generation; old rows
@@ -31,7 +33,7 @@ export async function classifyIfUnset(ctx: MutationCtx, event: Doc<"events">): P
   return { ...event, ...patch };
 }
 
-export type ResetReason = "selection_changed" | "revision_changed" | "proposal_withdrawn" | "vetoed" | "policy_changed" | "assignment_revoked";
+export type ResetReason = "selection_changed" | "revision_changed" | "proposal_withdrawn" | "vetoed" | "policy_changed" | "assignment_revoked" | "evidence_changed";
 type Next = { proposalId: Id<"proposals">; revision: number } | null;
 type By = Doc<"selections">["by"];
 
@@ -100,8 +102,16 @@ export const allApproved = (event: Doc<"events">, counted: Map<Side, unknown>) =
 export const turnOf = (event: Doc<"events">, counted: Map<Side, unknown>): Side | null =>
   [...(event.requiredApprovalSides ?? [])].sort().find(s => !counted.has(s)) ?? null;
 
-/** A material change (policy, authorization) resets the event's approvals and keeps its selected card (spec §4.1). */
+/**
+ * A material change (policy, evidence, authorization) resets the event's approvals and keeps its selected card. After
+ * consensus it flags the plan for review instead and never silently undoes the agreement (spec §4.1).
+ */
 export async function resetApprovals(ctx: MutationCtx, event: Doc<"events">, reason: ResetReason) {
+  if (isResolved(event)) {
+    const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
+    if (set && !set.reviewRequired) await ctx.db.patch(set._id, { reviewRequired: true });
+    return;
+  }
   const row = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
   // Approvals need a selection, so an event without one has nothing to reset.
   if (!row) return;
@@ -110,18 +120,18 @@ export async function resetApprovals(ctx: MutationCtx, event: Doc<"events">, rea
 }
 
 /**
- * Called after provisioning changes a user's role or assignments: every current approval the user signed for an
- * object they no longer hold as an operator is reset at once, so restoring the assignment never revives it (ACC-2).
+ * Called after provisioning changes a user's role or assignments, with the objects the user held before: every
+ * current approval the user signed on an active event of those objects, for an object they no longer hold as an
+ * operator, is reset at once, so restoring the assignment never revives it (ACC-2). Bounded like the queue: the
+ * active-event range of fleetEvents and one indexed approvals read per event.
  */
-export async function revalidateApprover(ctx: MutationCtx, userId: Id<"users">) {
+export async function revalidateApprover(ctx: MutationCtx, userId: Id<"users">, heldObjectIds: string[]) {
   const user = await ctx.db.get(userId);
-  // No index by user: approvals are few per deployment, and a missed row would keep a revoked approval alive.
-  const rows: Doc<"approvals">[] = [];
-  for await (const row of ctx.db.query("approvals")) if (row.userId === userId && row.current) rows.push(row);
-  for (const eventId of new Set(rows.map(r => r.eventId))) {
-    const event = await ctx.db.get(eventId);
-    if (!event) continue;
-    const stale = await Promise.all(rows.filter(r => r.eventId === eventId).map(async r => {
+  const fleet = fleetIds(await resolveFleet(ctx, heldObjectIds.map(objectId => ({ objectId, since: 0 }))));
+  for (const event of await fleetEvents(ctx, fleet, true)) {
+    const rows = (await ctx.db.query("approvals").withIndex("by_event_current", q => q.eq("eventId", event._id).eq("current", true)).collect())
+      .filter(r => r.userId === userId);
+    const stale = await Promise.all(rows.map(async r => {
       const object = await ctx.db.get(r.side === "A" ? event.objectAId : event.objectBId);
       const assignment = object && await ctx.db.query("fleetAssignments").withIndex("by_user_object", q =>
         q.eq("userId", userId).eq("objectId", object.objectId)).unique();

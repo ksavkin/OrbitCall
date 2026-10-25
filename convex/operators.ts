@@ -49,9 +49,11 @@ export const provision = internalMutation({
       };
       if (user) await ctx.db.patch(user._id, profile);
       const userId = user?._id ?? await ctx.db.insert("users", { tokenIdentifier: member.tokenIdentifier, companyId, ...profile });
+      const held = user ? (await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", userId)).collect())
+        .filter(a => a.active).map(a => a.objectId) : [];
       await setActiveAssignments(ctx, (await ctx.db.get(userId))!, member.assignedObjectIds, { created: !user });
       // A revoked assignment or role resets the approvals it signed (ACC-2, spec §4.1).
-      if (user) await revalidateApprover(ctx, userId);
+      if (held.length) await revalidateApprover(ctx, userId, held);
     }
     return { companyId };
   },
