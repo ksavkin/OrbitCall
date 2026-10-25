@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { internal } from "../convex/_generated/api";
 import { FIXTURE_NOW } from "../fixtures/events";
-import { backend, catalogSources, pair, registerSnapshot, scheduledAnalystStarts } from "./helpers";
+import { backend, catalogSources, insertEvent, pair, registerSnapshot, scheduledAnalystStarts } from "./helpers";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -90,6 +90,39 @@ describe("bulk loading", () => {
     await t.mutation(internal.ingest.upsertBatch, { snapshot, pairs: [pair(100, 200, 5, 1e-3), pair(100, 201, 6, 1e-3), pair(100, 200, 50, 1e-3)] });
     expect(await t.run(ctx => ctx.db.query("spaceObjects").collect())).toHaveLength(3);
     expect(await t.run(ctx => ctx.db.query("events").collect())).toHaveLength(3);
+  });
+
+  it("retires this snapshot's pairs that a reload no longer lists and keeps the rest", async () => {
+    const t = backend();
+    const snapshot = await registerSnapshot(t);
+    const other = await registerSnapshot(t, "socrates-other");
+    await t.mutation(internal.ingest.upsertBatch, { snapshot, pairs: rows() });
+    await t.mutation(internal.ingest.upsertBatch, { snapshot: other, pairs: [pair(300, 400, 10, 2e-4)] });
+    const fixture = await insertEvent(t);
+    const before = await t.run(ctx => ctx.db.query("events").collect());
+    expect(before.filter(e => e.active)).toHaveLength(6);
+
+    // The new file keeps the first two rows; the second one 30 s off is still the same encounter.
+    const key = (p: ReturnType<typeof pair>) => ({ objectA: p.objectA.objectId, objectB: p.objectB.objectId, tcaUtc: p.tcaUtc });
+    const [first, second] = rows();
+    const listed = [key(first), { ...key(second), tcaUtc: new Date(Date.parse(second.tcaUtc) + 30_000).toISOString() }];
+    expect(await t.mutation(internal.ingest.retireMissing, { snapshot, pairs: listed, limit: 1 })).toEqual({ checked: 4, retired: 1 });
+    expect(await t.mutation(internal.ingest.retireMissing, { snapshot, pairs: listed })).toEqual({ checked: 3, retired: 1 });
+    expect(await t.mutation(internal.ingest.retireMissing, { snapshot, pairs: listed })).toEqual({ checked: 2, retired: 0 });
+
+    const after = await t.run(ctx => ctx.db.query("events").collect());
+    expect(after.map(e => e._id)).toEqual(before.map(e => e._id));
+    const retired = after.filter(e => !e.active);
+    expect(retired.map(e => e.pcValue).sort()).toEqual([1e-7, null]);
+    expect(retired.every(e => e.snapshotId === snapshot)).toBe(true);
+    expect(after.find(e => e.snapshotId === other)!.active).toBe(true);
+    expect(after.find(e => e._id === fixture)!.active).toBe(true);
+
+    // A later file that lists the pair again brings it back under the same _id.
+    await t.mutation(internal.ingest.upsertBatch, { snapshot, pairs: [rows()[2]] });
+    const revived = await t.run(ctx => ctx.db.query("events").collect());
+    expect(revived.filter(e => e.active)).toHaveLength(5);
+    expect(revived.map(e => e._id)).toEqual(before.map(e => e._id));
   });
 
   it("rejects a snapshot that was never registered", async () => {
