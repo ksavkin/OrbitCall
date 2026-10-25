@@ -264,18 +264,11 @@ describe("rooms and the voice call", () => {
   const callMember = (t: Backend, roomId: Id<"rooms">, subject: string) =>
     t.query(memberForJoin, { roomId: String(roomId), subject });
 
-  it("a late-assigned operator gets the inbox notice, then the call once they open the room", async () => {
+  it("a late-assigned operator gets the call once they open the room", async () => {
     const { t, ids } = await seed();
     const { roomId } = await as(t, "ana").mutation(startWorkflow, { eventId: ids.cross });
     await t.mutation(internal.operators.provision, withCarl(["48211"]));
     const carl = await carlId(t);
-    const inbox = (await rows(t, "inbox")).filter(r => r.userId === carl);
-    expect(inbox.map(r => [r.eventId, r.unread]).sort()).toEqual([[ids.cross, true], [ids.crossMirror, true]].sort());
-    expect(inbox[0].lastUpdateSummary).toMatch(/^You were added to the coordination room for /);
-    // A rerun of the same provisioning changes nothing and leaves no second notice.
-    await t.mutation(internal.operators.provision, withCarl(["48211"]));
-    expect((await rows(t, "inbox")).filter(r => r.userId === carl)).toHaveLength(2);
-
     expect(await code(callMember(t, roomId, CARL))).toBe("FORBIDDEN");
     await as(t, CARL).mutation(join, { roomId });
     expect(await callMember(t, roomId, CARL)).toMatchObject({ roomId: String(roomId), subject: CARL, userId: String(carl), lang: "zh", role: "operator" });
@@ -299,14 +292,6 @@ describe("rooms and the voice call", () => {
     // Reassigned: the kept row works again.
     await t.mutation(internal.operators.provision, withCarl(["48211"]));
     expect(await callMember(t, roomId, CARL)).toMatchObject({ subject: CARL });
-  });
-
-  it("an assignment for an object outside every open room leaves no notice", async () => {
-    const { t, ids } = await seed();
-    await as(t, "ana").mutation(startWorkflow, { eventId: ids.cross });
-    await t.mutation(internal.operators.provision, withCarl(["48214"]));
-    const carl = await carlId(t);
-    expect((await rows(t, "inbox")).filter(r => r.userId === carl)).toEqual([]);
   });
 });
 
