@@ -21,17 +21,19 @@ export const ingest = internalMutation({
   },
 });
 
-const DEFAULT_LIMIT = 50, MAX_LIMIT = 200;
-// A snapshot loads at most ~1000 events (plan D9); the cap keeps the scan far inside Convex limits.
+// The only bound: a snapshot loads at most ~1000 events (plan D9), and this cap keeps the scan and the
+// per-row joins inside Convex's per-query read limits.
 const MAX_ACTIVE = 5000;
 
-// Real pairs for context (spec §3.2), no sign-in in Phase 1. Reads the stored color and active flag
-// only, so the result changes when the recolor cron writes, not as time passes.
+// Real pairs for context (spec §3.2), no sign-in in Phase 1. Every active real pair, in queue order;
+// the frontend filters. `limit` is optional and only trims the result (older clients still send 50).
+// Reads the stored color and active flag only, so the result changes when the recolor cron writes,
+// not as time passes.
 export const catalogPairs = query({
   args: { limit: v.optional(v.number()) },
   returns: v.array(eventRow),
   handler: async (ctx, { limit }) => {
-    const n = Math.min(MAX_LIMIT, Math.max(0, Math.floor(limit !== undefined && Number.isFinite(limit) ? limit : DEFAULT_LIMIT)));
+    const n = limit !== undefined && Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : MAX_ACTIVE;
     const active = await ctx.db.query("events").withIndex("by_active", q => q.eq("active", true)).take(MAX_ACTIVE);
     const top = active.filter(e => !e.simulated).sort(compareQueue).slice(0, n);
     // Join only the returned rows; objects and snapshots are read once each.

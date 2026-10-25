@@ -73,7 +73,7 @@ describe("events.catalogPairs", () => {
     expect(rows.find(r => r.objectA.objectId === "109")?.pc.value).toBe(0);
   });
 
-  it("applies the limit: default 50, cap 200, zero is empty", async () => {
+  it("returns every active pair unless a limit trims it; zero is empty", async () => {
     const t = await loaded();
     expect((await t.query(api.events.catalogPairs, { limit: 3 })).map(r => r.objectA.objectId)).toEqual(["100", "101", "102"]);
     expect(await t.query(api.events.catalogPairs, { limit: 0 })).toEqual([]);
@@ -83,8 +83,9 @@ describe("events.catalogPairs", () => {
     const many = Array.from({ length: 220 }, (_, i) => pair(1000 + i, 2000 + i, 80 + i / 100, 1e-6));
     await t.mutation(internal.ingest.upsertBatch, { snapshot, pairs: many.slice(0, 100) });
     await t.mutation(internal.ingest.upsertBatch, { snapshot, pairs: many.slice(100) });
-    expect(await t.query(api.events.catalogPairs, {})).toHaveLength(50);
-    expect(await t.query(api.events.catalogPairs, { limit: 100000 })).toHaveLength(200);
+    expect(await t.query(api.events.catalogPairs, {})).toHaveLength(233);
+    expect(await t.query(api.events.catalogPairs, { limit: 100000 })).toHaveLength(233);
+    expect(await t.query(api.events.catalogPairs, { limit: 50 })).toHaveLength(50);
   });
 
   it("reports working and stalled agents from the runs", async () => {
