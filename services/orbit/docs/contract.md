@@ -138,8 +138,11 @@ Without both (the v1 shape the current Convex provider sends) or with `?wait=1`:
 Also accepts `jobId`, `proposalId`, `revision`, `runId` (echoed).
 Result — spec `Rescreen` plus diagnostics:
 ```ts
-{ passed: boolean;               // originalMissAfterKm ≥ 1 and no other object < 1 km
+{ passed: boolean;               // original pair ≥ 1 km (exact distance, before rounding), no other object
+                                 // < 1 km, and every object screened over the whole horizon [PR #14]
   objectsChecked: number;        // objects that survived the radius-band prefilter and were propagated
+  unpropagatedObjectIds: ObjectId[];   // [PR #14] objects SGP4 cannot propagate over part of the horizon: not
+                                       // screened there, not in objectsChecked; any entry makes passed false
   objectsInCatalog: number;
   horizonH: number;
   originalMissAfterKm: number | null;

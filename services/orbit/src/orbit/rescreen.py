@@ -87,8 +87,10 @@ def rescreen(cat: Catalog, body: dict, progress=None) -> dict:
     others = [o for o in others if o.object_id not in attached]
     partner_group = ({partner_id} | set(attached_to(partner, others))) if partner else set()
     uncovered: list[dict] = []
+    unpropagated: set = set()  # objects SGP4 cannot propagate over part of the horizon: unscreened there
     try:
-        hits, checked = screen_one(moved, others, burn, end, THRESHOLD_KM, uncovered=uncovered)
+        hits, checked = screen_one(moved, others, burn, end, THRESHOLD_KM, uncovered=uncovered,
+                                   unpropagated=unpropagated)
     except PropagationError as exc:
         return _refused(cat, obj, horizon_h, simulated, body.get("evidenceVersion"), str(exc))
     orig_miss = original.miss_km if original else None
@@ -111,14 +113,20 @@ def rescreen(cat: Catalog, body: dict, progress=None) -> dict:
            for h, also in collapse_same_body(hits, cat.objects, prefer=partner_group)]
     orig_km = round(orig_miss, 3) if original else None
     reasons = []
-    if orig_km is not None and orig_km < THRESHOLD_KM:
-        reasons.append(f"original pair still {orig_km} km apart (< {THRESHOLD_KM} km)")
+    # The threshold applies to the exact distance; only the reported figure is rounded (0.9996 km is not a pass).
+    if original and orig_miss < THRESHOLD_KM:
+        reasons.append(f"original pair still {round(orig_miss, 4)} km apart (< {THRESHOLD_KM} km)")
     if new:
         reasons.append(f"new conjunction with {new[0]['name']} ({new[0]['objectId']}) at {new[0]['missKm']} km, {new[0]['tcaUtc']}")
     if orig_km is None:
         reasons.append("partner not given: original pair not checked")
+    unscreened = sorted(unpropagated)
+    if unscreened:  # an unchecked possible encounter is never a pass
+        reasons.append(f"{len(unscreened)} catalog object(s) could not be propagated over part of the horizon, so "
+                       f"their encounters are unchecked: {', '.join(unscreened[:5])}{' …' if len(unscreened) > 5 else ''}")
     return {
-        "passed": not reasons, "objectsChecked": checked, "objectsInCatalog": len(cat.objects) - 1,
+        "passed": not reasons, "objectsChecked": checked - len(unscreened), "objectsInCatalog": len(cat.objects) - 1,
+        "unpropagatedObjectIds": unscreened,
         "horizonH": horizon_h, "originalMissAfterKm": orig_km, "newConjunctions": new,
         "refusalReason": "; ".join(reasons) or None,
         "attachedObjectIds": sorted(attached), "partnerAttachedObjectIds": sorted(partner_group - {partner_id}),
@@ -137,6 +145,7 @@ def rescreen(cat: Catalog, body: dict, progress=None) -> dict:
 
 def _refused(cat: Catalog, obj, horizon_h: float, simulated: bool, evidence, reason: str) -> dict:
     return {"passed": False, "objectsChecked": 0, "objectsInCatalog": len(cat.objects) - 1, "horizonH": horizon_h,
+            "unpropagatedObjectIds": [],
             "originalMissAfterKm": None, "newConjunctions": [], "refusalReason": reason,
             "snapshotId": cat.snapshot_id, "evidenceVersion": evidence, "simulated": simulated, "method": "not run",
             "limitations": ["The maneuver could not be propagated with SGP4; nothing was screened."]}

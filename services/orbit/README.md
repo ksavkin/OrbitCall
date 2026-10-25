@@ -61,7 +61,7 @@ one catalog, and a job that names a snapshotId is not refused with 409 `SNAPSHOT
 | Path | What |
 |---|---|
 | `src/orbit/` | FastAPI app (`app.py`), jobs (`jobs.py`), the physics (`candidates.py`, `rescreen.py`, `screen.py`, `verify.py`, `validation.py`, `objects.py`, `simulate.py`, `impulse.py`, `track.py`, `conjunction.py`, `catalog.py`) |
-| `src/tests/` | pytest suite (93 tests; 2 skip without the service's own OMM fetch), reads the data folder at `../data` (`/service/data` in the image) |
+| `src/tests/` | pytest suite (96 tests; 2 skip without the service's own OMM fetch), reads the data folder at `../data` (`/service/data` in the image) |
 | `src/tools/` | the measurements behind decisions O3 and O5, the replay builder, `run_validation.py` |
 | `data/omm/<fetch>/` | the service's own CelesTrak GP **OMM** fetch (six groups, 19,473 objects, fetched 2026-10-24T22:52:29Z, manifest with sha256 checked at load): an alternative used only with an explicit `ORBIT_SNAPSHOT_DIR`, and read by two tests. **Optional, not in git** (~8 MB): without it the two tests that read it skip; place a copy under `data/omm/<fetch>/` to run them. Real mode uses the team's snapshot |
 | `data/replay/` | NASA's public ISS ephemeris (OEM, sha256 in the meta file) and the **simulated** reboost replay built from it, labeled simulated |
@@ -146,11 +146,20 @@ What Convex has today: nothing calls the service yet. The client is a separate R
 Convex should send `snapshotId` once it does, so the service can refuse a mismatched catalog with 409.
 
 ## Changes from the delivered package
-Copied as delivered, with two changes so a fresh clone can build its data and run the tests:
+Copied as delivered, with these changes. The first two let a fresh clone build its data and run the tests; the third
+fixes two re-screen verdict bugs found in the PR #14 review (Codex):
 - `setup-data.sh` may fill `services/orbit/data` (git-ignored) inside the checkout, and skips copying `data/omm/` when
   it is absent (the service's own 8 MB OMM fetch is not committed).
 - The two tests that read that fetch take a `lane_dir` fixture and skip without it; the team-snapshot assertions of
-  one of them moved to their own test (93 tests: 91 pass and 2 skip on a fresh clone).
+  one of them moved to their own test.
+- `/rescreen` (`src/orbit/rescreen.py`): a catalog object that SGP4 cannot propagate over part of the horizon was
+  silently left out, so the answer could be `passed: true` with that object counted as checked. It is now listed in
+  `unpropagatedObjectIds`, left out of `objectsChecked`, and the answer is `passed: false`, because an unchecked
+  possible encounter is never a pass. On the pinned snapshot no object of the tested maneuvers is affected. The 1 km
+  threshold for the original pair is now compared with the exact distance; only `originalMissAfterKm` is rounded
+  (0.9996 km used to round to 1.0 and pass). Tests: `src/tests/test_rescreen_coverage.py`.
+
+96 tests: 94 pass and 2 skip on a fresh clone.
 
 ## CI and deployment notes
 - Dependencies are in `src/requirements.txt`, tests in `src/tests` (they import `orbit` from `src/`). Before pytest,
