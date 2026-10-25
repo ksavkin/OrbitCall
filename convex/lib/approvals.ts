@@ -3,7 +3,8 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { roomOfEvent } from "../rooms";
 import { inputKey } from "./analyst";
 import { loadFacts } from "./events";
-import { isResolved } from "./decision";
+import { RESOLVED_STATUSES } from "./decision";
+import { LEGACY_ASSIGNMENT_VERSION } from "./accounts";
 import { fleetEvents, fleetIds, resolveFleet } from "../fleetQuery";
 
 // Approval rules shared by proposals.ts, approvals.ts and candidates.publish (spec §4.1, ROOM-7, ROOM-11, ROOM-14).
@@ -89,11 +90,14 @@ export async function countingApprovals(ctx: QueryCtx, event: Doc<"events">, sel
       ctx.db.get(row.userId),
       ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", row.userId).eq("objectId", object.objectId)).unique(),
     ]);
-    if (owner?.companyId !== row.companyId || user?.role !== "operator" || user.companyId !== row.companyId || !assignment?.active) continue;
+    if (owner?.companyId !== row.companyId || user?.role !== "operator" || user.companyId !== row.companyId || !assignment?.active
+      || row.assignmentVersion !== assignmentVersionOf(user)) continue;
     counted.set(row.side, row);
   }
   return counted;
 }
+
+export const assignmentVersionOf = (user: Doc<"users">) => user.assignmentVersion ?? LEGACY_ASSIGNMENT_VERSION;
 
 export const allApproved = (event: Doc<"events">, counted: Map<Side, unknown>) =>
   !!event.requiredApprovalSides?.length && event.requiredApprovalSides.every(s => counted.has(s));
@@ -107,7 +111,8 @@ export const turnOf = (event: Doc<"events">, counted: Map<Side, unknown>): Side 
  * consensus it flags the plan for review instead and never silently undoes the agreement (spec §4.1).
  */
 export async function resetApprovals(ctx: MutationCtx, event: Doc<"events">, reason: ResetReason) {
-  if (isResolved(event)) {
+  // Decided by status only: an inactive but undecided event can come back, and its approvals must not.
+  if (RESOLVED_STATUSES.has(event.status ?? "new")) {
     const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
     if (set && !set.reviewRequired) await ctx.db.patch(set._id, { reviewRequired: true });
     return;
@@ -122,8 +127,9 @@ export async function resetApprovals(ctx: MutationCtx, event: Doc<"events">, rea
 /**
  * Called after provisioning changes a user's role or assignments, with the objects the user held before: every
  * current approval the user signed on an active event of those objects, for an object they no longer hold as an
- * operator, is reset at once, so restoring the assignment never revives it (ACC-2). Bounded like the queue: the
- * active-event range of fleetEvents and one indexed approvals read per event.
+ * operator, is reset at once and visibly (ACC-2). Bounded like the queue: the active-event range of fleetEvents and
+ * one indexed approvals read per event. Rows outside that range still never revive: countingApprovals requires the
+ * approver's assignmentVersion to be the one stored on the row.
  */
 export async function revalidateApprover(ctx: MutationCtx, userId: Id<"users">, heldObjectIds: string[]) {
   const user = await ctx.db.get(userId);
@@ -135,7 +141,7 @@ export async function revalidateApprover(ctx: MutationCtx, userId: Id<"users">, 
       const object = await ctx.db.get(r.side === "A" ? event.objectAId : event.objectBId);
       const assignment = object && await ctx.db.query("fleetAssignments").withIndex("by_user_object", q =>
         q.eq("userId", userId).eq("objectId", object.objectId)).unique();
-      return user?.role !== "operator" || user.companyId !== r.companyId || !assignment?.active;
+      return user?.role !== "operator" || user.companyId !== r.companyId || !assignment?.active || r.assignmentVersion !== assignmentVersionOf(user);
     }));
     if (stale.some(Boolean)) await resetApprovals(ctx, event, "assignment_revoked");
   }

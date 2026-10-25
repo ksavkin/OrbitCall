@@ -2,7 +2,7 @@ import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { requireParty, requireReader } from "./lib/operatorAccess";
-import { advanceSelection, allApproved, classifyIfUnset, countingApprovals, currentEvidence, turnOf } from "./lib/approvals";
+import { advanceSelection, allApproved, assignmentVersionOf, classifyIfUnset, countingApprovals, currentEvidence, turnOf } from "./lib/approvals";
 import { isResolved } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
@@ -68,7 +68,7 @@ export const approve = mutation({
         eventId: d.event._id, side: d.side, status: "approved", userId: d.user._id, companyId: d.user.companyId,
         proposalId: args.proposalId, revision: args.revision, selectionGeneration: args.selectionGeneration,
         approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null,
-        demoRunId: d.event.demoRunId ?? null, current: true, at: Date.now(),
+        demoRunId: d.event.demoRunId ?? null, current: true, at: Date.now(), assignmentVersion: assignmentVersionOf(d.user),
       });
       counted = await countingApprovals(ctx, d.event, d.selection);
     }
