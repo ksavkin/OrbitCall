@@ -7,12 +7,14 @@ import { useMe, useSession } from "@/components/auth/session";
 import { Chip } from "@/components/ui/Chip";
 import { Select } from "@/components/ui/Popover";
 import { ScreenFrame, ScreenMessage } from "@/components/ui/ScreenFrame";
-import { useRealMode } from "@/lib/backend/live";
+import { useLive, useRealMode } from "@/lib/backend/live";
 import { fmtUtc } from "@/lib/format";
 import { useOps } from "@/lib/ops/store";
 import { sfx } from "@/lib/sound";
 import { AUDIT_ACTION, auditEntries, defaultPeriod, periodBounds, type AuditEntry } from "./fromEvents";
 import { InboxNotices } from "./InboxNotices";
+import { LiveLog, LiveReport } from "./LiveAudit";
+import { Empty, Missing, Stat } from "./parts";
 
 const PAGE = 50;
 
@@ -108,6 +110,8 @@ function DevNotices() {
 
 function AuditBody({ companyName }: { companyName: string }) {
   const dev = useOps((s) => s.dev);
+  const real = useRealMode();
+  const inbox = useLive((s) => s.inbox);
   const events = useOps((s) => s.events);
   const replies = useOps((s) => s.replies);
   const [eventId, setEventId] = useState("");
@@ -121,13 +125,17 @@ function AuditBody({ companyName }: { companyName: string }) {
   }, []);
 
   const rows = useMemo(() => (dev ? auditEntries(events, replies) : []), [dev, events, replies]);
-  const filtered = eventId ? rows.filter((r) => r.eventId === eventId) : rows;
-  const shown = filtered.slice(0, pages * PAGE);
   const cases = useMemo(() => {
+    // the backend log filters by any case in my inbox; the simulator only by cases that have rows
+    if (real) return (inbox ?? []).map((e): [string, string] => [e.eventId, e.title]);
     const seen = new Map<string, string>();
     for (const row of rows) if (!seen.has(row.eventId)) seen.set(row.eventId, row.eventLabel);
     return [...seen.entries()];
-  }, [rows]);
+  }, [real, inbox, rows]);
+  // a case picked in the other mode, or one no longer listed, falls back to all cases
+  const caseId = cases.some(([id]) => id === eventId) ? eventId : "";
+  const filtered = caseId ? rows.filter((r) => r.eventId === caseId) : rows;
+  const shown = filtered.slice(0, pages * PAGE);
 
   const bounds = period ? periodBounds(period.start, period.end) : null;
   const simulatedInPeriod = bounds
@@ -149,7 +157,7 @@ function AuditBody({ companyName }: { companyName: string }) {
             <Select
               size="md"
               label="Case"
-              value={eventId}
+              value={caseId}
               onChange={(id) => {
                 setEventId(id);
                 setPages(1);
@@ -162,7 +170,9 @@ function AuditBody({ companyName }: { companyName: string }) {
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
           <Notices />
-          {!dev ? (
+          {real ? (
+            <LiveLog eventId={caseId} />
+          ) : !dev ? (
             <Empty
               title="No shared log on this deployment yet"
               body="When a case is recorded, each message, selection, approval, veto, schedule result and verification is listed here. Policy numbers stay out of it."
@@ -192,7 +202,7 @@ function AuditBody({ companyName }: { companyName: string }) {
           )}
         </div>
       </div>
-      <Report companyName={companyName} period={period} setPeriod={setPeriod} dev={dev} simulatedInPeriod={simulatedInPeriod} rangeOk={!!bounds} />
+      <Report companyName={companyName} period={period} setPeriod={setPeriod} dev={dev} real={real} simulatedInPeriod={simulatedInPeriod} rangeOk={!!bounds} />
     </div>
   );
 }
@@ -235,6 +245,7 @@ function Report({
   period,
   setPeriod,
   dev,
+  real,
   simulatedInPeriod,
   rangeOk,
 }: {
@@ -242,6 +253,7 @@ function Report({
   period: { start: string; end: string } | null;
   setPeriod: (p: { start: string; end: string }) => void;
   dev: boolean;
+  real: boolean;
   simulatedInPeriod: number;
   rangeOk: boolean;
 }) {
@@ -271,59 +283,38 @@ function Report({
         </label>
       </div>
       {!rangeOk && period && <p className="mt-2 text-[11.5px] text-red">The period has to be a real UTC range.</p>}
-      <dl className="mt-4 grid grid-cols-2 gap-2">
-        <Stat label="Unique cases" />
-        <Stat label="With coordination" />
-        <Stat label="Scheduled" />
-        <Stat label="Observed execution" />
-        <Stat label="Unresolved" />
-        <Stat label="FCC fields" value="To verify" />
-      </dl>
-      <p className="mt-3 text-[12px] leading-[1.5] text-neutral-500">
-        Counts stay blank until the report query is on this deployment. Filling them with zero would claim a measurement this screen does not have.
-      </p>
-      {dev && simulatedInPeriod > 0 && (
-        <p className="mt-2 text-[12px] leading-[1.5] text-orange">
-          {simulatedInPeriod} simulated {simulatedInPeriod === 1 ? "case" : "cases"} in this period {simulatedInPeriod === 1 ? "is" : "are"} on screen and {simulatedInPeriod === 1 ? "is" : "are"} left out of the draft.
-        </p>
+      {real ? (
+        <LiveReport period={period} />
+      ) : (
+        <>
+          <dl className="mt-4 grid grid-cols-2 gap-2">
+            <Stat label="Unique cases" />
+            <Stat label="With coordination" />
+            <Stat label="Scheduled" />
+            <Stat label="Observed execution" />
+            <Stat label="Unresolved" />
+            <Stat label="FCC fields" value="To verify" />
+          </dl>
+          <p className="mt-3 text-[12px] leading-[1.5] text-neutral-500">
+            Counts stay blank until the report query is on this deployment. Filling them with zero would claim a measurement this screen does not have.
+          </p>
+          {dev && simulatedInPeriod > 0 && (
+            <p className="mt-2 text-[12px] leading-[1.5] text-orange">
+              {simulatedInPeriod} simulated {simulatedInPeriod === 1 ? "case" : "cases"} in this period {simulatedInPeriod === 1 ? "is" : "are"} on screen and {simulatedInPeriod === 1 ? "is" : "are"} left out of the draft.
+            </p>
+          )}
+          <div className="mt-4 space-y-2 border-t border-white/[0.06] pt-3">
+            <div className="text-[12px] font-medium text-neutral-300">Not in this draft</div>
+            <Missing field="Source coverage" note="Not measured on this screen." />
+            <Missing field="Observed execution" note="Promised and observed stay separate. Approval is not execution." />
+            <Missing field="FCC mapping" note="Fields outside OrbitCall are marked to verify. Nothing here is a filing." />
+          </div>
+          <button className="btn mt-4 h-8 w-full gap-1.5 text-[12px] opacity-50" disabled>
+            <Download size={13} /> Download CSV
+          </button>
+          <p className="mt-2 text-[11.5px] leading-[1.45] text-neutral-500">CSV export arrives with the report action. It leaves out policy values and simulated cases. Review the draft before anyone uses it for a report.</p>
+        </>
       )}
-      <div className="mt-4 space-y-2 border-t border-white/[0.06] pt-3">
-        <div className="text-[12px] font-medium text-neutral-300">Not in this draft</div>
-        <Missing field="Source coverage" note="Not measured on this screen." />
-        <Missing field="Observed execution" note="Promised and observed stay separate. Approval is not execution." />
-        <Missing field="FCC mapping" note="Fields outside OrbitCall are marked to verify. Nothing here is a filing." />
-      </div>
-      <button className="btn mt-4 h-8 w-full gap-1.5 text-[12px] opacity-50" disabled>
-        <Download size={13} /> Download CSV
-      </button>
-      <p className="mt-2 text-[11.5px] leading-[1.45] text-neutral-500">CSV export arrives with the report action. It leaves out policy values and simulated cases. Review the draft before anyone uses it for a report.</p>
     </aside>
-  );
-}
-
-function Stat({ label, value = "—" }: { label: string; value?: string }) {
-  return (
-    <div className="rounded-[10px] bg-white/[0.03] px-2.5 py-2 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]">
-      <dt className="text-[10px] text-muted">{label}</dt>
-      <dd className="mono tnum mt-0.5 text-[14px] text-white">{value}</dd>
-    </div>
-  );
-}
-
-function Missing({ field, note }: { field: string; note: string }) {
-  return (
-    <div>
-      <div className="text-[12px] text-neutral-300">{field}</div>
-      <div className="text-[11.5px] leading-[1.45] text-neutral-500">{note}</div>
-    </div>
-  );
-}
-
-function Empty({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="px-3 py-10 text-center">
-      <div className="text-[14px] font-semibold text-white">{title}</div>
-      <p className="mx-auto mt-2 max-w-[380px] text-[12.5px] leading-[1.55] text-neutral-500">{body}</p>
-    </div>
   );
 }
