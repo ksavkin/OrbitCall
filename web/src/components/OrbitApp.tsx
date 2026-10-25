@@ -17,6 +17,8 @@ import { StormLabels, WeatherCard } from "@/components/ui/Weather";
 import { toggleDev } from "@/components/ui/Navbar";
 import { AgentsExpanded, AgentsPanel } from "@/components/ops/AgentsPanel";
 import { BackendSync } from "@/components/ops/BackendSync";
+import { LiveSync } from "@/components/live/LiveSync";
+import { DemoControls } from "@/components/live/DemoControls";
 import { RealModeStatus } from "@/components/ops/RealModeStatus";
 import { CONVEX_ENABLED } from "@/lib/backend/provider";
 import { ConjunctionMarkers } from "@/components/ops/ConjunctionMarkers";
@@ -65,6 +67,7 @@ export function OrbitApp() {
       <Director />
       {/* backend half of the Dev Switch: only with a Convex client, and never in synthetic mode */}
       {!dev && CONVEX_ENABLED && <BackendSync />}
+      {!dev && CONVEX_ENABLED && <LiveSync />}
       {!dev && <RealModeStatus />}
       <StormLabels />
       <ConjunctionMarkers />
@@ -86,6 +89,8 @@ export function OrbitApp() {
       <AnimatePresence>{tab === "policy" && <PolicyScreen key="policy" />}</AnimatePresence>
       <AnimatePresence>{tab === "audit" && <AuditScreen key="audit" />}</AnimatePresence>
       <AnimatePresence>{orbit && dev && <ScenarioBar key="scenario" />}</AnimatePresence>
+      {/* real-mode counterpart of the scenario bar: launch a demo satellite, reset the demonstration */}
+      {orbit && !dev && CONVEX_ENABLED && <DemoControls />}
       <DecisionDock />
       <IncidentView />
       <UrgencyOverlay />
