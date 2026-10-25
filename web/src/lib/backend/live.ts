@@ -43,7 +43,9 @@ export type LiveKey =
   | "agents"
   | "summary"
   | "verification"
-  | "room";
+  | "room"
+  | "summaryForm"
+  | "fleet";
 
 interface CaseData {
   /** The case's coordination room: from startWorkflow, rooms.forEvent, or remembered for this tab. */
@@ -98,7 +100,7 @@ const EMPTY_CASE: CaseData = {
   history: undefined,
 };
 
-const CASE_KEYS: LiveKey[] = ["case", "decision", "advocates", "agents", "summary", "verification", "room"];
+const CASE_KEYS: LiveKey[] = ["case", "decision", "advocates", "agents", "summary", "summaryForm", "verification", "room"];
 
 export const useLive = create<LiveState>((set) => ({
   ...EMPTY_CASE,

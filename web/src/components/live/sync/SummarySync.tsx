@@ -10,9 +10,9 @@ import type { EventId, RoomId } from "@/lib/backend/types";
 
 /**
  * The summary form's own error key, so a failing summary.get (FORBIDDEN for an operator without a current assignment)
- * does not hide the analyst summary, and the other way round. live.ts has no such key yet: this stands in for it.
+ * does not hide the analyst summary, and the other way round.
  */
-export const SUMMARY_FORM_KEY = "summaryForm" as LiveKey;
+export const SUMMARY_FORM_KEY: LiveKey = "summaryForm";
 
 /** A query error as one line: the backend's own message when it sent one, else the first line of the error. */
 function queryError(e: Error): string {
@@ -54,10 +54,6 @@ function AnalystSummary({ eventId }: { eventId: EventId }) {
 /** The selected card as a summary form, whether this operator may edit it, and the latest edit job. */
 function SummaryFormState({ eventId }: { eventId: EventId }) {
   const form = useQuery(summaryGetRef, { eventId });
-  // live.ts clears case errors on a case change, but not this key yet: a new subscription starts clean
-  useEffect(() => {
-    setLiveError(SUMMARY_FORM_KEY, null);
-  }, []);
   useEffect(() => {
     if (form === undefined) return;
     useLive.setState({ summaryForm: form });
