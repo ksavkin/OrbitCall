@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { makeFunctionReference } from "convex/server";
 import { internal } from "./_generated/api";
-import { internalAction, internalMutation, internalQuery, mutation, type QueryCtx } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, mutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireParty } from "./lib/operatorAccess";
 import { decisionTurn, isResolved } from "./lib/decision";
@@ -168,6 +168,33 @@ export const load = internalQuery({
   handler: (ctx, { hostRunId, eventId }) => loadDiscussion(ctx, hostRunId, eventId),
 });
 
+async function affectedEvents(ctx: QueryCtx, run: Doc<"hostRuns">): Promise<Id<"events">[]> {
+  if (run.status !== "succeeded" || !run.output) return [];
+  const ids = new Set(run.output.requestedRevisions.map(r => r.eventId));
+  for (const row of run.output.understood ?? []) if ((row.hard && row.kind === "constraint") || row.kind === "correction") {
+    if (row.eventId) ids.add(row.eventId);
+    else for (const link of await ctx.db.query("roomEvents").withIndex("by_room", q => q.eq("roomId", run.roomId)).collect()) ids.add(link.eventId);
+  }
+  return [...ids].flatMap(id => { const eventId = ctx.db.normalizeId("events", id); return eventId ? [eventId] : []; });
+}
+
+/** Called by checked Host completion in the same transaction as scheduling. This records queue ownership only:
+ * parsing/validating human constraints belongs to the action and must never roll back a successful Host result. */
+export async function recordAutomaticQueue(ctx: MutationCtx, args: {
+  hostRunId: Id<"hostRuns">; scheduledId: Id<"_scheduled_functions">;
+}): Promise<void> {
+  const run = await ctx.db.get(args.hostRunId);
+  if (!run) return;
+  for (const eventId of await affectedEvents(ctx, run)) {
+    const event = await ctx.db.get(eventId);
+    if (!event || (event.demoRunId ?? null) !== run.demoRunId) continue;
+    await ctx.db.insert("log", { eventId, actor: { kind: "agent", role: "coordination_host", companyId: null, side: null },
+      action: "negotiation", summary: "Queued candidate recalculation from the checked discussion.", texts: null, before: null,
+      after: { role: "candidate_revision", kind: "revision_queued", origin: "automatic", hostRunId: args.hostRunId, scheduledId: args.scheduledId },
+      proposalId: null, revision: null, roomId: run.roomId, demoRunId: run.demoRunId, simulated: event.simulated, at: Date.now() });
+  }
+}
+
 /** The Decision Center can request a retry without entering the communication room. Source authority is checked
  * again when the queued work runs, including after the numerical service returns. */
 export const request = mutation({
@@ -182,8 +209,12 @@ export const request = mutation({
       const logs = await ctx.db.query("log").withIndex("by_event_at", q => q.eq("eventId", args.eventId)).order("desc").take(MAX_ROWS);
       const attempts = logs.filter(l => l.action === "agents_rerun" && l.after?.role === "candidate_revision" &&
         l.after.hostRunId === args.hostRunId && l.after.inputVersion === discussion.inputVersion);
-      for (const attempt of attempts) {
-        const id = typeof attempt.after?.scheduledId === "string" && ctx.db.system.normalizeId("_scheduled_functions", attempt.after.scheduledId);
+      const automatic = logs.filter(l => l.action === "negotiation" && l.after?.kind === "revision_queued" &&
+        l.after.role === "candidate_revision" && l.after.origin === "automatic" && l.after.hostRunId === args.hostRunId);
+      // One automatic action can cover several linked incidents. Its per-event receipt deduplicates manual
+      // retries without scanning the global scheduler or consuming any of the operator's three retry attempts.
+      for (const receipt of [...automatic, ...attempts]) {
+        const id = typeof receipt.after?.scheduledId === "string" && ctx.db.system.normalizeId("_scheduled_functions", receipt.after.scheduledId);
         const job = id && await ctx.db.system.get(id);
         if (job && (job.state.kind === "pending" || job.state.kind === "inProgress")) return { accepted: true, alreadyApplied: false };
       }
@@ -309,13 +340,7 @@ export const eventsForHost = internalQuery({
   args: { hostRunId: v.id("hostRuns") },
   handler: async (ctx, { hostRunId }) => {
     const run = await ctx.db.get(hostRunId);
-    if (!run || run.status !== "succeeded" || !run.output) return [];
-    const ids = new Set(run.output.requestedRevisions.map(r => r.eventId));
-    for (const row of run.output.understood ?? []) if ((row.hard && row.kind === "constraint") || row.kind === "correction") {
-      if (row.eventId) ids.add(row.eventId);
-      else for (const link of await ctx.db.query("roomEvents").withIndex("by_room", q => q.eq("roomId", run.roomId)).collect()) ids.add(link.eventId);
-    }
-    return [...ids].flatMap(id => { const eventId = ctx.db.normalizeId("events", id); return eventId ? [eventId] : []; });
+    return run ? affectedEvents(ctx, run) : [];
   },
 });
 
