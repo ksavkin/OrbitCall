@@ -57,11 +57,10 @@ export function setIncidentView(v: "expanded" | "collapsed") {
 export function IncidentView() {
   const incident = useOps((s) => s.incident);
   const tab = useOps((s) => s.tab);
-  const resolvedOpen = useOps((s) => s.resolved?.eventId === s.incident);
   const e = useOps((s) => s.events.find((x) => x.id === s.incident));
   const now = useNow(250);
   const room = useRoomState(e, now);
-  const show = !!incident && !!e && (tab === "decision" || tab === "orbit") && !resolvedOpen;
+  const show = !!incident && !!e && (tab === "decision" || tab === "orbit");
   const view = tab === "decision" ? "expanded" : "collapsed";
 
   return (

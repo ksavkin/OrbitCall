@@ -25,7 +25,7 @@ import { OpsSync } from "@/components/ops/OpsSync";
 import { Director } from "@/components/ops/Director";
 import { ScanResults, UrgencyOverlay } from "@/components/ops/DemoFlow";
 import { DecisionDock } from "@/components/ops/DecisionDock";
-import { ResolutionOverlay } from "@/components/ops/Resolution";
+import { ResolutionCue } from "@/components/ops/Resolution";
 import { IncidentView, setIncidentView } from "@/components/ops/IncidentView";
 import { RoomsScreen } from "@/components/rooms/RoomsScreen";
 import { PolicyScreen } from "@/components/policy/PolicyScreen";
@@ -90,7 +90,7 @@ export function OrbitApp() {
       <IncidentView />
       <UrgencyOverlay />
       <ScanResults />
-      <ResolutionOverlay />
+      <ResolutionCue />
       <AgentsExpanded />
       <ViewSwitcher />
       <MapControls />
