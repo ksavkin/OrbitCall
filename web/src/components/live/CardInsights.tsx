@@ -12,6 +12,8 @@ import type { AdvocatesView, CardRationale as RationaleRow, Evaluation, Proposal
 // renders spans, so it can sit inside the plan card's row button. Nothing renders in dev mode or while loading.
 
 const EASE = [0.22, 1, 0.36, 1] as const;
+/** Tooltip is one line by default; long labels wrap as in DemoFlow. */
+const WRAP = "block max-w-[300px] whitespace-normal text-left leading-[1.5]";
 
 /** The card's candidate and current revision: from proposals.list, else from lib.rationale.list (wiring map §5.3). */
 function cardRef(cards: ProposalCard[] | undefined, rows: RationaleRow[] | undefined, proposalId: ProposalId) {
@@ -116,7 +118,7 @@ export function AdvocateChips({ proposalId, className = "" }: { proposalId: Prop
             </span>
           )}
           {disagrees !== null && (
-            <Tooltip side="top" label={disagrees}>
+            <Tooltip side="top" label={<span className={WRAP}>{disagrees}</span>}>
               <Chip color="var(--orange)" size="sm" icon={<TriangleAlert size={9} />}>
                 Check disagrees
               </Chip>
@@ -135,7 +137,7 @@ function SideChip({ side, e, mine }: { side: Side; e: Evaluation; mine: boolean 
     <Tooltip
       side="top"
       label={
-        <span>
+        <span className={WRAP}>
           {mine ? "Your Advocate" : `Side ${side}'s Advocate`} {o.says}
           {areas && <span className="text-muted"> · {areas}</span>}
         </span>
