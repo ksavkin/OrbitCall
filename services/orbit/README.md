@@ -141,22 +141,24 @@ npx convex env set ORBIT_SERVICE_TOKEN     # the token the service was started w
 Suggested Convex action timeouts: `/candidates` 15 s, `/rescreen` 120 s (or poll the job), `/verify` 30 s,
 `/simulate` 10 s, `/screen` submit 5 s then poll, `/validation` 5 s, `/objects` 5 s.
 
-What this repo's Convex does today:
-- `convex/lib/orbit.ts` is the typed client for every endpoint above, with these timeouts and job polling
-  (`waitForJob`: every 1 s, up to 240 s). Errors the caller can fix keep their code; everything else is
-  `UPSTREAM_UNAVAILABLE`.
-- `orbit.computeCandidates` (`convex/orbit.ts`) calls `/candidates` with `notBeforeUtc` = now for an event between two
-  registered operators, keeps the cheapest passing maneuver per side plus wait (at most three, the limit is four) and
-  publishes them through `candidates.publish`. Ids are rewritten to the characters publish accepts
-  (`A:T-12h:-0.02` → `A-T12h-retro-20mms`); `missBeforeKm` is the event's figure, the service's own is in the
-  assumptions; `estimatedFuelKg` stays null for the Advocates.
-- It publishes nothing (`GEOMETRY_MISMATCH`) when the service's pre-burn miss differs from the event's by more than
-  1 km: the "after" numbers would then mix two element sets. Expect this for SOCRATES rows on the OMM snapshot.
-- The Incident Analyst (`agents/analyst.start`) schedules it after each run, only when both env vars are set.
-- Not written yet: `/rescreen` before scheduling, `/verify`, Run Scan (`/screen`), `validation.latest`,
-  `/objects` for debris rooms and `demo.launchSatellite` (`/simulate`). The client already covers them.
-- Convex does not send `snapshotId` or `evidenceVersion` yet, so the service makes no 409 `SNAPSHOT_MISMATCH` check;
-  it echoes the id it used, which `computeCandidates` returns.
+What Convex has today: nothing calls the service yet. The client is a separate Round 1 task
+(`convex/lib/orbitClient.ts`, issue #6); wiring it into the Analyst, Run Scan and the Scheduler comes after it.
+Convex should send `snapshotId` once it does, so the service can refuse a mismatched catalog with 409.
+
+## Changes from the delivered package
+Copied as delivered, with two changes so a fresh clone can build its data and run the tests:
+- `setup-data.sh` may fill `services/orbit/data` (git-ignored) inside the checkout, and skips copying `data/omm/` when
+  it is absent (the service's own 8 MB OMM fetch is not committed).
+- The two tests that read that fetch take a `lane_dir` fixture and skip without it; the team-snapshot assertions of
+  one of them moved to their own test (93 tests: 91 pass and 2 skip on a fresh clone).
+
+## CI and deployment notes
+- Dependencies are in `src/requirements.txt`, tests in `src/tests` (they import `orbit` from `src/`). Before pytest,
+  build the data: `./setup-data.sh <repo root>` from this folder. Run `python -m pytest -q tests` from `src/`.
+- The container listens on **3610** and serves `GET /health` there. `ORBIT_DATA` is one **writable** folder
+  (default `/service/data`) built by `setup-data.sh`; the service writes `jobs/`, `sim/` and `validation/` into it and
+  refuses to start without the pinned snapshot. `ORBIT_SNAPSHOT_DIR` is not the data folder: it pins an alternative
+  OMM snapshot. There is no `ORBIT_RESULTS_DIR`.
 
 ## Limits (say them in the pitch)
 - Public mean elements: SGP4 positions are good to about 1 km, so a 1 km threshold is at the method's resolution.

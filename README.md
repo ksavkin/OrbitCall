@@ -23,8 +23,6 @@ For the backend, run `npm ci` then `npm run check` from the repository root. Tes
 
 See [Andrew's Phase 1 implementation and integration guide](docs/phase1-andrew.md) for the live model settings, fixture walkthrough, event ingestion hook, summary query and remaining integration work. The frontend has its own package and setup in [web/README.md](web/README.md).
 
-The orbital math (maneuver candidates, re-screen, fleet scan, verification) is a Python service in [services/orbit](services/orbit/README.md). Convex calls it when `ORBIT_SERVICE_URL` and `ORBIT_SERVICE_TOKEN` are set in the deployment; without them the backend behaves as before.
-
 ---
 
 ## The problem
@@ -122,7 +120,6 @@ Validation reports recall over the full eligible SOCRATES list for a defined sna
 - [Plan v1](docs/plan-v1.md) — the full pre-hackathon kit: problem, evidence, architecture, demo script, data sources, sponsors, judge Q&A, 36-hour plan.
 - [Functionality](docs/functionality.md) — what OrbitCall does: actors, domain objects, lifecycle, functions by area, open questions for the specification.
 - [Feature decisions](docs/analysis.md) — accepted and skipped recommendations, their rationale, and the remaining proposals that have not been adopted.
-- [Orbital service](services/orbit/README.md) — the Python service Convex calls for maneuver candidates, re-screens, fleet scans and verification; its [HTTP contract](services/orbit/docs/contract.md).
 ## Team
 
 - **Kostya, Andrew** — backend
