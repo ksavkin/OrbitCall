@@ -6,7 +6,7 @@ import { advocateCandidates, advocateEvent, policyA, policyB } from "../fixtures
 import { FIXTURE_NOW } from "../fixtures/events";
 import { inputKey } from "../convex/lib/analyst";
 import { loadFacts } from "../convex/lib/events";
-import { HORIZON_H, POLL_LIMIT, scheduleContent, scheduleDiff } from "../convex/maneuvers";
+import { HORIZON_H, POLL_LIMIT, PREPARE_POLL_LIMIT, scheduleContent, scheduleDiff } from "../convex/maneuvers";
 import type { RescreenRequest } from "../convex/lib/orbitClient";
 
 // New module paths deliberately avoid generated bindings (#6). Worker artifacts below are explicitly test
@@ -18,6 +18,8 @@ const call = {
   start: makeFunctionReference<"mutation">("maneuvers:start"),
   reserveCommit: makeFunctionReference<"mutation">("maneuvers:reserveCommit"),
   recordCommit: makeFunctionReference<"mutation">("maneuvers:recordCommit"),
+  requestPreview: makeFunctionReference<"mutation">("maneuvers:requestPreview"),
+  requestSchedule: makeFunctionReference<"mutation">("maneuvers:requestSchedule"),
 };
 const identity = (t: Backend, who: string) => t.withIdentity({ tokenIdentifier: `https://fixture.invalid|${who}` });
 const SHA = "a".repeat(40);
@@ -111,8 +113,19 @@ describe("prepared schedule and reads", () => {
   it("reports the absent Factory worker without inventing a preview or a committed maneuver", async () => {
     const s = await setup();
     const preview = await s.t.query(call.preview, { ref: s.selection });
-    expect(preview).toMatchObject({ workerAvailable: false, error: expect.stringContaining("WORKER_UNAVAILABLE") });
+    expect(preview).toMatchObject({ trajectory: null, intentKey: expect.stringContaining(":generation:1") });
+    expect(preview).not.toHaveProperty("workerAvailable");
+    expect(await s.t.mutation(call.requestPreview, { eventId: s.eventId })).toEqual({ status: "skipped", code: "WORKER_UNAVAILABLE" });
+    await finish(s.t);
     expect(await rows(s, "maneuvers")).toEqual([]);
+    expect((await rows(s, "log")).filter(l => l.action === "schedule_failed")).toEqual([]);
+    // A configured but unreachable worker is logged once for the intent.
+    vi.stubEnv("SCHEDULE_SERVICE_URL", "https://scheduler.test"); vi.stubEnv("SCHEDULE_SERVICE_TOKEN", "fixture-token-of-at-least-thirty-two-chars");
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("connection refused"); }));
+    expect(await s.t.mutation(call.requestPreview, { eventId: s.eventId })).toEqual({ status: "requested", code: null });
+    await finish(s.t);
+    expect((await rows(s, "log")).filter(l => l.action === "schedule_failed").map(l => l.summary)).toEqual([expect.stringMatching(/^WORKER_UNAVAILABLE/)]);
+    vi.unstubAllEnvs(); vi.stubEnv("ORBIT_SERVICE_URL", "https://orbit.test"); vi.stubEnv("ORBIT_SERVICE_TOKEN", "test-service-token");
     await approve(s);
     await expect(s.t.mutation(call.start, { ref: s.selection, expectedPinned: preview.pinned })).rejects.toMatchObject({ data: { code: "WORKER_UNAVAILABLE" } });
   });
@@ -327,4 +340,249 @@ it("cannot authorize a wait from an old assignment version before reserving any 
   await expect(s.t.mutation(call.start, { ref: s.selection, expectedPinned: preview.pinned }))
     .rejects.toMatchObject({ data: { code: "APPROVAL_REQUIRED" } });
   expect(await rows(s, "maneuvers")).toEqual([]);
+});
+
+// An in-memory stand-in for the Factory schedule worker's HTTP contract (services/scheduler): deterministic job ids,
+// asynchronous jobs, idempotent POSTs per intent and the attempt-pinned retry. Fixture only; no Factory session runs.
+const WORKER = "https://scheduler.test";
+const digest = async (text: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))).map(b => b.toString(16).padStart(2, "0")).join("");
+type FakeJob = { jobId: string; intentKey: string; kind: "prepare" | "commit"; status: string; attempt: number; request: any; result: any; error: any };
+function mockWorker(options: { orbit?: Parameters<typeof mockOrbit>[0]; prepareRuns?: number; commitRuns?: number; commitFails?: "retry" | "final"; before?: string | null; onCommit?: () => Promise<unknown> } = {}) {
+  const orbit = mockOrbit(options.orbit), jobs = new Map<string, FakeJob>(), pending = new Map<string, number>(), posts: { path: string; body: any }[] = [];
+  vi.stubEnv("SCHEDULE_SERVICE_URL", WORKER); vi.stubEnv("SCHEDULE_SERVICE_TOKEN", "fixture-token-of-at-least-thirty-two-chars");
+  const show = (job: FakeJob) => {
+    const left = pending.get(job.jobId) ?? 0;
+    if (left > 0) { pending.set(job.jobId, left - 1); return json({ ...job, status: "running", result: null }); }
+    return json(job);
+  };
+  const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url);
+    if (!path.startsWith(WORKER)) return orbit.fetch(url, init);
+    const route = path.slice(WORKER.length), body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    if (init?.method === "POST") posts.push({ path: route, body });
+    if (route === "/prepare") {
+      const jobId = await digest(`prepare:${body.intentKey}`);
+      if (!jobs.has(jobId)) {
+        const before = options.before ?? null, previous = before === null ? [] : JSON.parse(before).maneuvers;
+        const after = scheduleContent([...previous, body.entry]);
+        jobs.set(jobId, { jobId, intentKey: body.intentKey, kind: "prepare", status: "completed", attempt: 1, request: body, error: null,
+          result: { filePath: body.filePath, before, after, diff: scheduleDiff(body.filePath, before, after), contentHash: await digest(after),
+            expectedPreviousHash: before === null ? null : await digest(before), expectedPreviousCommit: SHA,
+            factory: { sessionId: "fixture-session", modelId: "fixture-model", toolWrites: 1 }, commitSha: null } });
+        pending.set(jobId, options.prepareRuns ?? 0);
+      }
+      return show(jobs.get(jobId)!);
+    }
+    if (route === "/commit") {
+      const jobId = await digest(`commit:${body.intentKey}`), prepared = jobs.get(body.preparedJobId)!;
+      await options.onCommit?.();
+      if (!jobs.has(jobId)) jobs.set(jobId, { jobId, intentKey: body.intentKey, kind: "commit", attempt: 1, request: body,
+        ...(options.commitFails ? { status: "failed", result: prepared.result, error: { code: "WORKER_FAILED", message: "fixture" } }
+          : { status: "completed", result: { ...prepared.result, commitSha: "b".repeat(40) }, error: null }) });
+      if (!pending.has(jobId)) pending.set(jobId, options.commitRuns ?? 0);
+      return show(jobs.get(jobId)!);
+    }
+    const retry = route.match(/^\/jobs\/([a-f0-9]{64})\/retry$/);
+    if (retry) {
+      const job = jobs.get(retry[1])!;
+      if (options.commitFails === "final") return json({ error: { code: "RETRY_UNSAFE" } }, 409);
+      Object.assign(job, { attempt: job.attempt + 1, status: "completed", error: null, result: { ...job.result, commitSha: "c".repeat(40) } });
+      return json(job);
+    }
+    const job = jobs.get(route.replace(/^\/jobs\//, ""));
+    return job ? show(job) : json({ error: { code: "NOT_FOUND" } }, 404);
+  });
+  vi.stubGlobal("fetch", fetch);
+  return { fetch, jobs, posts, orbit };
+}
+const logs = async (s: Setup, action: string) => (await rows(s, "log")).filter(l => l.action === action);
+async function approveCurrent(s: Setup, generation: number) {
+  vi.setSystemTime(Date.now() + 100);
+  await s.t.run(async ctx => {
+    for (const side of ["A", "B"] as const) await ctx.db.insert("approvals", { eventId: s.eventId, side, status: "approved", userId: s.users[side.toLowerCase()],
+      companyId: side === "A" ? s.a : s.b, proposalId: s.selection.proposalId, revision: s.selection.revision, selectionGeneration: generation, approvalRuleVersion: 1,
+      trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: s.demoRunId, current: true, at: Date.now(), assignmentVersion: 1 });
+    await ctx.db.patch(s.eventId, { status: "approved" });
+  });
+}
+
+describe("Factory worker wiring", () => {
+  it("prepares the diff before approval and commits the same intent after the re-screen", async () => {
+    const s = await setup(), worker = mockWorker();
+    expect(await s.t.mutation(call.requestPreview, { eventId: s.eventId })).toEqual({ status: "requested", code: null });
+    await finish(s.t);
+    const [row] = await rows(s, "maneuvers"), intentKey = row.intentKey;
+    expect(row).toMatchObject({ status: "preview", writtenBy: "droid", trajectoryPlanId: null });
+    expect(worker.posts.map(p => p.path)).toEqual(["/prepare"]);
+    expect(worker.posts[0].body).toMatchObject({ intentKey, trajectory: null, ref: { eventId: String(s.eventId), selectionGeneration: 1, approvalRuleVersion: 1 } });
+    const revision = await s.t.run(ctx => ctx.db.get(s.proposalRevisionId));
+    expect(revision).toMatchObject({ schedulePreviewDiff: row.diff, schedulePreviewHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(await s.t.mutation(call.requestPreview, { eventId: s.eventId })).toEqual({ status: "prepared", code: null });
+
+    await approveCurrent(s, 1);
+    expect(await s.t.mutation(call.requestSchedule, { eventId: s.eventId })).toMatchObject({ status: "rescreening", code: null });
+    await finish(s.t);
+    expect((await rows(s, "maneuvers"))[0]).toMatchObject({ status: "committed", commitSha: "b".repeat(40), reviewRequired: false, error: null });
+    expect((await s.t.run(ctx => ctx.db.get(s.eventId)))!.status).toBe("scheduled");
+    const commit = worker.posts.find(p => p.path === "/commit")!.body;
+    expect(commit).toEqual({ intentKey, preparedJobId: await digest(`prepare:${intentKey}`), contentHash: revision!.schedulePreviewHash,
+      expectedPreviousHash: null, expectedPreviousCommit: SHA, ref: worker.posts[0].body.ref, trajectory: null });
+    expect(await logs(s, "schedule_committed")).toHaveLength(1);
+    expect(await logs(s, "schedule_failed")).toEqual([]);
+  });
+  it("polls a running preparation and appends to an existing operator schedule", async () => {
+    const before = scheduleContent([{ eventId: "earlier", proposalId: "earlier", revision: 1, objectId: "SIM-9", burnTimeUtc: "2030-01-01T00:00:00Z", deltaVMs: 0.1, direction: "prograde", simulated: true }]);
+    const s = await setup(), worker = mockWorker({ prepareRuns: 3, before });
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    expect(worker.posts).toHaveLength(1);
+    expect(worker.fetch.mock.calls.filter(([url]) => String(url).includes("/jobs/"))).toHaveLength(3);
+    expect((await rows(s, "maneuvers"))[0].diff).toContain("@@ -2,0 +3 @@");
+  });
+  it("logs a preparation that never finishes once, without a maneuver row", async () => {
+    const s = await setup(); mockWorker({ prepareRuns: 1_000 });
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    expect(await rows(s, "maneuvers")).toEqual([]);
+    expect((await logs(s, "schedule_failed")).map(l => l.summary)).toEqual([expect.stringMatching(/^PREPARE_TIMEOUT/)]);
+    expect(PREPARE_POLL_LIMIT).toBeGreaterThan(POLL_LIMIT);
+  });
+  it("does not prepare a revision that was approved before any preview", async () => {
+    const s = await setup(), worker = mockWorker();
+    await approveCurrent(s, 1);
+    expect(await s.t.mutation(call.requestPreview, { eventId: s.eventId })).toEqual({ status: "skipped", code: "PREVIEW_AFTER_APPROVAL" });
+    expect(worker.posts).toEqual([]);
+    expect(await s.t.mutation(call.requestSchedule, { eventId: s.eventId })).toMatchObject({ status: "failed", code: "WORKER_UNAVAILABLE" });
+    expect((await logs(s, "schedule_failed")).map(l => l.summary)).toEqual([expect.stringMatching(/^PREVIEW_AFTER_APPROVAL/), expect.stringMatching(/^WORKER_UNAVAILABLE/)]);
+  });
+  it("prepares the identical diff for a reset generation of a previewed revision and continues to commit", async () => {
+    const s = await setup(), worker = mockWorker();
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    await s.t.run(async ctx => {
+      for (const a of await ctx.db.query("approvals").collect()) await ctx.db.patch(a._id, { current: false });
+      await ctx.db.patch(s.selectionId, { generation: 2, lastReset: { at: Date.now(), reason: "policy changed" } });
+    });
+    s.selection.selectionGeneration = 2;
+    await approveCurrent(s, 2);
+    expect(await s.t.mutation(call.requestSchedule, { eventId: s.eventId })).toMatchObject({ status: "preparing" });
+    await finish(s.t);
+    const intents = await rows(s, "maneuvers");
+    expect(intents.map(r => [r.intentKey.endsWith(":generation:2"), r.status])).toEqual([[false, "preview"], [true, "committed"]]);
+    expect(intents[0].diff).toBe(intents[1].diff);
+    expect(worker.posts.map(p => p.path)).toEqual(["/prepare", "/prepare", "/commit"]);
+  });
+  it("refuses to commit a worker artifact that is not the approved preview", async () => {
+    const s = await setup(), worker = mockWorker();
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    const prepared = [...worker.jobs.values()][0], other = scheduleContent([{ eventId: "x", proposalId: "x", revision: 1, objectId: "SIM-8", burnTimeUtc: "2030-01-01T00:00:00Z", deltaVMs: 0.2, direction: "retrograde", simulated: true }]);
+    const after = scheduleContent([...JSON.parse(other).maneuvers, prepared.request.entry]);
+    prepared.result = { ...prepared.result, before: other, after, diff: scheduleDiff(prepared.request.filePath, other, after), contentHash: await digest(after), expectedPreviousHash: await digest(other) };
+    await approveCurrent(s, 1);
+    await s.t.mutation(call.requestSchedule, { eventId: s.eventId }); await finish(s.t);
+    expect(worker.posts.map(p => p.path)).not.toContain("/commit");
+    expect((await rows(s, "maneuvers"))[0]).toMatchObject({ status: "failed", commitSha: null, error: expect.stringMatching(/^INVALID_RESPONSE/) });
+  });
+  it("retries a failed write through the worker and records the retried commit once", async () => {
+    const s = await setup(), worker = mockWorker({ commitFails: "retry" });
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    await approveCurrent(s, 1);
+    await s.t.mutation(call.requestSchedule, { eventId: s.eventId }); await finish(s.t);
+    expect(worker.posts.filter(p => p.path.endsWith("/retry")).map(p => p.body)).toEqual([{ expectedAttempt: 1 }]);
+    expect((await rows(s, "maneuvers"))[0]).toMatchObject({ status: "committed", commitSha: "c".repeat(40) });
+  });
+  it("keeps a refused retry visible without resetting approvals, and resumes a stranded commit on request", async () => {
+    const s = await setup(), worker = mockWorker({ commitFails: "final" });
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    await approveCurrent(s, 1);
+    await s.t.mutation(call.requestSchedule, { eventId: s.eventId }); await finish(s.t);
+    expect((await rows(s, "maneuvers"))[0]).toMatchObject({ status: "failed", reviewRequired: false, error: expect.stringMatching(/^SCHEDULE_CONFLICT/) });
+    expect((await rows(s, "approvals")).every(a => a.current)).toBe(true);
+    const commits = worker.posts.filter(p => p.path === "/commit").length;
+    // A commit chain lost after reservation leaves the row committing; asking again resumes the same worker job.
+    const row = (await rows(s, "maneuvers"))[0], job = worker.jobs.get(await digest(`commit:${row.intentKey}`))!;
+    await s.t.run(ctx => ctx.db.patch(row._id, { status: "committing", error: null }));
+    Object.assign(job, { status: "completed", error: null, result: { ...job.result, commitSha: "d".repeat(40) } });
+    expect(await s.t.mutation(call.requestSchedule, { eventId: s.eventId })).toMatchObject({ status: "committing" });
+    await finish(s.t);
+    // The completed job is read back; no second /commit is sent.
+    expect(worker.posts.filter(p => p.path === "/commit").length).toBe(commits);
+    expect((await rows(s, "maneuvers"))[0]).toMatchObject({ status: "committed", commitSha: "d".repeat(40) });
+  });
+  it("logs instead of throwing when scheduling is requested without approvals, and leaves a wait to monitoring", async () => {
+    const s = await setup(); mockWorker();
+    expect(await s.t.mutation(call.requestSchedule, { eventId: s.eventId })).toMatchObject({ status: "failed", code: "APPROVAL_REQUIRED" });
+    expect(await logs(s, "schedule_failed")).toHaveLength(1);
+    const w = await setup({ wait: true }), worker = mockWorker();
+    expect(await w.t.mutation(call.requestPreview, { eventId: w.eventId })).toEqual({ status: "skipped", code: "NO_ARTIFACT" });
+    await approveCurrent(w, 1);
+    expect(await w.t.mutation(call.requestSchedule, { eventId: w.eventId })).toMatchObject({ status: "monitoring" });
+    expect(worker.fetch).not.toHaveBeenCalled();
+  });
+  it("skips a shared mover and a preparation overtaken by a newer selection", async () => {
+    const s = await setup(), worker = mockWorker();
+    await s.t.run(async ctx => {
+      const event = (await ctx.db.get(s.eventId))!, other = await ctx.db.insert("spaceObjects", { objectId: "60001", name: "Third spacecraft", country: null, launchDate: null });
+      const { _id, _creationTime, ...fields } = event;
+      await ctx.db.insert("events", { ...fields, objectBId: other, tcaMs: event.tcaMs + 3600_000 });
+    });
+    expect(await s.t.mutation(call.requestPreview, { eventId: s.eventId })).toEqual({ status: "skipped", code: "SHARED_TRAJECTORY_REQUIRED" });
+    const n = await setup(), w2 = mockWorker({ prepareRuns: 2 });
+    await n.t.mutation(call.requestPreview, { eventId: n.eventId });
+    await n.t.run(ctx => ctx.db.patch(n.selectionId, { generation: 2, lastReset: { at: Date.now(), reason: "new selection" } }));
+    await finish(n.t);
+    expect(await rows(n, "maneuvers")).toEqual([]);
+    expect(await logs(n, "schedule_failed")).toEqual([]);
+    expect(worker.posts).toEqual([]); expect(w2.posts).toEqual([]);
+  });
+  it("records a handed-over write after the rule version moves, flagged for review instead of lost", async () => {
+    const s = await setup();
+    // The rule version moves right after the worker accepted the write, before the first commit poll.
+    mockWorker({ commitRuns: 1, onCommit: () => s.t.run(ctx => ctx.db.patch(s.eventId, { approvalRuleVersion: 2 })) });
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    await approveCurrent(s, 1);
+    await s.t.mutation(call.requestSchedule, { eventId: s.eventId }); await finish(s.t);
+    expect((await rows(s, "maneuvers"))[0]).toMatchObject({ status: "committed", commitSha: "b".repeat(40), reviewRequired: true });
+  });
+  it("records a stranded completed write without current authorization", async () => {
+    const s = await setup(), worker = mockWorker();
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    await approveCurrent(s, 1);
+    await s.t.mutation(call.requestSchedule, { eventId: s.eventId }); await finish(s.t);
+    const row = (await rows(s, "maneuvers"))[0];
+    // As if the chain was lost after the worker committed: the row is still committing and approvals were reset since.
+    await s.t.run(async ctx => {
+      await ctx.db.patch(row._id, { status: "committing", commitSha: null });
+      for (const a of await ctx.db.query("approvals").collect()) await ctx.db.patch(a._id, { current: false });
+    });
+    expect(await s.t.mutation(call.requestSchedule, { eventId: s.eventId })).toMatchObject({ status: "committing" });
+    await finish(s.t);
+    expect(worker.posts.filter(p => p.path === "/commit")).toHaveLength(1);
+    expect((await rows(s, "maneuvers"))[0]).toMatchObject({ status: "committed", commitSha: "b".repeat(40), reviewRequired: true });
+  });
+  it("does not retry a write failure seen while polling until the write is re-authorized", async () => {
+    const s = await setup(), worker = mockWorker({ commitRuns: 1, commitFails: "retry" });
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    await approveCurrent(s, 1);
+    await s.t.mutation(call.requestSchedule, { eventId: s.eventId }); await finish(s.t);
+    expect(worker.posts.filter(p => p.path.endsWith("/retry"))).toEqual([]);
+    expect((await rows(s, "maneuvers"))[0]).toMatchObject({ status: "failed", error: expect.stringMatching(/^SCHEDULE_JOB_FAILED/) });
+    await s.t.mutation(call.requestSchedule, { eventId: s.eventId }); await finish(s.t);
+    expect(worker.posts.filter(p => p.path.endsWith("/retry"))).toHaveLength(1);
+    expect((await rows(s, "maneuvers"))[0]).toMatchObject({ status: "committed", commitSha: "c".repeat(40) });
+  });
+  it("resumes a lost chain after the rule version moved and records the write the worker already has", async () => {
+    const s = await setup(), worker = mockWorker();
+    await s.t.mutation(call.requestPreview, { eventId: s.eventId }); await finish(s.t);
+    await approveCurrent(s, 1);
+    await s.t.mutation(call.requestSchedule, { eventId: s.eventId }); await finish(s.t);
+    const row = (await rows(s, "maneuvers"))[0];
+    // As if the chain died right after /commit: the row failed on a missed poll, then the rule version moved.
+    await s.t.run(async ctx => {
+      await ctx.db.patch(row._id, { status: "failed", commitSha: null, error: "WORKER_UNAVAILABLE: missed poll" });
+      await ctx.db.patch(s.eventId, { approvalRuleVersion: 2, status: "approved" });
+    });
+    expect(await s.t.mutation(call.requestSchedule, { eventId: s.eventId })).toMatchObject({ status: "committing" });
+    await finish(s.t);
+    expect(worker.posts.filter(p => p.path === "/commit")).toHaveLength(1);
+    expect((await rows(s, "maneuvers"))[0]).toMatchObject({ status: "committed", commitSha: "b".repeat(40), reviewRequired: true });
+  });
 });

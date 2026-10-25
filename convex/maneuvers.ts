@@ -9,10 +9,14 @@ import { validateCandidates } from "./lib/policies";
 import { evidenceVersionOf, ommSnapshotId, wholeSecondUtc } from "./lib/publishCandidates";
 import { getRescreenJob, orbitFailure, startRescreen, type RescreenRequest } from "./lib/orbitClient";
 import { eventRef, pinnedInputs, rescreen } from "./schema/schedule";
+import { commitSchedule, getScheduleJob, prepareSchedule, retryScheduleJob, scheduleConfig, ScheduleServiceError, type ScheduleJob,
+  type ScheduleRef } from "./lib/scheduleClient";
 
-// Round 2 owns authorization and durable job state, not the Factory worker. preview exposes a preparation request;
-// recordPreview / recordCommit accept results from a future trusted worker adapter. They never write a file. The
-// commit action deliberately fails with WORKER_UNAVAILABLE until Round 4 wires the Round 3 worker. No substitute.
+// Convex owns authorization and durable job state; the Factory worker only builds and writes the checked artifact.
+// requestPreview (after a selection) asks the worker to /prepare the exact append and records its diff on the revision
+// before any approval; requestSchedule (after all required approvals) re-screens and then /commits under the same intent
+// key. Worker failures stay visible and retry the same intent. No substitute writer. Single-event intents only: a
+// shared mover stays SHARED_TRAJECTORY_REQUIRED and the worker always receives trajectory null.
 // All write entry points are internal: only an approval mutation / scheduler may initiate them, not a browser.
 const selectionRef = v.object({ ...eventRef.fields, approvalRuleVersion: v.number() });
 type Ref = Infer<typeof selectionRef>;
@@ -20,9 +24,10 @@ type Pins = Infer<typeof pinnedInputs>;
 type Maneuver = Doc<"maneuvers">;
 export const POLL_LIMIT = 24;
 export const POLL_DELAY_MS = 5_000;
+// A Droid session takes tens of seconds and the worker runs jobs one at a time, so preparation may wait longer.
+export const PREPARE_POLL_LIMIT = 60;
 export const HORIZON_H = 72;
 const MAX_ARTIFACT = 128_000;
-const WORKER_UNAVAILABLE = "WORKER_UNAVAILABLE: The Factory schedule worker is not connected. No schedule was written.";
 const calls = {
   submit: makeFunctionReference<"action">("maneuvers:submit"),
   poll: makeFunctionReference<"action">("maneuvers:poll"),
@@ -31,6 +36,13 @@ const calls = {
   fail: makeFunctionReference<"mutation">("maneuvers:recordFailure"),
   reserve: makeFunctionReference<"mutation">("maneuvers:reserveCommit"),
   commit: makeFunctionReference<"action">("maneuvers:commit"),
+  preview: makeFunctionReference<"query">("maneuvers:preview"),
+  prepare: makeFunctionReference<"action">("maneuvers:prepare"),
+  recordPreview: makeFunctionReference<"mutation">("maneuvers:recordPreview"),
+  prepareFailed: makeFunctionReference<"mutation">("maneuvers:recordPrepareFailure"),
+  commitIntent: makeFunctionReference<"query">("maneuvers:commitIntent"),
+  recordCommit: makeFunctionReference<"mutation">("maneuvers:recordCommit"),
+  requestSchedule: makeFunctionReference<"mutation">("maneuvers:requestSchedule"),
 };
 
 function fail(code: string, message: string): never { throw new ConvexError({ code, message }); }
@@ -43,6 +55,8 @@ function canonical(value: unknown): string {
 const same = (a: unknown, b: unknown) => canonical(a) === canonical(b);
 const intentOf = (r: Ref) => `event:${r.eventId}:proposal:${r.proposalId}:revision:${r.revision}:generation:${r.selectionGeneration}`;
 const eventReference = ({ approvalRuleVersion: _rule, ...ref }: Ref) => ref;
+const workerRef = (r: Ref): ScheduleRef => ({ eventId: String(r.eventId), proposalId: String(r.proposalId), revision: r.revision,
+  selectionGeneration: r.selectionGeneration, approvalRuleVersion: r.approvalRuleVersion });
 async function sha256(text: string) {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))))
     .map(byte => byte.toString(16).padStart(2, "0")).join("");
@@ -198,8 +212,88 @@ export const preview = internalQuery({
   handler: async (ctx, { ref }) => {
     const c = await context(ctx, ref);
     if (c.set.state !== "open") fail("INVALID_STATE", "A scheduled candidate set cannot prepare a replacement schedule.");
-    return { kind: c.candidate.kind, ref, pinned: c.pinned, intentKey: intentOf(ref), filePath: c.filePath, entry: c.entry,
-      workerAvailable: false, error: c.entry ? WORKER_UNAVAILABLE : null };
+    return { kind: c.candidate.kind, ref, pinned: c.pinned, intentKey: intentOf(ref), filePath: c.filePath, entry: c.entry, trajectory: null };
+  },
+});
+
+/** The event's current selection as a scheduling ref, or null when nothing complete is selected. */
+async function currentRef(ctx: QueryCtx, eventId: Id<"events">): Promise<Ref | null> {
+  const event = await ctx.db.get(eventId);
+  const selection = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
+  if (!event || !selection?.proposalId || selection.revision === null) return null;
+  return { eventId, proposalId: selection.proposalId, revision: selection.revision, selectionGeneration: selection.generation,
+    approvalRuleVersion: event.approvalRuleVersion ?? 0 };
+}
+const codeOf = (error: unknown) => error instanceof ConvexError && typeof error.data?.code === "string" ? error.data.code as string : null;
+
+/** Call after a selection changes (one scheduled call per selection). Asks Factory to prepare the selected maneuver's
+ * checked diff before anyone approves it. Idempotent per intent; a wait, a closed set or an already prepared intent
+ * needs nothing. Approvals on a revision that was never previewed cannot be backed by a later preview, so that case is
+ * logged instead (the selection must change for a new intent). */
+export const requestPreview = internalMutation({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, { eventId }) => {
+    const ref = await currentRef(ctx, eventId);
+    if (!ref) return { status: "skipped" as const, code: "NOT_SELECTED" };
+    // Without a configured worker every selection would log the same failure; scheduling reports it once instead.
+    try { scheduleConfig(); } catch { return { status: "skipped" as const, code: "WORKER_UNAVAILABLE" }; }
+    let c: Context;
+    try { c = await context(ctx, ref); }
+    catch (error) { const code = codeOf(error); if (!code) throw error; return { status: "skipped" as const, code }; }
+    if (!c.entry || c.set.state !== "open") return { status: "skipped" as const, code: "NO_ARTIFACT" };
+    const existing = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique();
+    if (existing) return { status: "prepared" as const, code: null };
+    if (c.approvals.some(a => a.status === "approved") && c.revision.schedulePreviewHash === null) {
+      await audit(ctx, c, "schedule_failed", "PREVIEW_AFTER_APPROVAL: An approval arrived before Factory prepared the schedule diff; select the plan again to prepare it.", { intentKey: intentOf(ref) });
+      return { status: "skipped" as const, code: "PREVIEW_AFTER_APPROVAL" };
+    }
+    await ctx.scheduler.runAfter(0, calls.prepare, { ref, attempt: 0 });
+    return { status: "requested" as const, code: null };
+  },
+});
+
+/** Drives one Factory /prepare job to completion. The pins read before the request travel with every poll, so a
+ * change while Droid works fails recordPreview instead of binding the diff to newer inputs. */
+export const prepare = internalAction({
+  args: { ref: selectionRef, attempt: v.number(), expectedPinned: v.optional(pinnedInputs), thenSchedule: v.optional(v.boolean()) },
+  handler: async (ctx, { ref, attempt, expectedPinned, thenSchedule }) => {
+    if (!Number.isInteger(attempt) || attempt < 0 || attempt >= PREPARE_POLL_LIMIT) fail("VALIDATION", "Invalid polling attempt.");
+    try {
+      const p = await ctx.runQuery(calls.preview, { ref });
+      if (!p.entry || !p.filePath) return null;
+      const pinned = expectedPinned ?? p.pinned;
+      const expected = { intentKey: p.intentKey, kind: "prepare" as const, ref: workerRef(ref), trajectory: null };
+      let job: ScheduleJob = attempt === 0
+        ? await prepareSchedule({ intentKey: p.intentKey, filePath: p.filePath, ref: expected.ref, trajectory: null, entry: p.entry })
+        : await getScheduleJob(await sha256(`prepare:${p.intentKey}`), expected);
+      // Job errors arrive masked; the worker itself refuses (409) a retry that is unsafe or over its attempt limit.
+      if (job.status === "failed") job = await retryScheduleJob(job.jobId, job.attempt, expected);
+      if (job.status === "completed") {
+        const a = job.result!;
+        await ctx.runMutation(calls.recordPreview, { ref, expectedPinned: pinned, before: a.before, after: a.after, diff: a.diff });
+        if (thenSchedule) await ctx.runMutation(calls.requestSchedule, { eventId: ref.eventId });
+      } else if (job.status === "failed") await ctx.runMutation(calls.prepareFailed, { ref, code: job.error!.code, message: job.error!.message });
+      else if (attempt + 1 >= PREPARE_POLL_LIMIT) await ctx.runMutation(calls.prepareFailed, { ref, code: "PREPARE_TIMEOUT", message: "Factory preparation polling reached its limit; select the plan again to retry." });
+      else await ctx.scheduler.runAfter(POLL_DELAY_MS, calls.prepare, { ref, attempt: attempt + 1, expectedPinned: pinned, thenSchedule });
+    } catch (error) { await ctx.runMutation(calls.prepareFailed, { ref, ...failure(error) }); }
+    return null;
+  },
+});
+
+/** A failed preparation has no maneuver row yet; the event log keeps the failure visible to the room. */
+export const recordPrepareFailure = internalMutation({
+  args: { ref: selectionRef, code: v.string(), message: v.string() },
+  handler: async (ctx, { ref, code, message }) => {
+    const event = await ctx.db.get(ref.eventId), current = await currentRef(ctx, ref.eventId);
+    // A preparation overtaken by a newer selection is simply obsolete, and one that another chain already recorded
+    // succeeded; neither is a failure to show.
+    if (!event || !current || intentOf(current) !== intentOf(ref)) return null;
+    if (await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique()) return null;
+    const summary = `${code}: ${message}`.slice(0, 500);
+    const recent = await ctx.db.query("log").withIndex("by_event_at", q => q.eq("eventId", ref.eventId)).order("desc").take(20);
+    if (recent.some(l => l.action === "schedule_failed" && l.summary === summary && l.after?.intentKey === intentOf(ref))) return null;
+    await audit(ctx, { event, ref }, "schedule_failed", summary, { intentKey: intentOf(ref) });
+    return null;
   },
 });
 
@@ -216,8 +310,11 @@ export const recordPreview = internalMutation({
       return existing._id;
     }
     if (c.set.state !== "open") fail("INVALID_STATE", "A scheduled candidate set cannot prepare a replacement schedule.");
-    if (c.approvals.some(a => a.status === "approved")) fail("INVALID_STATE", "Prepare the checked preview before collecting human approvals.");
     if (c.revision.schedulePreviewHash !== null && c.revision.schedulePreviewHash !== hash) fail("STALE_REVISION", "This revision already has a different preview.");
+    // A new generation of an already previewed revision carries byte-identical content, so approvals given after that
+    // revision's first preview were given on this diff. Anything else must be prepared before collecting approvals.
+    const since = await previewedAt(ctx, ref);
+    if (c.approvals.some(a => a.status === "approved" && (since === null || a.at < since))) fail("INVALID_STATE", "Prepare the checked preview before collecting human approvals.");
     await ctx.db.patch(c.revision._id, { schedulePreviewDiff: diff, schedulePreviewHash: hash });
     const maneuverId = await ctx.db.insert("maneuvers", { refs: [eventReference(ref)], trajectoryPlanId: null, trajectoryPlanVersion: null,
       pinned: c.pinned, intentKey: intentOf(ref), status: "preview", filePath: c.filePath!, diff, commitSha: null, writtenBy: "droid",
@@ -244,6 +341,18 @@ async function reset(ctx: MutationCtx, row: Maneuver, reason: string) {
   await audit(ctx, { event, ref: { ...ref, approvalRuleVersion: event.approvalRuleVersion ?? 0 } }, "approvals_reset", reason,
     { generation: selection.generation + 1, intentKey: row.intentKey });
 }
+/** When this exact revision's checked diff was first recorded (any generation). recordPreview keeps one content hash per
+ * revision, so every intent of the revision shows the same diff. */
+async function previewedAt(ctx: QueryCtx, ref: Pick<Ref, "eventId" | "proposalId" | "revision">) {
+  let first: number | null = null;
+  for (const link of await ctx.db.query("maneuverEvents").withIndex("by_event", q => q.eq("eventId", ref.eventId)).collect()) {
+    const row = await ctx.db.get(link.maneuverId);
+    if (row?.writtenBy === "droid" && row.refs.length === 1 && row.refs[0].proposalId === ref.proposalId && row.refs[0].revision === ref.revision) {
+      first = Math.min(first ?? Infinity, row._creationTime);
+    }
+  }
+  return first;
+}
 async function currentFor(ctx: QueryCtx, row: Maneuver, allowPast = false) {
   if (row.refs.length !== 1 || row.trajectoryPlanId !== null) fail("SHARED_TRAJECTORY_REQUIRED", "Only single-event intents are connected.");
   if (row.writtenBy !== "droid") fail("INVALID_STATE", "A backend substitute cannot authorize a Factory artifact.");
@@ -252,7 +361,8 @@ async function currentFor(ctx: QueryCtx, row: Maneuver, allowPast = false) {
   if (!same(c.pinned, row.pinned) || row.reviewRequired || c.revision.schedulePreviewDiff !== row.diff || !c.revision.schedulePreviewHash) {
     fail("STALE_REVISION", "The prepared intent's pinned inputs changed; review and approve a new revision.");
   }
-  if (c.approvals.some(a => a.at < Math.floor(row._creationTime))) fail("APPROVAL_REQUIRED", "Approval must follow the prepared preview.");
+  const since = Math.min(row._creationTime, await previewedAt(ctx, ref) ?? Infinity);
+  if (c.approvals.some(a => a.at < Math.floor(since))) fail("APPROVAL_REQUIRED", "Approval must follow the prepared preview.");
   return c;
 }
 
@@ -261,28 +371,69 @@ export const start = internalMutation({
   handler: async (ctx, { ref, expectedPinned }) => {
     const c = await context(ctx, ref, true);
     if (!same(c.pinned, expectedPinned)) fail("STALE_REVISION", "Scheduling inputs changed after authorization.");
-    if (c.candidate.kind === "wait") {
-      if (c.event.status !== "monitoring") {
-        await ctx.db.patch(c.event._id, { status: "monitoring", situation: null });
-        await audit(ctx, c, "status_changed", "Required operators approved waiting; monitoring continues without a maneuver.", { status: "monitoring" });
-      }
-      return { maneuverId: null, status: "monitoring" };
-    }
-    const row = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique();
-    if (!row) fail("WORKER_UNAVAILABLE", "Factory must prepare a checked preview before this maneuver can be scheduled.");
-    await currentFor(ctx, row);
-    if (["committed", "committing", "rescreening"].includes(row.status)) return { maneuverId: row._id, status: row.status };
-    if (row.status === "refused") fail("STALE_REVISION", "A refused intent needs a new approved revision.");
-    if (row.rescreen?.passed) {
-      await ctx.db.patch(row._id, { status: "committing", error: null, updatedAt: Date.now() });
-      await ctx.scheduler.runAfter(0, calls.commit, { maneuverId: row._id });
-      return { maneuverId: row._id, status: "committing" };
-    }
-    await ctx.db.patch(row._id, { status: "rescreening", error: null, rescreenJobId: `rescreen-${row._id}`, updatedAt: Date.now() });
-    await ctx.scheduler.runAfter(0, calls.submit, { maneuverId: row._id });
-    return { maneuverId: row._id, status: "rescreening" };
+    return await startIntent(ctx, c);
   },
 });
+
+/** Call once the event reaches `approved` (all required sides). Reads the current selection itself, so the caller needs
+ * no pins. A failure is logged for the room and returned, never thrown, so the approving transaction is unaffected. */
+export const requestSchedule = internalMutation({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, { eventId }) => {
+    const ref = await currentRef(ctx, eventId);
+    if (!ref) return { maneuverId: null, status: "skipped", code: "NOT_SELECTED" };
+    // A commit chain lost (or failed on a missed poll) after its write may have been handed over resumes without
+    // re-authorizing: it only reads back and records that job; any new /commit or retry still goes through reserveCommit.
+    const handed = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique();
+    if (handed && handedOver(handed)) {
+      await ctx.scheduler.runAfter(0, calls.commit, { maneuverId: handed._id, attempt: 0 });
+      return { maneuverId: handed._id, status: "committing", code: null };
+    }
+    try {
+      const c = await context(ctx, ref, true);
+      // A reset advanced the generation of a revision humans already saw previewed: prepare this intent's identical
+      // diff now and continue here once it is recorded (recordPreview re-checks the content and approval times).
+      if (c.entry && c.revision.schedulePreviewHash !== null &&
+          !await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique()) {
+        await ctx.scheduler.runAfter(0, calls.prepare, { ref, attempt: 0, thenSchedule: true });
+        return { maneuverId: null, status: "preparing", code: null };
+      }
+      return { ...await startIntent(ctx, c), code: null };
+    }
+    catch (error) {
+      const code = codeOf(error), event = await ctx.db.get(eventId);
+      if (!code) throw error;
+      if (event) await audit(ctx, { event, ref }, "schedule_failed", `${code}: ${(error as ConvexError<{ message: string }>).data.message}`.slice(0, 500), { intentKey: intentOf(ref) });
+      return { maneuverId: null, status: "failed", code };
+    }
+  },
+});
+
+async function startIntent(ctx: MutationCtx, c: Context) {
+  const ref = c.ref;
+  if (c.candidate.kind === "wait") {
+    if (c.event.status !== "monitoring") {
+      await ctx.db.patch(c.event._id, { status: "monitoring", situation: null });
+      await audit(ctx, c, "status_changed", "Required operators approved waiting; monitoring continues without a maneuver.", { status: "monitoring" });
+    }
+    return { maneuverId: null, status: "monitoring" };
+  }
+  const row = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique();
+  if (!row) fail("WORKER_UNAVAILABLE", "Factory must prepare a checked preview before this maneuver can be scheduled.");
+  await currentFor(ctx, row);
+  // A commit chain lost after reservation would strand the row; the worker returns the same job for the same intent.
+  if (row.status === "committing") await ctx.scheduler.runAfter(0, calls.commit, { maneuverId: row._id, attempt: 0 });
+  if (["committed", "committing", "rescreening"].includes(row.status)) return { maneuverId: row._id, status: row.status };
+  if (row.status === "refused") fail("STALE_REVISION", "A refused intent needs a new approved revision.");
+  if (row.rescreen?.passed) {
+    await ctx.db.patch(row._id, { status: "committing", error: null, updatedAt: Date.now() });
+    await ctx.scheduler.runAfter(0, calls.commit, { maneuverId: row._id, attempt: 0 });
+    return { maneuverId: row._id, status: "committing" };
+  }
+  await ctx.db.patch(row._id, { status: "rescreening", error: null, rescreenJobId: `rescreen-${row._id}`, updatedAt: Date.now() });
+  await ctx.scheduler.runAfter(0, calls.submit, { maneuverId: row._id });
+  return { maneuverId: row._id, status: "rescreening" };
+}
 
 export const jobInput = internalQuery({
   args: { maneuverId: v.id("maneuvers") },
@@ -302,6 +453,8 @@ export const jobInput = internalQuery({
 
 function failure(error: unknown) {
   if (error instanceof ConvexError && typeof error.data?.code === "string") return { code: error.data.code, message: "Current scheduling authorization is no longer valid." };
+  // The schedule client's messages are fixed strings; worker details never reach them.
+  if (error instanceof ScheduleServiceError) return { code: error.code, message: error.message };
   return orbitFailure(error);
 }
 export const recordFailure = internalMutation({
@@ -388,20 +541,98 @@ export const reserveCommit = internalMutation({
     const c = await currentFor(ctx, row);
     if (!row.rescreen?.passed || !["committing", "failed"].includes(row.status)) fail("INVALID_STATE", "A passed re-screen is required before reserving the write.");
     if (row.status !== "committing") await ctx.db.patch(row._id, { status: "committing", error: null, updatedAt: Date.now() });
-    return { status: "reserved", intentKey: row.intentKey, filePath: row.filePath, diff: row.diff, contentHash: c.revision.schedulePreviewHash, demoRunId: row.demoRunId };
+    return { status: "reserved", intentKey: row.intentKey, filePath: row.filePath, diff: row.diff, contentHash: c.revision.schedulePreviewHash, demoRunId: row.demoRunId, ref: c.ref };
   },
 });
-export const commit = internalAction({
+/** Unauthorized read of a reserved intent for polling its external commit job. A write already handed to the worker
+ * must still be recorded when inputs move, so polls do not re-run the authorization check; recordCommit flags it. */
+/** A write may have reached the worker: committing, or failed after a passed re-screen (e.g. a missed poll). */
+const handedOver = (row: Maneuver) => row.status === "committing" || (row.status === "failed" && row.rescreen?.passed === true);
+export const commitIntent = internalQuery({
   args: { maneuverId: v.id("maneuvers") },
   handler: async (ctx, { maneuverId }) => {
+    const row = await ctx.db.get(maneuverId);
+    const event = row && row.refs.length === 1 ? await ctx.db.get(row.refs[0].eventId) : null;
+    if (!row || !event || !handedOver(row)) return null;
+    return { intentKey: row.intentKey, ref: { ...row.refs[0], approvalRuleVersion: event.approvalRuleVersion ?? 0 } };
+  },
+});
+/** Reserve (attempt 0) or poll the Factory /commit for a passed re-screen. The commit request repeats the exact
+ * completed /prepare job (job id, content hash, previous file hash and Git commit), read back from the worker because
+ * the maneuver row stores only the diff. Retrying the same intent returns the same worker job, never a second entry. */
+export const commit = internalAction({
+  args: { maneuverId: v.id("maneuvers"), attempt: v.optional(v.number()), ref: v.optional(selectionRef) },
+  handler: async (ctx, { maneuverId, attempt = 0, ref: sentRef }) => {
+    if (!Number.isInteger(attempt) || attempt < 0 || attempt >= POLL_LIMIT) fail("VALIDATION", "Invalid polling attempt.");
     try {
-      const intent = await ctx.runMutation(calls.reserve, { maneuverId });
-      if (intent.status === "committed") return null;
-      await ctx.runMutation(calls.fail, { maneuverId, code: "WORKER_UNAVAILABLE", message: "The Factory schedule worker is not connected. No schedule was written." });
+      const known = await ctx.runQuery(calls.commitIntent, { maneuverId });
+      if (attempt > 0) {
+        if (!known) return null;
+        // The worker job is bound to the ref sent with /commit; a later rule-version change must not hide its result.
+        const ref = sentRef ?? known.ref;
+        let job: ScheduleJob;
+        try { job = await getScheduleJob(await sha256(`commit:${known.intentKey}`), { intentKey: known.intentKey, kind: "commit", ref: workerRef(ref), trajectory: null }); }
+        catch (error) {
+          // A write already handed over may still complete: an unreachable worker is only a missed poll, not a failure.
+          if (!(error instanceof ScheduleServiceError && error.code === "WORKER_UNAVAILABLE") || attempt + 1 >= POLL_LIMIT) throw error;
+          await ctx.scheduler.runAfter(POLL_DELAY_MS, calls.commit, { maneuverId, attempt: attempt + 1, ref });
+          return null;
+        }
+        return await settleCommit(ctx, maneuverId, attempt, job, known.intentKey, ref, false);
+      }
+      // A write handed over by a lost chain is read back and recorded before anything is re-authorized; only a new
+      // /commit needs current authorization. An unknown job (or an unreachable worker) falls through to the reservation.
+      if (known) {
+        const handed = await readHanded(known.intentKey, known.ref);
+        // A failed job is retried only after the reservation below has re-authorized the write.
+        if (handed && handed.job.status !== "failed") return await settleCommit(ctx, maneuverId, attempt, handed.job, known.intentKey, handed.ref, false);
+      }
+      {
+        const intent = await ctx.runMutation(calls.reserve, { maneuverId });
+        if (intent.status === "committed") return null;
+        const { intentKey, ref } = intent as { intentKey: string; ref: Ref };
+        const prepared = await getScheduleJob(await sha256(`prepare:${intentKey}`), { intentKey, kind: "prepare", ref: workerRef(ref), trajectory: null });
+        const a = prepared.result;
+        if (prepared.status !== "completed" || !a || a.contentHash !== intent.contentHash || a.diff !== intent.diff || a.filePath !== intent.filePath) {
+          fail("INVALID_RESPONSE", "The worker's prepared artifact is not the approved preview.");
+        }
+        const job = await commitSchedule({ intentKey, preparedJobId: prepared.jobId, contentHash: a.contentHash, expectedPreviousHash: a.expectedPreviousHash,
+          expectedPreviousCommit: a.expectedPreviousCommit, ref: workerRef(ref), trajectory: null });
+        return await settleCommit(ctx, maneuverId, attempt, job, intentKey, ref, true);
+      }
     } catch (error) { await failAction(ctx, maneuverId, error); }
     return null;
   },
 });
+/** The rows keep no approval rule version, and the worker job is bound to the one sent. A resumed chain looks for it,
+ * newest first, over a few recent versions; an unknown job or an unreachable worker yields null. */
+async function readHanded(intentKey: string, current: Ref) {
+  const jobId = await sha256(`commit:${intentKey}`);
+  for (let version = current.approvalRuleVersion; version >= Math.max(1, current.approvalRuleVersion - 9); version--) {
+    const ref = { ...current, approvalRuleVersion: version };
+    try { return { job: await getScheduleJob(jobId, { intentKey, kind: "commit", ref: workerRef(ref), trajectory: null }), ref }; }
+    catch (error) {
+      if (!(error instanceof ScheduleServiceError)) throw error;
+      if (error.code === "WORKER_UNAVAILABLE") return null;
+      if (error.code !== "INVALID_RESPONSE" || version === 1) throw error;
+    }
+  }
+  return null;
+}
+type ActionCtx = { runMutation: (ref: any, args: any) => Promise<any>; scheduler: { runAfter: (ms: number, ref: any, args: any) => Promise<unknown> } };
+async function settleCommit(ctx: ActionCtx, maneuverId: Id<"maneuvers">, attempt: number, job: ScheduleJob, intentKey: string, ref: Ref, authorized: boolean) {
+  const expected = { intentKey, kind: "commit" as const, ref: workerRef(ref), trajectory: null };
+  // Only an infrastructure failure is retryable for a write, and only right after reserveCommit re-authorized it; the
+  // worker refuses (409) any other retry. A failure seen while polling is recorded; the next request re-authorizes.
+  if (job.status === "failed" && authorized) job = await retryScheduleJob(job.jobId, job.attempt, expected);
+  if (job.status === "completed") {
+    const a = job.result!;
+    await ctx.runMutation(calls.recordCommit, { maneuverId, intentKey, filePath: a.filePath, after: a.after, diff: a.diff, commitSha: a.commitSha! });
+  } else if (job.status === "failed") await ctx.runMutation(calls.fail, { maneuverId, code: job.error!.code, message: job.error!.message });
+  else if (attempt + 1 >= POLL_LIMIT) await ctx.runMutation(calls.fail, { maneuverId, code: "SCHEDULE_TIMEOUT", message: "Factory commit polling reached its limit; retry the same intent to read the same job." });
+  else await ctx.scheduler.runAfter(POLL_DELAY_MS, calls.commit, { maneuverId, attempt: attempt + 1, ref });
+  return null;
+}
 
 export const recordCommit = internalMutation({
   args: { maneuverId: v.id("maneuvers"), intentKey: v.string(), filePath: v.string(), after: v.string(), diff: v.string(), commitSha: v.string() },
