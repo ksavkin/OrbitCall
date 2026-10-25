@@ -87,6 +87,8 @@ export const myQueue = query({
     }
     const fleet = await resolveFleet(ctx, scope.objects);
     const ids = fleetIds(fleet);
+    // The company's whole fleet: whether a pair is internal is a property of the event, not of who is looking.
+    const company = fleetIds(await resolveFleet(ctx, scope.companyObjects));
     const focus = objectId === undefined ? null : fleet.find(f => f.objectId === objectId)?.doc?._id ?? null;
     // A filter on an object that has no catalog row yet can match no event.
     if (objectId !== undefined && focus === null) return [];
@@ -111,17 +113,22 @@ export const myQueue = query({
     const rows = await Promise.all(top.map(async ({ event, section, rank }) => {
       const [snapshot, a, b] = [snapshotById.get(event.snapshotId), objectById.get(event.objectAId), objectById.get(event.objectBId)];
       if (!snapshot || !a || !b) return null;
-      const mineA = ids.get(event.objectAId), mineB = ids.get(event.objectBId);
-      // Sides are canonical (spec §1): the viewer's side is whichever object is theirs. Both: an internal
-      // review with no side, no approval sides and no action until an internal approval rule exists.
-      const mySide = mineA !== undefined && mineB === undefined ? "A" as const : mineB !== undefined && mineA === undefined ? "B" as const : null;
+      // Sides are canonical (spec §1): the viewer's side is whichever object is theirs. Both objects the
+      // company's, whoever in it is assigned to them: an internal review with both ids, no side, no approval
+      // sides and no action until an internal approval rule exists.
+      const ours = (id: typeof event.objectAId) => company.get(id) ?? ids.get(id);
+      const ownA = ours(event.objectAId), ownB = ours(event.objectBId);
+      const internal = ownA !== undefined && ownB !== undefined;
+      const mySide = internal ? null : ownA !== undefined ? "A" as const : "B" as const;
       return {
         ...catalogRow(event, a, b, snapshot, await runFlags(ctx, event._id)),
         mySide,
-        myObjectIds: unique([mineA, mineB].filter((id): id is string => id !== undefined)).sort(),
-        workflow: mySide === null ? "internal_review" as const : "bilateral" as const,
-        requiredApprovalSides: mySide === null ? [] : ["A" as const, "B" as const],
-        canAct: scope.user.role === "operator" && mySide !== null && section === "active",
+        myObjectIds: unique([ownA, ownB].filter((id): id is string => id !== undefined)).sort(),
+        workflow: internal ? "internal_review" as const : "bilateral" as const,
+        requiredApprovalSides: internal ? [] : ["A" as const, "B" as const],
+        // The active flag is the recolor cron's (every 5 minutes, riskMonitor.recolor), as for catalogPairs:
+        // a passed TCA leaves the active section, and canAct with it, when the cron writes.
+        canAct: scope.user.role === "operator" && !internal && section === "active",
         queueSection: section, rank, priorityReason: priorityReason(section, event),
       };
     }));

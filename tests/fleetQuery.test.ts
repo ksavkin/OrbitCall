@@ -203,12 +203,16 @@ describe("myQueue.myQueue", () => {
     expect(rows).toHaveLength(8);
   });
 
-  it("follows assignment changes", async () => {
+  it("follows assignment changes, and keeps a company-internal pair internal whoever is assigned", async () => {
     const { t, ids } = await seed();
     await t.mutation(internal.operators.provision, north(["48211"]));
     const rows = await queue(t, "ana");
     expect(names(rows, ids)).toEqual(["red10", "cross", "low2", "internal", "past"]);
-    expect(rows.find(r => r.eventId === ids.internal)).toMatchObject({ mySide: "A", myObjectIds: ["48211"], workflow: "bilateral", canAct: true });
+    // Both objects are North's even though Ana now holds only one: no side, no action, both ids listed.
+    expect(rows.find(r => r.eventId === ids.internal)).toMatchObject({
+      mySide: null, myObjectIds: ["48211", "48212"], workflow: "internal_review", requiredApprovalSides: [], canAct: false,
+    });
+    expect(rows.find(r => r.eventId === ids.red10)).toMatchObject({ mySide: "A", myObjectIds: ["48211"], canAct: true });
     await t.mutation(internal.operators.provision, north([]));
     expect(await queue(t, "ana")).toEqual([]);
   });

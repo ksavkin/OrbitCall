@@ -13,30 +13,30 @@ import { spaceObject } from "./lib/validators";
 
 /** One object in the caller's scope and when it entered it (the assignment or ownership row's creation). */
 export type FleetObject = { objectId: string; since: number };
-export type FleetScope = { user: Doc<"users">; company: Doc<"companies">; objects: FleetObject[] };
+/** `objects`: what the caller is responsible for. `companyObjects`: everything the caller's company operates. */
+export type FleetScope = { user: Doc<"users">; company: Doc<"companies">; objects: FleetObject[]; companyObjects: FleetObject[] };
+
+function dedupe(rows: FleetObject[]): FleetObject[] {
+  const earliest = new Map<string, number>();
+  for (const { objectId, since } of rows) earliest.set(objectId, Math.min(since, earliest.get(objectId) ?? since));
+  return [...earliest].map(([objectId, since]) => ({ objectId, since })).sort((a, b) => a.objectId < b.objectId ? -1 : 1);
+}
 
 /**
  * Resolves who the caller is responsible for, on the server (FLEET-1, spec §1 roles). An operator: the objects
  * currently assigned to them. A head of ops: every object their company operates, read-only. An observer has no
  * fleet. An empty scope stays empty; there is no global fallback. Objects are sorted by id; a duplicate row keeps
- * the earliest date.
+ * the earliest date. The company's whole fleet comes along for rules that depend on ownership, not assignment.
  */
 export async function requireFleetScope(ctx: QueryCtx): Promise<FleetScope> {
   const { user, company } = await requireUser(ctx);
-  let rows: FleetObject[];
-  if (user.role === "operator") {
-    const assignments = await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", user._id)).collect();
-    rows = assignments.filter(a => a.active).map(a => ({ objectId: a.objectId, since: a._creationTime }));
-  } else if (user.role === "head_of_ops") {
-    const owned = await ctx.db.query("satelliteOwners").withIndex("by_company", q => q.eq("companyId", company._id)).collect();
-    rows = owned.map(o => ({ objectId: o.objectId, since: o._creationTime }));
-  } else {
-    throw new ConvexError({ code: "FORBIDDEN", message: "Observers have no fleet." });
-  }
-  const earliest = new Map<string, number>();
-  for (const { objectId, since } of rows) earliest.set(objectId, Math.min(since, earliest.get(objectId) ?? since));
-  const objects = [...earliest].map(([objectId, since]) => ({ objectId, since })).sort((a, b) => a.objectId < b.objectId ? -1 : 1);
-  return { user, company, objects };
+  if (user.role !== "operator" && user.role !== "head_of_ops") throw new ConvexError({ code: "FORBIDDEN", message: "Observers have no fleet." });
+  const owned = await ctx.db.query("satelliteOwners").withIndex("by_company", q => q.eq("companyId", company._id)).collect();
+  const companyObjects = dedupe(owned.map(o => ({ objectId: o.objectId, since: o._creationTime })));
+  if (user.role === "head_of_ops") return { user, company, objects: companyObjects, companyObjects };
+  const assignments = await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", user._id)).collect();
+  const objects = dedupe(assignments.filter(a => a.active).map(a => ({ objectId: a.objectId, since: a._creationTime })));
+  return { user, company, objects, companyObjects };
 }
 
 /** The stored metadata row of each object in scope; null when the id was assigned without being registered. */
