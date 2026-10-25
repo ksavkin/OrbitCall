@@ -1,9 +1,10 @@
 "use client";
 
+import { AnimatePresence, motion } from "motion/react";
 import { DoorOpen, Hourglass, PhoneOff, ServerOff } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useCoordinationCall } from "@/call/useCoordinationCall";
-import { roomSetInCallRef } from "@/lib/backend/api";
+import { messagesSendRef, roomSetInCallRef } from "@/lib/backend/api";
 import { backendError } from "@/lib/backend/errors";
 import { useLive } from "@/lib/backend/live";
 import { CONVEX_ENABLED } from "@/lib/backend/provider";
@@ -162,8 +163,42 @@ function LiveCaseCall({ e, compact, roomId, autoJoin }: { e: ConjunctionEvent; c
     if (lockedBy && micOn) setMicMode(micMode);
   }, [lockedBy, micOn, micMode, setMicMode]);
 
-  // never into a closed room: it joins on its own only once the room reads open
-  return <CaseCallStage e={e} call={call} compact={compact} mode={mode} onMode={setMode} lockedBy={lockedBy} autoJoin={autoJoin && room?.state === "open"} />;
+  // typed lines go to the room (messages.send, call order 4) and read in the meeting; a refused one ("Side B is
+  // deciding…", "This room is closed.", over 2000 characters) says why in the dock until dismissed or the next send
+  const [sendError, setSendError] = useState<string | null>(null);
+  const sendText = useCallback(
+    (text: string) => {
+      setSendError(null);
+      mutate(messagesSendRef, { roomId, eventId: e.id, text }).catch((err) => setSendError(backendError(err).message));
+    },
+    [roomId, e.id],
+  );
+
+  return (
+    <>
+      <AnimatePresence initial={false}>
+        {sendError && (
+          <motion.div
+            key="send-error"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            className="shrink-0 overflow-hidden"
+          >
+            <div className="mx-auto mt-3 flex w-[calc(100%-48px)] max-w-[860px] items-center gap-3 rounded-[12px] bg-[rgba(255,90,79,0.1)] px-4 py-2 text-[12.5px] text-[#ff8a80]" role="alert" data-testid="call-send-error">
+              {sendError}
+              <button className="ml-auto shrink-0 text-[12px] text-neutral-400 underline" onClick={() => setSendError(null)}>
+                Dismiss
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* never into a closed room: it joins on its own only once the room reads open */}
+      <CaseCallStage e={e} call={{ ...call, sendText }} compact={compact} mode={mode} onMode={setMode} lockedBy={lockedBy} autoJoin={autoJoin && room?.state === "open"} />
+    </>
+  );
 }
 
 /** The plan a phrase names: "option B" / "plan 2" / "P2" / "вариант Б" → "P2". Null when it names none. */
