@@ -107,6 +107,40 @@ export interface AgentRunInfo {
   errorMessage: string | null;
 }
 
+export type PolicyPriority = "low" | "normal" | "high";
+export type CompanyLang = "en" | "ru" | "zh";
+
+export interface PolicyWindow {
+  startUtc: ISODate;
+  endUtc: ISODate;
+  reason: string;
+}
+
+/** One satellite on the caller's company policy (spec §2.5, policies.getMine). */
+export interface PolicySatellite {
+  objectId: ObjectId;
+  minFuelReserveKg: number;
+  currentFuelKg: number;
+  dryMassKg: number;
+  ispS: number;
+  protectedWindows: PolicyWindow[];
+  preferredWindows: PolicyWindow[];
+  acceptablePc: number;
+  missionPriority: PolicyPriority;
+}
+
+export interface PolicyMine {
+  satellites: PolicySatellite[];
+  revision: number;
+  updatedAt: ISODate | null;
+  simulated: boolean;
+}
+
+export interface CompanySettings {
+  language: CompanyLang | null;
+  contact: string | null;
+}
+
 export interface AgentSummary {
   eventId: EventId;
   /** Exactly five lines, or [] until a current checked summary exists. */

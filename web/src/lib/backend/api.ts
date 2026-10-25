@@ -1,9 +1,10 @@
 import { anyApi, type FunctionReference } from "convex/server";
-import type { AgentSummary, CatalogSnapshot, EventId, EventRow } from "./types";
+import type { AgentSummary, CatalogSnapshot, CompanyLang, CompanySettings, EventId, EventRow, PolicyMine, PolicySatellite } from "./types";
 
 // References by name through anyApi: no import from the root convex/_generated package.
 // Types are the ones declared in ./types.ts.
 type Query<Args extends Record<string, unknown>, Result> = FunctionReference<"query", "public", Args, Result>;
+type Mutation<Args extends Record<string, unknown>, Result> = FunctionReference<"mutation", "public", Args, Result>;
 
 /** Every active real catalog pair, already in queue order (spec §3.2); the UI filters. */
 export const catalogPairsRef = anyApi.events.catalogPairs as unknown as Query<{ limit?: number }, EventRow[]>;
@@ -13,3 +14,11 @@ export const catalogSnapshotRef = anyApi.catalog.snapshot as unknown as Query<Re
 
 /** Incident Analyst summary and run state for one event. Public in Phase 1. */
 export const agentSummaryRef = anyApi.agentSummaries.get as unknown as Query<{ eventId: EventId }, AgentSummary>;
+
+/** The caller's company policy. Operators only; raw values never leave the company (POL-1, POL-2). */
+export const policyMineRef = anyApi.policies.getMine as unknown as Query<Record<string, never>, PolicyMine>;
+export const policyUpdateRef = anyApi.policies.update as unknown as Mutation<{ satellites: PolicySatellite[] }, null>;
+
+/** Shareable company language and contact, stored apart from the policy. */
+export const settingsMineRef = anyApi.session.getMySettings as unknown as Query<Record<string, never>, CompanySettings>;
+export const settingsUpdateRef = anyApi.session.updateMySettings as unknown as Mutation<{ language?: CompanyLang; contact?: string }, null>;
