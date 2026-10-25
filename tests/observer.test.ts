@@ -85,3 +85,21 @@ it("lets a newer veto dominate a previously current approval",async()=>{
  await s.t.run(async ctx=>{const row=(await ctx.db.get(s.approvalId))!;const {_id,_creationTime,...data}=row;await ctx.db.insert("approvals",{...data,status:"vetoed"});});
  expect((await s.as().query(view,{demoRunId:s.run})).events[0].approval.allRequiredApproved).toBe(false);
 });
+it("shows only evidence bound to the newest committed schedule, not an older plan or replay",async()=>{
+ const s=await approved();
+ const ids=await s.t.run(async ctx=>{
+  const values={refs:[{eventId:s.eventId,proposalId:s.proposalId,revision:s.revision,selectionGeneration:1}],trajectoryPlanId:null,trajectoryPlanVersion:null,pinned:{snapshotId:"test",evidenceKeys:[],policyRevisions:[],assignmentVersions:[]},status:"committed" as const,filePath:"operators/a/schedule.json",diff:"diff",commitSha:"abc",writtenBy:"droid" as const,rescreenJobId:null,rescreen:null,error:null,reviewRequired:false,demoRunId:s.run,updatedAt:Date.now()};
+  const old=await ctx.db.insert("maneuvers",{...values,intentKey:"old"});const current=await ctx.db.insert("maneuvers",{...values,intentKey:"current"});
+  for(const maneuverId of [old,current])await ctx.db.insert("maneuverEvents",{maneuverId,eventId:s.eventId});
+  const verificationId=await ctx.db.insert("verifications",{eventId:s.eventId,kind:"live",result:"consistent",label:"evidence consistent with plan",expected:{deltaAKm:0.5,sign:1},observed:{deltaAKm:0.5,z:10,epochUtc:"2026-10-25T01:00:00Z"},elementSetCount:8,series:[],thresholds:{z:5,minDeltaAKm:0.05,sizeTolerance:0.5,minSets:8},method:"fixture",limitations:[],missing:[],sources:[],demoRunId:s.run,simulated:true,createdAt:Date.now()});
+  const log=await ctx.db.insert("log",{eventId:s.eventId,actor:{kind:"system"},action:"verified",summary:"Evidence",texts:null,before:null,after:{verificationId:String(verificationId),intentKey:"old"},proposalId:s.proposalId,revision:s.revision,roomId:null,demoRunId:s.run,simulated:true,at:Date.now()});
+  return {old,current,log,verificationId};
+ });
+ expect((await s.as().query(view,{demoRunId:s.run})).events[0].verification).toBeNull();
+ await s.t.run(ctx=>ctx.db.patch(ids.old,{updatedAt:Date.now()+100000}));
+ expect((await s.as().query(view,{demoRunId:s.run})).events[0].verification).toBeNull();
+ await s.t.run(ctx=>ctx.db.patch(ids.log,{after:{verificationId:String(ids.verificationId),intentKey:"current"}}));
+ expect((await s.as().query(view,{demoRunId:s.run})).events[0].verification).toMatchObject({result:"consistent"});
+ await s.t.run(ctx=>ctx.db.patch(ids.current,{reviewRequired:true}));
+ expect((await s.as().query(view,{demoRunId:s.run})).events[0].verification).toBeNull();
+});

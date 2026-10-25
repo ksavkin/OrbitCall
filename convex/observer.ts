@@ -62,10 +62,16 @@ export const publicView=query({args:{demoRunId:v.id("demoRuns")},handler:async(c
    valid.add(approval.side);
   }
   const selected=cards.find(c=>c.proposalId===selection?.proposalId && c.revision===selection.revision)??null;
-  const jobs=[];
-  for(const link of links.slice(0,20)) {const m=await ctx.db.get(link.maneuverId);if(m?.demoRunId===demoRunId)jobs.push({maneuverId:m._id,status:m.status,reviewRequired:m.reviewRequired,
-   rescreen:m.rescreen?{passed:m.rescreen.passed,objectsChecked:m.rescreen.objectsChecked,horizonH:m.rescreen.horizonH}:null,commitSha:m.commitSha});}
-  const verification=verifications.find(x=>x.demoRunId===demoRunId);
+  const jobs=[], committed=[];
+  for(const link of links.slice(0,20)) {const m=await ctx.db.get(link.maneuverId);if(m?.demoRunId===demoRunId && m.refs.some(r=>r.eventId===e._id)){if(m.status==="committed")committed.push(m);jobs.push({maneuverId:m._id,status:m.status,reviewRequired:m.reviewRequired,
+   rescreen:m.rescreen?{passed:m.rescreen.passed,objectsChecked:m.rescreen.objectsChecked,horizonH:m.rescreen.horizonH}:null,commitSha:m.commitSha});}}
+  const currentManeuver=committed.sort((x,y)=>y._creationTime-x._creationTime)[0];
+  const signed=currentManeuver?.refs.find(r=>r.eventId===e._id);
+  const audit=await ctx.db.query("log").withIndex("by_event_at",q=>q.eq("eventId",e._id)).order("desc").take(501);
+  truncated ||= audit.length>500;
+  const resultLine=currentManeuver && !currentManeuver.reviewRequired && links.length<=20 && audit.length<=500
+   ? audit.find(l=>l.action==="verified" && l.demoRunId===demoRunId && l.proposalId===signed?.proposalId && l.revision===signed?.revision && l.after?.intentKey===currentManeuver.intentKey) : null;
+  const verification=resultLine && verifications.find(x=>x.demoRunId===demoRunId && x.kind==="live" && String(x._id)===resultLine.after?.verificationId);
   events.push({eventId:e._id,objects:[a,b].map(o=>o?{objectId:o.objectId,name:o.name}:null),tcaUtc:new Date(e.tcaMs).toISOString(),
    missKm:e.missKm,probability:e.pcValue,status:e.status??"new",simulated:e.simulated,candidates:cards,selection:selected,
    approval:{approved:selected?valid.size:0,required:required.length,allRequiredApproved:!!selected&&e.workflow!=="internal_review"&&required.length>0&&required.every(s=>valid.has(s))},
