@@ -274,6 +274,19 @@ describe("GET /jobs/{id} for a screen", () => {
     expect((await getScreenJob("screen-scan-1", expectScreen)).error?.code).toBe("ERROR");
   });
 
+  it("accepts a job that failed before it started, as after a service restart", async () => {
+    // jobs.py marks a queued job failed on restart without ever setting startedAt.
+    mockFetch(json(job({ status: "failed", phase: "failed", startedAt: null, finishedAt: "2026-10-25T00:00:05Z", progress: null, counters: {},
+      error: { code: "SERVICE_RESTARTED", message: "the service restarted before the job finished; resubmit" } })));
+    const failed = await getScreenJob("screen-scan-1", expectScreen);
+    expect(failed).toMatchObject({ status: "failed", startedAt: null, error: { code: "SERVICE_RESTARTED" } });
+  });
+
+  it("accepts a queued job that has not started", async () => {
+    mockFetch(json(job({ status: "queued", phase: "queued", startedAt: null, progress: null, counters: {} })));
+    expect((await getScreenJob("screen-scan-1", expectScreen)).status).toBe("queued");
+  });
+
   it("reports an unknown or evicted job as not found", async () => {
     mockFetch(upstreamError(404, "NOT_FOUND"));
     expect(await codeOf(getScreenJob("screen-scan-9", expectScreen))).toBe("NOT_FOUND");
@@ -285,7 +298,14 @@ describe("GET /jobs/{id} for a screen", () => {
     ["a result for another evidence version", doneJob({ ...screenResult, evidenceVersion: "ev-6" })],
     ["an event without a primary", doneJob({ ...screenResult, events: [{ ...event, primaries: [] }] })],
     ["a running job that never started", job({ startedAt: null })],
+    ["a queued job that already started", job({ status: "queued", phase: "queued", startedAt: "2026-10-25T00:00:02Z" })],
+    ["a running job already in the done phase", job({ phase: "done" })],
+    ["a running job with coverage", job({ coverage: fullCoverage })],
     ["a completed job without a finish time", doneJob(screenResult, { finishedAt: null })],
+    ["a real pair flagged simulated", doneJob({ ...screenResult, events: [{ ...event, simulated: true }] })],
+    ["an event beyond the screening threshold", doneJob({ ...screenResult, events: [{ ...event, missKm: 5.2 }] })],
+    ["events out of TCA order", doneJob({ ...screenResult, counts: { ...counts, eventsFound: 2 },
+      events: [{ ...event, tcaUtc: "2026-10-26T05:00:00Z" }, { ...event, objectB: DEB, tcaUtc: "2026-10-26T04:00:00Z" }], objects: { ...screenResult.objects, [DEB]: debris } })],
     ["a co-located pair whose object has no classification", doneJob({ ...screenResult, coLocated: [{ objectA: ISS, objectB: DEB, minDistanceKm: 0.08 }] })],
     ["completed without a result", job({ status: "completed", phase: "done" })],
     ["failed without an error", job({ status: "failed", phase: "failed" })],
@@ -320,9 +340,9 @@ describe("POST /rescreen and its job", () => {
   const req = { jobId: "rescreen-p1-r2", snapshotId: SNAP, evidenceVersion: EV, objectId: SAT, partnerObjectId: ISS,
     maneuver: { burnTimeUtc: "2026-10-25T22:00:00Z", deltaVMs: 0.12, direction: "prograde" as const },
     tcaUtc: "2026-10-26T04:12:00Z", fromUtc: "2026-10-25T00:00:00Z", toUtc: "2026-10-28T22:00:00Z", proposalId: "p1", revision: 2 };
-  const expectRescreen = { snapshotId: SNAP, evidenceVersion: EV };
+  const expectRescreen = { snapshotId: SNAP, evidenceVersion: EV, objectId: SAT, partnerObjectId: ISS };
   const pass = {
-    passed: true, objectsChecked: 2140, objectsInCatalog: 19467, horizonH: 72.9, originalMissAfterKm: 3.4,
+    passed: true, objectsChecked: 2140, objectsInCatalog: 19467, horizonH: 72, originalMissAfterKm: 3.4,
     newConjunctions: [], refusalReason: null, snapshotId: SNAP, evidenceVersion: EV, simulated: false,
     fromUtc: req.fromUtc, toUtc: req.toUtc, screenedFromUtc: req.maneuver.burnTimeUtc, screenedToUtc: req.toUtc,
     attachedObjectIds: [], partnerAttachedObjectIds: [DOCKED], proposalId: "p1", revision: 2,
@@ -403,6 +423,8 @@ describe("POST /rescreen and its job", () => {
     ["another evidence version", { ...pass, evidenceVersion: "ev-6" }],
     ["a missing echo", without(pass, "evidenceVersion")],
     ["a horizon beyond a week", { ...pass, horizonH: 200 }],
+    ["a real pair labeled simulated", { ...pass, simulated: true }],
+    ["new conjunctions not closest first", { ...refusal, newConjunctions: [{ ...conjunction, missKm: 0.9 }, { ...conjunction, objectId: "31022", missKm: 0.3 }] }],
     ["a conjunction without the unmoved comparison field", { ...refusal, newConjunctions: [without(conjunction, "withoutManeuverKm")] }],
   ])("rejects %s", async (_, result) => {
     mockFetch(json(rjob(result)));
@@ -482,6 +504,8 @@ describe("POST /candidates", () => {
     ["a wait card with a burn", { ...response, wait: { ...wait, deltaVMs: 0.1 } }],
     ["a wait card with another miss before", { ...response, wait: { ...wait, missBeforeKm: 0.5 } }],
     ["a maneuver without a burn time", { ...response, candidates: [{ ...maneuver, burnTimeUtc: null }] }],
+    ["a maneuver without a miss after the burn", { ...response, candidates: [{ ...maneuver, missAfterKm: null }] }],
+    ["a real pair labeled simulated", { ...response, simulated: true, candidates: [{ ...maneuver, simulated: true }], wait: { ...wait, simulated: true } }],
     ["a burn after closest approach", { ...response, candidates: [{ ...maneuver, burnTimeUtc: "2026-10-26T05:00:00Z" }] }],
     ["fuel estimated by the service", { ...response, candidates: [{ ...maneuver, estimatedFuelKg: 1.2 }] }],
     ["a pass flag that disagrees with the miss", { ...response, candidates: [{ ...weak, passesPairThreshold: true }] }],
@@ -550,15 +574,17 @@ describe("POST /simulate", () => {
 describe("POST /verify", () => {
   const req = { objectId: SAT, expected: { burnTimeUtc: "2026-10-25T22:12:00Z", deltaVMs: 0.05, direction: "prograde" as const },
     series: [{ epochUtc: "2026-10-24T06:00:00Z", meanMotionRevPerDay: 15.49 }, { epochUtc: "2026-10-26T06:00:00Z", smaKm: 6921.4 }] };
+  // Nine element sets, four before the burn and five after, as a verdict needs (verify.py minimums).
+  const smaSeries = Array.from({ length: 9 }, (_, i) => ({ epochUtc: `2026-10-${String(22 + i).padStart(2, "0")}T06:00:00Z`, smaKm: i < 4 ? 6921.31 : 6921.4 }));
   const base = {
-    kind: "live", label: "evidence consistent with plan", expected: { deltaAKm: 0.0905, sign: 1 }, elementSetCount: 2,
-    series: [{ epochUtc: "2026-10-24T06:00:00Z", smaKm: 6921.31 }, { epochUtc: "2026-10-26T06:00:00Z", smaKm: 6921.4 }],
+    kind: "live", label: "evidence consistent with plan", expected: { deltaAKm: 0.0905, sign: 1 }, elementSetCount: 9,
+    series: smaSeries,
     thresholds: { z: 5, minDeltaAKm: 0.05, sizeTolerance: 0.5, minSets: 8 }, method: "SMA from mean motion; Theil–Sen trend on pre-burn sets",
     limitations: ["Mean elements from public element sets; not proof of the exact Δv or execution time."], missing: [],
     sources: [{ name: "gp_history", url: null, epochUtc: "2026-10-26T06:00:00Z", fetchedAt: null }], simulated: false,
   };
   const consistent = { ...base, result: "consistent", observed: { deltaAKm: 0.09, z: 7.1, epochUtc: "2026-10-26T06:00:00Z" } };
-  const awaiting = { ...base, result: "awaiting_data", label: "awaiting verification data", observed: null,
+  const awaiting = { ...base, result: "awaiting_data", label: "awaiting verification data", observed: null, elementSetCount: 2, series: smaSeries.slice(0, 2),
     missing: ["8 element sets (have 2)", "4 element sets before the burn (have 1)", "4 element sets after the burn (have 1)"] };
 
   it("returns a verdict with its observation and sends the burn time the service needs", async () => {
@@ -614,8 +640,10 @@ describe("POST /verify", () => {
     ["an expectation whose sign contradicts its value", { ...consistent, expected: { deltaAKm: 0.09, sign: -1 } }],
     ["a label that contradicts the verdict", { ...consistent, label: "awaiting verification data" }],
     ["a replay verdict for live evidence", { ...consistent, kind: "replay" }],
-    ["an element set count that disagrees with the series", { ...consistent, elementSetCount: 9 }],
-    ["a series point without a semi-major axis", { ...consistent, series: [{ epochUtc: "2026-10-24T06:00:00Z" }, base.series[1]] }],
+    ["an element set count that disagrees with the series", { ...consistent, elementSetCount: 10 }],
+    ["a series point without a semi-major axis", { ...consistent, series: [{ epochUtc: "2026-10-24T06:00:00Z" }, ...base.series.slice(1)] }],
+    ["a verdict below the minimum element sets", { ...consistent, elementSetCount: 2, series: base.series.slice(0, 2) }],
+    ["live evidence for a real object labeled simulated", { ...consistent, simulated: true }],
     ["an unlabeled verdict", { ...consistent, simulated: "no" }],
   ])("rejects %s", async (_, body) => {
     mockFetch(json(body));

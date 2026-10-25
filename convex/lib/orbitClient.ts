@@ -314,8 +314,8 @@ function parsePair(v: unknown, what: string): Rec {
   const e = rec(v, what);
   fields(e, { objectA: isObjectId, objectB: isObjectId, tcaUtc: isIso, missKm: isNonNeg, relSpeedKmS: isNonNeg, simulated: isBool }, what);
   if (e.objectA === e.objectB) fail(`${what} (self-pair)`);
-  // Simulated data is always labeled (DATA-5): a pair with a SIM object is never reported as real.
-  if ((isSim(e.objectA) || isSim(e.objectB)) && e.simulated !== true) fail(`${what} (simulated pair not flagged)`);
+  // Simulated data is always labeled (DATA-5), and only it: the flag follows the SIM ids exactly.
+  if (e.simulated !== (isSim(e.objectA) || isSim(e.objectB))) fail(`${what} (simulated flag)`);
   return e;
 }
 
@@ -363,12 +363,16 @@ function parseScreenResult(v: unknown, expected: ScreenExpectation): ScreenResul
   const missing = idList(r.missingPrimaryIds, `${what} (missingPrimaryIds)`);
   const unpropagated = idList(r.unpropagatedObjectIds, `${what} (unpropagatedObjectIds)`, MAX_OBJECTS);
   const docked = rec(r.dockedBodies, `${what} (dockedBodies)`);
+  if (Object.keys(docked).length > MAX_PRIMARIES) fail(`${what} (dockedBodies)`);
   for (const key of Object.keys(docked)) {
     if (!isObjectId(key)) fail(`${what} (dockedBodies)`);
     idList(docked[key], `${what} (dockedBodies)`);
   }
   const events = list(r.events, MAX_EVENTS, `${what} (events)`).map(parseEvent);
   if (counts.eventsFound !== events.length) fail(`${what} (eventsFound)`);
+  // Events are under the screening threshold and sorted by TCA (screen.py).
+  if (events.some(e => e.missKm >= (r.thresholdKm as number))) fail(`${what} (event beyond the threshold)`);
+  if (events.some((e, i) => i > 0 && ms(e.tcaUtc) < ms(events[i - 1].tcaUtc))) fail(`${what} (events out of TCA order)`);
   const named = new Set<string>();
   for (const e of events) named.add(e.objectA).add(e.objectB);
   for (const c of list(r.coLocated, MAX_EVENTS, `${what} (coLocated)`)) {
@@ -391,7 +395,9 @@ function parseScreenResult(v: unknown, expected: ScreenExpectation): ScreenResul
   return r as unknown as ScreenResult;
 }
 
-function parseRescreenResult(v: unknown, expected: { snapshotId: string; evidenceVersion: string }): RescreenResult {
+export interface RescreenExpectation { snapshotId: string; evidenceVersion: string; objectId?: ObjectId; partnerObjectId?: ObjectId }
+
+function parseRescreenResult(v: unknown, expected: RescreenExpectation): RescreenResult {
   const what = "re-screen result";
   const r = rec(v, what);
   if (r.snapshotId !== expected.snapshotId || r.evidenceVersion !== expected.evidenceVersion) {
@@ -402,6 +408,9 @@ function parseRescreenResult(v: unknown, expected: { snapshotId: string; evidenc
     originalMissAfterKm: orNull(isNonNeg), refusalReason: orNull(isStr), simulated: isBool, method: isStr,
   }, what);
   if ((r.horizonH as number) > 168) fail(`${what} (horizonH)`);
+  // The label follows the moved object and its partner (rescreen.py), when the caller says which they are.
+  if (expected.objectId !== undefined && expected.partnerObjectId !== undefined &&
+    r.simulated !== (isSim(expected.objectId) || isSim(expected.partnerObjectId))) fail(`${what} (simulated flag)`);
   strList(r.limitations, `${what} (limitations)`);
   const conjunctions = list(r.newConjunctions, MAX_EVENTS, `${what} (newConjunctions)`).map(c => {
     const n = rec(c, "new conjunction");
@@ -409,6 +418,8 @@ function parseRescreenResult(v: unknown, expected: { snapshotId: string; evidenc
     idList(n.attachedObjectIds, "new conjunction (attachedObjectIds)");
     return n as unknown as NewConjunction;
   });
+  // New conjunctions come closest first (rescreen.py).
+  if (conjunctions.some((c, i) => i > 0 && c.missKm < conjunctions[i - 1].missKm)) fail(`${what} (new conjunctions out of order)`);
   // Present after a screen; absent when the maneuver could not be propagated.
   for (const key of ["fromUtc", "toUtc", "screenedFromUtc", "screenedToUtc"]) if (r[key] !== undefined && !isIso(r[key])) fail(`${what} (${key})`);
   for (const key of ["attachedObjectIds", "partnerAttachedObjectIds"]) if (r[key] !== undefined) idList(r[key], `${what} (${key})`);
@@ -441,9 +452,14 @@ function parseJob<R>(v: unknown, jobId: string, kind: JobKind, parseResult: (val
   if (status === "completed" && (!hasResult || j.error !== null || j.phase !== "done")) fail("completed job without a result");
   if (status === "failed" && (j.error === null || hasResult || j.phase !== "failed")) fail("failed job without an error");
   if ((status === "queued" || status === "running") && (hasResult || j.error !== null)) fail("unfinished job with a result");
-  // jobs.py stamps startedAt on running and finishedAt on completion or failure.
-  if (status !== "queued" && j.startedAt === null) fail(`${what} (startedAt)`);
+  // jobs.py stamps startedAt when the job starts running and finishedAt when it ends. A job that failed before it
+  // started (the service restarted while it was queued) has no start time.
+  if ((status === "running" || status === "completed") && j.startedAt === null) fail(`${what} (startedAt)`);
+  if (status === "queued" && j.startedAt !== null) fail(`${what} (startedAt)`);
   if ((status === "completed" || status === "failed") === (j.finishedAt === null)) fail(`${what} (finishedAt)`);
+  const phases: Record<JobStatus, readonly JobPhase[]> = { queued: ["queued"], running: ["screening", "publishing"], completed: ["done"], failed: ["failed"] };
+  if (!phases[status].includes(j.phase as JobPhase)) fail(`${what} (phase)`);
+  if (coverage !== null && status !== "completed") fail(`${what} (coverage before completion)`);
   // The job's error carries raw exception text (jobs.py: str(exc)[:500]). Only its code is kept, from a fixed list;
   // the message stored and shown is this client's.
   let error: OrbitJob<R>["error"] = null;
@@ -493,8 +509,13 @@ function parseCandidate(v: unknown, ctx: CandidateContext, what: string): Servic
     if (!passFlagAgrees(c.passesPairThreshold as boolean, c.missBeforeKm as number)) fail(`${what} (passesPairThreshold)`);
     return c as unknown as ServiceCandidate;
   }
-  fields(c, { movingSide: oneOf(SIDES), movingObjectId: isObjectId, burnTimeUtc: isIso, deltaVMs: isPos, direction: oneOf(DIRECTIONS), rank: isPosInt }, what);
-  if (c.missAfterKm !== null && !passFlagAgrees(c.passesPairThreshold as boolean, c.missAfterKm as number)) fail(`${what} (passesPairThreshold)`);
+  // A maneuver that reached the grid has its geometry after the burn (candidates.py); one that could not be
+  // modeled is in `failed`, not here.
+  fields(c, {
+    movingSide: oneOf(SIDES), movingObjectId: isObjectId, burnTimeUtc: isIso, deltaVMs: isPos, direction: oneOf(DIRECTIONS),
+    rank: isPosInt, missAfterKm: isNonNeg, tcaAfterUtc: isIso, relSpeedKmS: isNonNeg, deltaAKm: isNum, leadH: isPos,
+  }, what);
+  if (!passFlagAgrees(c.passesPairThreshold as boolean, c.missAfterKm as number)) fail(`${what} (passesPairThreshold)`);
   const mover = c.movingSide === "A" ? ctx.objectA : ctx.objectB;
   if (c.movingObjectId !== mover) fail(`${what} (moving object is not its side's object)`);
   // Debris, rocket bodies, nonoperational payloads and anything the caller did not allow never move (ROOM-14).
@@ -515,7 +536,7 @@ function parseCandidates(v: unknown, req: CandidatesRequest): CandidatesResponse
   const objects = parseObjects(r.objects, `${what} (objects)`);
   if (!(req.objectA in objects) || !(req.objectB in objects)) fail(`${what} (objects of the pair)`);
   const simulated = r.simulated as boolean;
-  if ((isSim(req.objectA) || isSim(req.objectB)) && !simulated) fail(`${what} (simulated pair not flagged)`);
+  if (simulated !== (isSim(req.objectA) || isSim(req.objectB))) fail(`${what} (simulated flag)`);
   const frozen = new Set<string>();
   for (const n of list(r.notMovable, 2, `${what} (notMovable)`)) {
     const m = rec(n, "not-movable side");
@@ -581,7 +602,12 @@ function parseVerification(v: unknown, req: VerifyRequest): Verification {
   const series = list(r.series, MAX_EVENTS, "verification series");
   for (const p of series) fields(rec(p, "verification series point"), { epochUtc: isIso, smaKm: isPos }, "verification series point");
   if (r.elementSetCount !== series.length) fail(`${what} (elementSetCount)`);
-  fields(rec(r.thresholds, "verification thresholds"), { z: isPos, minDeltaAKm: isPos, sizeTolerance: isPos, minSets: isPosInt }, "verification thresholds");
+  const thresholds = rec(r.thresholds, "verification thresholds");
+  fields(thresholds, { z: isPos, minDeltaAKm: isPos, sizeTolerance: isPos, minSets: isPosInt }, "verification thresholds");
+  // verify.py never reaches a verdict below its own minimum number of element sets.
+  if (r.result !== "awaiting_data" && series.length < (thresholds.minSets as number)) fail(`${what} (verdict below the minimum element sets)`);
+  // Live evidence is labeled from the catalog: simulated only for a SIM object. A replay carries its own label.
+  if (req.replay === undefined && r.simulated !== isSim(req.objectId)) fail(`${what} (simulated flag)`);
   strList(r.limitations, `${what} (limitations)`);
   const missing = strList(r.missing, `${what} (missing)`);
   parseSources(r.sources, "verification source");
@@ -739,7 +765,7 @@ export async function getScreenJob(jobId: string, expected: ScreenExpectation): 
 }
 
 /** GET /jobs/{id} for a re-screen job. One bounded request; the caller schedules the next poll. */
-export async function getRescreenJob(jobId: string, expected: { snapshotId: string; evidenceVersion: string }): Promise<OrbitJob<RescreenResult>> {
+export async function getRescreenJob(jobId: string, expected: RescreenExpectation): Promise<OrbitJob<RescreenResult>> {
   return parseJob(await request("GET", jobPath(jobId), undefined, ORBIT_TIMEOUTS.job), jobId, "rescreen", v => parseRescreenResult(v, expected));
 }
 
