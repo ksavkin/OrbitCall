@@ -26,7 +26,7 @@ This port follows Adil's decision of October 25 (user-flow "App navigation and t
 
 The port replaces the old branch `claude/r2-approvals-chain-a21926`, which must not be merged.
 
-**No schema edits.** Everything runs on main's Round 1.5 tables: `proposals`, `proposalRevisions`, `selections` and `approvals` in `schema/schedule.ts`, plus the stored `events.workflow`, `requiredApprovalSides`, `approvalRuleVersion` and `status`.
+**One schema edit:** an optional `approvals.assignmentVersion`. Everything else runs on main's Round 1.5 tables: `proposals`, `proposalRevisions`, `selections` and `approvals` in `schema/schedule.ts`, plus the stored `events.workflow`, `requiredApprovalSides`, `approvalRuleVersion` and `status`.
 
 ## What was built
 
@@ -77,8 +77,9 @@ The port replaces the old branch `claude/r2-approvals-chain-a21926`, which must 
 
 ## Known limits and seams
 
-- **Revoke then re-assign.** Revoking an approver's assignment stops their row from counting. Re-assigning them makes it count again, because the row stores no assignment version. The scheduler's pinned `assignmentVersions` on `maneuvers` is the guard at commit time.
-- **`decisionTurn`** uses the looser rule: current, exact selection and rule version. `countingApprovals` adds owner and assignment. If an approver loses their assignment, the turn moves to B while A is not counted. A newly assigned A operator can still approve, because a null turn is allowed.
+- **Material changes reset approvals.** A policy edit, a recompute on new evidence, or a provisioning change to the approver's role or assignments resets them (`assignment_revoked`, `policy_changed`, `evidence_changed`). After consensus they flag `reviewRequired` instead and never undo the agreement.
+- **Revocation cannot revive an approval.** The approval stores the approver's `assignmentVersion`, and `countingApprovals`, `decisionTurn` and `hostContext.recordedApprovals` require it to match. Any assignment change, including adding an unrelated satellite, therefore resets that operator's approvals.
+- **Codex review (gpt-6-astra)** ran five rounds. Every major it found is fixed, and the last round returned NO_MAJOR_ISSUES.
 - **Not wired yet:**
   - the `log` audit rows for select, approve, veto and reset;
   - scheduling the agents' revision after a veto;
