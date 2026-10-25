@@ -6,13 +6,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { sfx } from "@/lib/sound";
+import { useAuth0 } from "@auth0/auth0-react";
+import { AUTH0_ENABLED } from "@/lib/backend/provider";
 import { useSession } from "./session";
 
 // Sign in. Auth0 is the provider (spec §1); until its tenant is configured the Auth0 button explains that, and
 // team accounts sign in with a username and password checked on the server. No account is listed here:
 // knowing the login is what lets someone in.
 
-const AUTH0_READY = !!process.env.NEXT_PUBLIC_AUTH0_DOMAIN && !!process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID;
 
 export function SignInScreen() {
   const router = useRouter();
@@ -63,13 +64,49 @@ export function SignInScreen() {
           </button>
         </form>
 
-        <div className="mt-6 border-t border-white/[0.07] pt-5">
-          <button className="btn h-11 w-full gap-2 text-[14px] text-neutral-300 disabled:opacity-40" disabled={!AUTH0_READY}>
-            <Lock size={14} /> Continue with Auth0
-          </button>
-          {!AUTH0_READY && <div className="pt-2 text-[12px] text-neutral-500">Auth0 sign-in and sign-up open once the tenant is configured.</div>}
-        </div>
+        <div className="mt-6 border-t border-white/[0.07] pt-5">{AUTH0_ENABLED ? <Auth0Buttons /> : <Auth0Off />}</div>
       </motion.div>
     </div>
+  );
+}
+
+/** Auth0 sign-in and sign-up. Only rendered under Auth0Provider. A new account has no access until the team
+ * provisions it; its profile shows how to ask. */
+function Auth0Buttons() {
+  const { loginWithRedirect, isLoading } = useAuth0();
+  return (
+    <div className="space-y-2">
+      <button
+        className="btn h-11 w-full gap-2 text-[14px] text-white disabled:opacity-40"
+        disabled={isLoading}
+        onClick={() => {
+          sfx.click();
+          void loginWithRedirect();
+        }}
+      >
+        <Lock size={14} /> Continue with Auth0
+      </button>
+      <button
+        className="h-9 w-full text-[13px] text-neutral-400 hover:text-white disabled:opacity-40"
+        disabled={isLoading}
+        onClick={() => {
+          sfx.click();
+          void loginWithRedirect({ authorizationParams: { screen_hint: "signup" } });
+        }}
+      >
+        Create an account
+      </button>
+    </div>
+  );
+}
+
+function Auth0Off() {
+  return (
+    <>
+      <button className="btn h-11 w-full gap-2 text-[14px] text-neutral-300 disabled:opacity-40" disabled>
+        <Lock size={14} /> Continue with Auth0
+      </button>
+      <div className="pt-2 text-[12px] text-neutral-500">Auth0 sign-in and sign-up open once the tenant is configured.</div>
+    </>
   );
 }

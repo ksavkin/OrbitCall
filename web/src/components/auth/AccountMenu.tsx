@@ -8,6 +8,7 @@ import { sfx } from "@/lib/sound";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { CONVEX_AUTH, CONVEX_ENABLED } from "@/lib/backend/provider";
 import { BackendSession } from "./BackendSession";
+import { Auth0Bridge } from "./Auth0Bridge";
 import { restoreSession, useMe, useSession } from "./session";
 
 // Top right: who is signed in, with their company's flag. The menu opens the profile and fleet, or signs out.
@@ -15,7 +16,12 @@ import { restoreSession, useMe, useSession } from "./session";
 export function AccountMenu() {
   return (
     <>
-      {CONVEX_ENABLED && CONVEX_AUTH && <BackendSession />}
+      {CONVEX_ENABLED && CONVEX_AUTH && (
+        <>
+          <BackendSession />
+          <Auth0Bridge />
+        </>
+      )}
       <AccountButton />
     </>
   );

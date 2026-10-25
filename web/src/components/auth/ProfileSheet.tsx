@@ -2,6 +2,11 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { Lock, Mail, X } from "lucide-react";
+import { useMemo } from "react";
+import { useOps } from "@/lib/ops/store";
+import { sfx } from "@/lib/sound";
+import { useQueueView } from "@/components/ops/queueView";
+import { KIND_LABEL, SatGlyph } from "./SatGlyph";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { ACCESS_EMAIL, useFleet, useMe, useSession, type FleetSatellite, type Me } from "./session";
 
@@ -68,6 +73,20 @@ function Header({ me, onClose }: { me: Me; onClose: () => void }) {
 }
 
 function Fleet({ fleet }: { fleet: FleetSatellite[] }) {
+  const rows = useOps((st) => st.backendRows);
+  const close = useSession((st) => st.setProfileOpen);
+  // conjunctions in the live queue that involve each satellite; the fixture never claims a count
+  const inQueue = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows ?? []) for (const id of [r.objectA.objectId, r.objectB.objectId]) m.set(id, (m.get(id) ?? 0) + 1);
+    return m;
+  }, [rows]);
+  const showInQueue = (objectId: string) => {
+    sfx.whoosh();
+    useQueueView.getState().set({ mine: true, search: objectId, severity: "all", within: "all", objects: "all" });
+    useOps.getState().set({ tab: "conjunctions" });
+    close(false);
+  };
   return (
     <div className="px-6 py-5">
       <div className="flex items-baseline justify-between">
@@ -75,25 +94,36 @@ function Fleet({ fleet }: { fleet: FleetSatellite[] }) {
         <div className="text-[12px] text-neutral-500">{fleet.length} satellites assigned to you · Run scan checks all of them</div>
       </div>
       <div className="mt-3 overflow-hidden rounded-[12px] shadow-[0_0_0_1px_rgba(255,255,255,0.07)]">
-        {fleet.map((f, i) => (
-          <div key={f.object.objectId} className={`flex items-center gap-4 px-4 py-3 ${i ? "border-t border-white/[0.06]" : ""}`}>
-            <div className="min-w-0 flex-1">
-              <div className="text-[14px] font-medium text-white">{f.object.name}</div>
-              <div className="mono mt-0.5 text-[11.5px] text-neutral-500">
-                {f.object.norad !== null ? `NORAD ${f.object.norad}` : f.object.objectId}
-                {f.object.orbit && ` · ${f.object.orbit}`}
+        {fleet.map((f, i) => {
+          const n = f.unresolvedIncidentCount ?? (rows ? (inQueue.get(f.object.objectId) ?? 0) : null);
+          return (
+            <div key={f.object.objectId} className={`flex items-center gap-4 px-4 py-3 ${i ? "border-t border-white/[0.06]" : ""}`}>
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] bg-white/[0.03] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]">
+                {f.object.kind ? <SatGlyph kind={f.object.kind} size={38} /> : null}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2">
+                  <span className="truncate text-[14px] font-medium text-white">{f.object.name}</span>
+                  {f.object.kind && <span className="shrink-0 text-[11.5px] text-neutral-500">{KIND_LABEL[f.object.kind]}</span>}
+                </div>
+                <div className="mono mt-0.5 truncate text-[11.5px] text-neutral-500">
+                  {f.object.norad !== null ? `NORAD ${f.object.norad}` : f.object.objectId}
+                  {f.object.orbit && ` · ${f.object.orbit}`}
+                </div>
               </div>
+              {f.freshness !== "current" && <span className="text-[12px] text-amber">{f.freshness === "stale" ? "Orbit data stale" : "Orbit data unknown"}</span>}
+              {n === null ? (
+                <span className="w-[110px] text-right text-[12px] text-neutral-500">Queue not loaded</span>
+              ) : n > 0 ? (
+                <button className="w-[110px] text-right text-[12.5px] font-medium text-[#ff8a80] hover:underline" onClick={() => showInQueue(f.object.objectId)}>
+                  {n} conjunction{n > 1 ? "s" : ""} →
+                </button>
+              ) : (
+                <span className="w-[110px] text-right text-[12.5px] text-neutral-500">No conjunctions</span>
+              )}
             </div>
-            <span className={`text-[12px] ${f.freshness === "current" ? "text-neutral-400" : "text-amber"}`}>{f.freshness === "current" ? "Orbit data current" : f.freshness === "stale" ? "Orbit data stale" : "Orbit data unknown"}</span>
-            <span className={`w-[96px] text-right text-[12.5px] font-medium ${f.unresolvedIncidentCount ? "text-[#ff8a80]" : "text-neutral-500"}`}>
-              {f.unresolvedIncidentCount === null
-                ? "Cases not loaded"
-                : f.unresolvedIncidentCount
-                  ? `${f.unresolvedIncidentCount} open case${f.unresolvedIncidentCount > 1 ? "s" : ""}`
-                  : "No open cases"}
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

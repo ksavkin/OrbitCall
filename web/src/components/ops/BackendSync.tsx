@@ -53,6 +53,7 @@ function OmmPairsSync() {
 }
 
 function PairsSync() {
+  // the whole active queue (the backend caps it); the list filters and pages it in the browser
   const rows = useQuery(catalogPairsRef, {});
   useEffect(() => {
     useOps.setState({ backendRows: rows, backendError: null });

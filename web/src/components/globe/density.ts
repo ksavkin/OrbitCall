@@ -262,9 +262,12 @@ export class DensityLayers {
     this.debris.update(dt, this.vis.debris, cam);
     const on = this.vis.traffic || this.vis.debris;
     this.shellOpacity += ((on ? 1 : 0) - this.shellOpacity) * Math.min(dt * 4, 1);
+    // The shells read as rings around the planet from far away. From inside LEO they stack into bands across
+    // the view, so they fade out below ~4,500 km of camera altitude and are gone by ~2,000 km.
+    const far = THREE.MathUtils.smoothstep(cam.length() - 1, 0.3, 0.7);
     this.shellMeshes.forEach((m, k) => {
       const u = (m.material as THREE.ShaderMaterial).uniforms;
-      u.uOpacity.value = this.shellOpacity * (k < this.top.length ? 1 : 0);
+      u.uOpacity.value = this.shellOpacity * far * (k < this.top.length ? 1 : 0);
       (u.uCamPos.value as THREE.Vector3).copy(cam);
       m.visible = u.uOpacity.value > 0.01;
     });

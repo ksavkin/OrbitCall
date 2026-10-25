@@ -3,6 +3,8 @@
 import { useEffect } from "react";
 import type { ConjItem } from "@/components/globe/conjunctions";
 import { engine } from "@/lib/ops/engine";
+import { realEncounter } from "@/lib/ops/encounter";
+import type { Catalog, SatObject } from "@/lib/catalog/client";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent } from "@/lib/ops/types";
 import { sceneRef } from "@/lib/sceneRef";
@@ -11,12 +13,47 @@ import { useOrbit } from "@/lib/store";
 
 const QUIET: ConjunctionEvent["status"][] = ["verified", "no_action", "monitoring"];
 
+// NORAD → catalog object, rebuilt when the catalog changes
+let indexFor: Catalog | null = null;
+let byNorad = new Map<number, SatObject>();
+function catalogObject(objectId: string): SatObject | null {
+  const cat = useOrbit.getState().catalog;
+  if (!cat) return null;
+  if (indexFor !== cat) {
+    byNorad = new Map(cat.objects.map((o) => [o.norad, o]));
+    indexFor = cat;
+  }
+  const n = Number(objectId);
+  return Number.isInteger(n) ? (byNorad.get(n) ?? null) : null;
+}
+
+/** The focused backend pair as a globe item, or null when either object is not in the loaded catalog. */
+function backendItem(eventId: string | null): ConjItem | null {
+  if (!eventId) return null;
+  const row = useOps.getState().backendRows?.find((r) => r.eventId === eventId);
+  if (!row) return null;
+  const a = catalogObject(row.objectA.objectId);
+  const b = catalogObject(row.objectB.objectId);
+  const tca = Date.parse(row.tcaUtc);
+  if (!a || !b || !Number.isFinite(tca)) return null;
+  const enc = realEncounter(a.elements, b.elements, tca);
+  if (!enc) return null;
+  return { id: row.eventId, enc, risk: row.color === "red" ? "red" : "yellow", aIndex: a.index, quiet: false };
+}
+
 /** Ops store → simulator and globe. Renders nothing. */
 export function OpsSync() {
   useEffect(() => {
     const pushItems = () => {
       const scene = sceneRef.get();
       if (!scene) return;
+      const ops = useOps.getState();
+      // dev off: the focused real pair from the backend queue, built from both catalog element sets
+      if (!ops.dev) {
+        const item = ops.tab === "conjunctions" ? backendItem(ops.focusEvent) : null;
+        scene.conj.setItems(item ? [item] : []);
+        return;
+      }
       const items: ConjItem[] = [];
       for (const e of useOps.getState().events) {
         const enc = engine.encounters.get(e.id);
@@ -42,7 +79,7 @@ export function OpsSync() {
           sceneRef.get()?.endPreview();
         }
       }
-      if (s.events !== p.events || s.tab !== p.tab) pushItems();
+      if (s.events !== p.events || s.tab !== p.tab || (!s.dev && (s.focusEvent !== p.focusEvent || s.backendRows !== p.backendRows))) pushItems();
       if (s.scanning !== p.scanning) sceneRef.get()?.conj.setScanning(s.scanning && s.tab === "conjunctions");
       if (s.tab !== p.tab) {
         const scene = sceneRef.get();
@@ -57,7 +94,8 @@ export function OpsSync() {
         }
       }
       if (s.focusEvent !== p.focusEvent && s.tab === "conjunctions") {
-        sceneRef.get()?.focusConjunction(s.focusEvent, { fly: s.focusEvent !== null });
+        // a real pair zooms in closer: one crossing, not a whole scenario
+        sceneRef.get()?.focusConjunction(s.focusEvent, { fly: s.focusEvent !== null, dist: s.dev ? undefined : 0.55 });
         if (s.focusEvent === null) sceneRef.get()?.releasePivot();
       }
       // sound cues for state changes the user should notice

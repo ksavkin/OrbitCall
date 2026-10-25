@@ -3,7 +3,7 @@
 import { useQuery } from "convex/react";
 import { AnimatePresence, motion } from "motion/react";
 import { Database, ExternalLink, Loader2, RotateCw, ServerCrash, ShieldCheck, TriangleAlert } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { agentSummaryRef } from "@/lib/backend/api";
 import { fmtAge, fmtObjectId, fmtStamp, pcMetric, pcSource, safeUrl, SOURCE_LABEL } from "@/lib/backend/format";
 import { QueryBoundary, briefError } from "@/lib/backend/QueryBoundary";
@@ -15,11 +15,13 @@ import { OWNER_FLAGS } from "@/lib/owners";
 import { sfx } from "@/lib/sound";
 import { useNow } from "@/lib/useNow";
 import { Chip } from "@/components/ui/Chip";
+import { useMe } from "@/components/auth/session";
+import { applyView, useQueueView } from "./queueView";
 import { Flag } from "@/components/ui/OwnerBadge";
 
 // The queue and event detail for backend data (dev switch off). Rows come from
-// `events.catalogPairs` in queue order and are shown as given: no re-sorting, no synthetic
-// fields. Shapes: src/lib/backend/types.ts (docs/specification.md §2.2).
+// `events.catalogPairs` in queue order; the dispatcher can search, filter and re-sort them
+// (queueView.ts), and never sees synthetic fields. Shapes: src/lib/backend/types.ts (docs/specification.md §2.2).
 
 const TONE: Record<Color, string> = { red: "var(--red)", yellow: "var(--amber)", none: "var(--fg-2)" };
 const RAIL: Record<Color, string> = { red: "var(--red)", yellow: "var(--amber)", none: "rgba(255,255,255,0.18)" };
@@ -76,21 +78,109 @@ function BackendList({ now }: { now: number }) {
       </div>
     );
   }
+  return <PagedRows now={now} />;
+}
+
+const PAGE = 50;
+
+/** The queue as the dispatcher filtered and sorted it (minute resolution for the time filters). */
+export function useBackendView(now: number) {
+  const rows = useOps((s) => s.backendRows);
+  const view = useQueueView();
+  const me = useMe();
+  const minute = Math.floor(now / 60_000);
+  const fleet = useMemo(() => new Set(me?.assignedObjectIds ?? []), [me]);
+  const list = useMemo(() => (rows ? applyView(rows, view, fleet, minute * 60_000) : undefined), [rows, view, fleet, minute]);
+  return { all: rows, list };
+}
+
+/**
+ * The filtered queue, 50 rows at a time: reaching the bottom loads the next 50 with a spinner while they render.
+ * Rendering all ~1,000 rows at once would stall the globe; the data itself is already here.
+ */
+function PagedRows({ now }: { now: number }) {
+  const { list } = useBackendView(now);
+  const view = useQueueView();
+  const [count, setCount] = useState(PAGE);
+  const [loading, setLoading] = useState(false);
+  const end = useRef<HTMLDivElement>(null);
+  const key = `${view.search}|${view.sort}|${view.severity}|${view.within}|${view.objects}|${view.mine}`;
+  const [seen, setSeen] = useState(key);
+  // a new search or filter starts again from the top
+  if (seen !== key) {
+    setSeen(key);
+    setCount(PAGE);
+  }
+  const total = list?.length ?? 0;
+  const more = count < total;
+
+  useEffect(() => {
+    const el = end.current;
+    if (!el || !more) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const io = new IntersectionObserver(
+      ([hit]) => {
+        if (!hit.isIntersecting || timer) return;
+        setLoading(true);
+        // let the spinner paint before the next 50 rows render
+        timer = setTimeout(() => {
+          setCount((c) => c + PAGE);
+          setLoading(false);
+          timer = null;
+        }, 160);
+      },
+      { rootMargin: "120px" },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [more, count]);
+
+  if (!list) return <LoadingRows />;
+  if (total === 0) return <NoMatches mine={view.mine} />;
   return (
-    <AnimatePresence initial={false}>
-      {rows.map((row) => (
+    <div>
+      {list.slice(0, count).map((row, i) => (
         <motion.div
           key={row.eventId}
-          layout="position"
-          initial={{ opacity: 0, y: -8 }}
+          initial={{ opacity: 0, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.97 }}
-          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.22, delay: Math.min(i % PAGE, 12) * 0.015, ease: [0.22, 1, 0.36, 1] }}
         >
           <BackendRow row={row} now={now} />
         </motion.div>
       ))}
-    </AnimatePresence>
+      <div ref={end} className="flex h-10 items-center justify-center text-[10.5px] text-muted">
+        {more ? (
+          loading ? (
+            <span className="flex items-center gap-1.5">
+              <Loader2 size={12} className="animate-spin" /> Loading more
+            </span>
+          ) : (
+            <span className="tnum">
+              {Math.min(count, total).toLocaleString("en-US")} of {total.toLocaleString("en-US")}
+            </span>
+          )
+        ) : (
+          <span className="tnum">All {total.toLocaleString("en-US")} shown</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NoMatches({ mine }: { mine: boolean }) {
+  const reset = useQueueView((s) => s.reset);
+  return (
+    <div className="px-4 py-8 text-center">
+      <div className="text-[12px] font-medium">{mine ? "None of your satellites is in these results" : "No conjunctions match"}</div>
+      <p className="mt-1 text-[11px] leading-[1.5] text-muted">{mine ? "Your fleet has no conjunction with these filters." : "Try a wider time window or clear the filters."}</p>
+      <button className="btn btn-ghost-line mt-3 h-7 text-[11px]" onClick={() => reset()}>
+        Show the whole queue
+      </button>
+    </div>
   );
 }
 
