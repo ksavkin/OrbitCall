@@ -37,7 +37,7 @@ export const agentTables = {
   satelliteOwners: defineTable({ objectId: v.string(), companyId: v.id("companies") })
     .index("by_object", ["objectId"]).index("by_company", ["companyId"]),
   fleetAssignments: defineTable({ userId: v.id("users"), objectId: v.string(), active: v.boolean() })
-    .index("by_user_object", ["userId", "objectId"]),
+    .index("by_user_object", ["userId", "objectId"]).index("by_object", ["objectId"]),
   policies: defineTable({ companyId: v.id("companies"), revision: v.number(), satellites: v.array(satellitePolicy), updatedAt: v.number() })
     .index("by_company", ["companyId"]),
   // Sides keep the event's canonical object order, so confirmed debris may sit on either side: that side's company

@@ -39,5 +39,6 @@ export const dataTables = {
     approvalRuleVersion: v.optional(v.number()),
     demoRunId: v.optional(v.id("demoRuns")),
   }).index("by_pair_tca", ["objectAId", "objectBId", "tcaMs"]).index("by_active", ["active"])
-    .index("by_demo_run", ["demoRunId"]),
+    // by_pair_tca already serves objectA-first lookups; this one finds events where an object is side B.
+    .index("by_object_b_tca", ["objectBId", "tcaMs"]).index("by_demo_run", ["demoRunId"]),
 };
