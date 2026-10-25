@@ -79,7 +79,7 @@ export interface TigerClientConfig {
 }
 
 const notConfigured = (message: string) => new AnalystError("HISTORY_NOT_CONFIGURED", message);
-const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
+const LOOPBACK = ["localhost", "127.0.0.1", "::1"];
 
 export function tigerClientConfig(connectionString: string | undefined = process.env.TIGER_DATABASE_URL): TigerClientConfig {
   if (!connectionString) throw notConfigured("Set TIGER_DATABASE_URL in this Convex deployment.");
@@ -100,13 +100,15 @@ export function tigerClientConfig(connectionString: string | undefined = process
   const params = [...url.searchParams.keys()];
   if (params.some(key => key !== "sslmode")) throw notConfigured("TIGER_DATABASE_URL may carry only the sslmode option.");
   const sslmode = url.searchParams.get("sslmode") ?? "verify-full";
-  const loopback = LOOPBACK.includes(url.hostname);
+  // The URL parser keeps the brackets of an IPv6 literal; a socket wants the bare address.
+  const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
+  const loopback = LOOPBACK.includes(host);
   let ssl: TigerClientConfig["ssl"];
   if (["require", "verify-ca", "verify-full"].includes(sslmode)) ssl = { rejectUnauthorized: true };
   else if (sslmode === "disable" && loopback) ssl = false;
   else throw notConfigured("TIGER_DATABASE_URL must use TLS: sslmode=require or verify-full (disable is allowed on localhost only).");
   return {
-    host: url.hostname, port, user: decodeURIComponent(url.username), password: decodeURIComponent(url.password), database,
+    host, port, user: decodeURIComponent(url.username), password: decodeURIComponent(url.password), database,
     ssl, connectionTimeoutMillis: CONNECT_TIMEOUT_MS, query_timeout: QUERY_TIMEOUT_MS,
   };
 }
@@ -121,13 +123,25 @@ export interface TigerClient {
 export type TigerClientFactory = (config: TigerClientConfig) => TigerClient;
 const pgClient: TigerClientFactory = config => new pg.Client(config) as unknown as TigerClient;
 
+// Every rejection out of here is already sanitized, whether or not the caller goes through withTiger().
 export async function connectTiger(createClient: TigerClientFactory = pgClient): Promise<TigerConnection> {
-  const client = createClient(tigerClientConfig());
+  let client: TigerClient;
+  try {
+    client = createClient(tigerClientConfig());
+  } catch (error) {
+    throw toTigerError(error);
+  }
   // A dropped connection makes pg emit "error" besides rejecting the pending statement. Without a listener that
   // event is an uncaught exception outside every try/catch, carrying the raw driver message. The rejection is
   // the signal callers get; the next statement on a broken client fails too.
   client.on("error", () => undefined);
-  await client.connect();
+  try {
+    await client.connect();
+  } catch (error) {
+    // pg clears its connect timer on a failed handshake but leaves the socket open; close it before reporting.
+    await client.end().catch(() => undefined);
+    throw toTigerError(error);
+  }
   const run = client.query.bind(client);
   return {
     // Every statement failure is sanitized here, so a caller catching inside `work` never sees a driver message.

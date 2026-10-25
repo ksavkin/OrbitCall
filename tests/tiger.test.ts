@@ -8,6 +8,7 @@ import {
   writeObservations, type SqlResult, type TigerClient, type TigerClientConfig, type TigerConnection, type TigerObservation,
 } from "../convex/lib/tiger";
 import { sourceName } from "../convex/lib/validators";
+import { AnalystError } from "../convex/lib/analyst";
 
 const URL_WITH_SECRET = "postgres://tsdbadmin:SECRET-password@abc123.x.tsdb.cloud.timescale.com:34567/tsdb?sslmode=require";
 const CLOUD_CONFIG: TigerClientConfig = {
@@ -49,7 +50,26 @@ function recorder(...results: (SqlResult | Error)[]) {
 const pgError = (code: string, message = `connection to server at "abc123.x.tsdb.cloud.timescale.com" failed: ${URL_WITH_SECRET}`) =>
   Object.assign(new Error(message), { code });
 const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim();
-const failure = async (promise: Promise<unknown>) => safeTigerFailure(await promise.then(() => null, error => error));
+// The rejection of a promise that must reject; a resolved promise fails the test instead of looking like an error.
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  let error: unknown;
+  let rejected = false;
+  try {
+    await promise;
+  } catch (thrown) {
+    error = thrown;
+    rejected = true;
+  }
+  if (!rejected) throw new Error("expected the operation to fail, but it resolved");
+  return error;
+}
+// The operation's own error, which must already be a sanitized AnalystError; nothing is sanitized on the way.
+async function failure(promise: Promise<unknown>): Promise<{ code: string; message: string }> {
+  const error = await rejection(promise);
+  expect(error).toBeInstanceOf(AnalystError);
+  const { code, message } = error as AnalystError;
+  return { code, message };
+}
 
 beforeEach(() => { vi.stubEnv("TIGER_DATABASE_URL", URL_WITH_SECRET); });
 afterEach(() => { vi.unstubAllEnvs(); });
@@ -73,6 +93,12 @@ describe("Tiger client configuration", () => {
   it("allows plaintext only for a loopback database that asks for it", () => {
     expect(tigerClientConfig("postgres://dev:dev@localhost:5432/orbitcall?sslmode=disable").ssl).toBe(false);
     expect(tigerClientConfig("postgres://dev:dev@127.0.0.1/orbitcall?sslmode=disable").ssl).toBe(false);
+    expect(tigerClientConfig("postgres://dev:dev@[::1]/orbitcall?sslmode=disable")).toMatchObject({ host: "::1", ssl: false });
+  });
+
+  it("hands pg a bare IPv6 address, not the bracketed URL form", () => {
+    expect(tigerClientConfig("postgres://u:p@[2001:db8::10]:5433/orbit")).toMatchObject({ host: "2001:db8::10", port: 5433, ssl: { rejectUnauthorized: true } });
+    expect(tigerClientConfig("postgres://u:p@[::1]/orbit").ssl).toEqual({ rejectUnauthorized: true });
   });
 
   it.each([
@@ -150,6 +176,25 @@ describe("connectTiger", () => {
     expect(state.config).toBeNull();
     expect(state.connected).toBe(0);
   });
+
+  it("closes the client and rejects with a sanitized error when the handshake fails, even without withTiger", async () => {
+    for (const [code, expected] of [["28P01", "HISTORY_ACCESS_DENIED"], ["ECONNREFUSED", "UPSTREAM_UNAVAILABLE"], ["ERR_TLS_CERT_ALTNAME_INVALID", "HISTORY_ACCESS_DENIED"]]) {
+      const { factory, state } = fakeClient([], pgError(code, `password authentication failed for user "tsdbadmin" at ${URL_WITH_SECRET}`));
+      const error = await rejection(connectTiger(factory));
+      expect(error).toBeInstanceOf(AnalystError);
+      expect((error as AnalystError).code).toBe(expected);
+      expect((error as AnalystError).message).not.toContain("SECRET");
+      expect((error as AnalystError).message).not.toContain("tsdbadmin");
+      expect(state.connected).toBe(1);
+      expect(state.ended).toBe(1);
+    }
+  });
+
+  it("sanitizes a client construction failure", async () => {
+    const error = await rejection(connectTiger(() => { throw pgError("ERR_INVALID_ARG_TYPE", `bad option for ${URL_WITH_SECRET}`); }));
+    expect(error).toBeInstanceOf(AnalystError);
+    expect((error as AnalystError).message).not.toContain("SECRET");
+  });
 });
 
 describe("withTiger", () => {
@@ -217,7 +262,9 @@ describe("ensureObservationTable", () => {
 
   it("rolls back and rethrows when a setup statement fails", async () => {
     const db = recorder({ rows: [], rowCount: null }, { rows: [], rowCount: null }, pgError("42501"), { rows: [], rowCount: null });
-    expect((await failure(ensureObservationTable(db))).code).toBe("HISTORY_QUERY_REJECTED");
+    // The recorder is a bare connection, so the raw driver error comes back and is mapped by the caller.
+    const error = await rejection(ensureObservationTable(db));
+    expect(safeTigerFailure(error).code).toBe("HISTORY_QUERY_REJECTED");
     expect(db.calls.map(call => normalize(call.text).split(" ")[0])).toEqual(["BEGIN", "SELECT", "CREATE", "ROLLBACK"]);
   });
 });
@@ -390,8 +437,9 @@ describe("writeObservations", () => {
     expect((await failure(writeObservations(recorder({ rows: [], rowCount: null }), [observation]))).code).toBe("HISTORY_INVALID_RESPONSE");
   });
 
-  it("surfaces a database failure as a sanitized error and nothing else", async () => {
-    const db = recorder(pgError("42P01", `relation "${OBSERVATION_TABLE}" does not exist at ${URL_WITH_SECRET}`));
+  it("surfaces a database failure through a connection as a sanitized error and nothing else", async () => {
+    const { factory } = fakeClient([pgError("42P01", `relation "${OBSERVATION_TABLE}" does not exist at ${URL_WITH_SECRET}`)]);
+    const db = await connectTiger(factory);
     const result = await failure(writeObservations(db, [observation]));
     expect(result.code).toBe("HISTORY_QUERY_REJECTED");
     expect(result.message).toContain("42P01");
