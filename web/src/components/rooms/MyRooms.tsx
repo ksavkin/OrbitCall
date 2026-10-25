@@ -4,7 +4,7 @@ import { useQuery } from "convex/react";
 import { motion } from "motion/react";
 import { ArrowUpRight, DoorOpen, Eye, Hourglass, Loader2, LogIn, RotateCw, ServerOff } from "lucide-react";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useMe } from "@/components/auth/session";
 import { STATUS_META } from "@/components/ops/meta";
 import { Chip } from "@/components/ui/Chip";
@@ -17,6 +17,7 @@ import type { Color, EventStatus, RoomEvent, RoomId, RoomProjection } from "@/li
 import { fmtCountdown } from "@/lib/ops/format";
 import type { ConjunctionEvent } from "@/lib/ops/types";
 import { sfx } from "@/lib/sound";
+import { useOrbit } from "@/lib/store";
 import { useNow } from "@/lib/useNow";
 
 // Real mode: the caller's open coordination rooms (rooms.listMine, wiring map §3.2), earliest closest approach first.
@@ -119,6 +120,7 @@ function Columns({ list, main }: { list: ReactNode; main: ReactNode }) {
 function RoomRow({ room, on, now, onPick }: { room: RoomProjection; on: boolean; now: number; onPick: (id: RoomId) => void }) {
   const first = room.linkedEvents[0];
   const more = room.linkedEvents.length - 1;
+  const names = useObjectNames(first?.objectIds ?? []);
   return (
     <button
       onClick={() => {
@@ -131,14 +133,18 @@ function RoomRow({ room, on, now, onPick }: { room: RoomProjection; on: boolean;
       {on && <motion.span layoutId="my-room-sel" className="absolute inset-y-2 left-0 w-[2px] rounded-full bg-white" />}
       <div className="flex items-center gap-2 text-[11px] text-neutral-500">
         <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: TONE[worst(room.linkedEvents)] }} />
-        {first && <span className="mono truncate">{pairOf(first)}</span>}
+        {/* the ids sit here when the title shows names; without any name the title is the ids */}
+        {first && names.some(Boolean) && <span className="mono truncate">{pairOf(first)}</span>}
         {more > 0 && <span className="mono shrink-0">+{more}</span>}
         {room.simulated && <SimPill />}
         {first && <Countdown iso={first.tcaUtc} now={now} />}
       </div>
-      <div className="mt-1 truncate text-[13.5px] font-medium text-white">
-        <Companies room={room} />
-      </div>
+      <div className="mt-1 truncate text-[13.5px] font-medium text-white">{first ? <PairNames ids={first.objectIds} names={names} /> : <Companies room={room} />}</div>
+      {first && (
+        <div className="mt-0.5 truncate text-[12px] text-neutral-500">
+          <Companies room={room} />
+        </div>
+      )}
       <div className="mt-1.5 flex items-center gap-2">
         <RoomState events={room.linkedEvents} />
         <Presence members={room.members} />
@@ -225,6 +231,7 @@ function RoomBoard({ room, now }: { room: RoomProjection; now: number }) {
 }
 
 function IncidentCard({ ev, roomId, now }: { ev: RoomEvent; roomId: RoomId; now: number }) {
+  const names = useObjectNames(ev.objectIds);
   return (
     <div className="relative flex items-center gap-4 overflow-hidden rounded-[12px] bg-white/[0.025] py-3 pl-4 pr-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.055)]">
       <span
@@ -237,9 +244,12 @@ function IncidentCard({ ev, roomId, now }: { ev: RoomEvent; roomId: RoomId; now:
           <Countdown iso={ev.tcaUtc} now={now} />
         </div>
         <div className="mt-1 flex min-w-0 items-center gap-2">
-          <span className="mono truncate text-[14px] font-medium text-white">{pairOf(ev)}</span>
+          <span className="truncate text-[14px] font-medium text-white">
+            <PairNames ids={ev.objectIds} names={names} />
+          </span>
           {ev.simulated && <SimPill />}
         </div>
+        {names.some(Boolean) && <div className="mono mt-0.5 truncate text-[11px] text-neutral-500">{pairOf(ev)}</div>}
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <Chip color={TONE[ev.color]} size="sm">
             {COLOR_LABEL[ev.color]}
@@ -351,6 +361,20 @@ function Companies({ room }: { room: RoomProjection }) {
   );
 }
 
+/** "ISS (ZARYA) × STARLINK-1234"; an object the catalog does not know reads as its "#ID" in mono. */
+function PairNames({ ids, names }: { ids: string[]; names: (string | null)[] }) {
+  return (
+    <>
+      {ids.map((id, i) => (
+        <span key={i}>
+          {i > 0 && <span className="text-neutral-600"> × </span>}
+          {names[i] ?? <span className="mono">{fmtObjectId(id)}</span>}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function Countdown({ iso, now }: { iso: string; now: number }) {
   const t = Date.parse(iso);
   const known = now > 0 && Number.isFinite(t);
@@ -439,6 +463,20 @@ function Center({ title, body, icon, action }: { title: string; body: string; ic
 }
 
 /* ------------------------------------------------------------------ helpers */
+
+/**
+ * Object names from the globe's public catalog (the pinned OMM snapshot in real mode), by catalog number. Null for
+ * "SIM-…" ids, before the catalog loads, or when it has no such object: the backend's room carries ids only.
+ */
+function useObjectNames(ids: string[]): (string | null)[] {
+  const catalog = useOrbit((s) => s.catalog);
+  const key = ids.join("|");
+  return useMemo(
+    () =>
+      (key ? key.split("|") : []).map((id) => (/^\d+$/.test(id) ? (catalog?.objects.find((o) => o.norad === Number(id))?.name ?? null) : null)),
+    [catalog, key],
+  );
+}
 
 function pairOf(ev: RoomEvent): string {
   return ev.objectIds.map(fmtObjectId).join(" × ");
