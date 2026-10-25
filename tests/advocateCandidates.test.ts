@@ -286,6 +286,29 @@ describe("advocates.publishFromOrbit", () => {
     }
   });
 
+  it("refuses a changed OMM catalog even when the event's stored snapshot ID is unchanged", async () => {
+    const { t, eventId } = await pairSetup();
+    const snapshotId = await t.run(async ctx => {
+      const id = (await ctx.db.get(eventId))!.snapshotId;
+      await ctx.db.patch(id, { snapshotId: "socrates-20261024T0147Z", ommUrl: "/snapshots/gp-20261024T2134Z/catalog.json" });
+      return id;
+    });
+    mockOrbit();
+    await publish(t, eventId); await finish(t);
+    const before = await candidateSet(t, eventId);
+    const beforeRevisions = await revisions(t, eventId);
+    const beforeRuns = await t.run(ctx => ctx.db.query("agentRuns").collect());
+    const fetch = mockOrbit({}, async () => {
+      await t.run(ctx => ctx.db.patch(snapshotId, { ommUrl: "/snapshots/gp-20261025T2134Z/catalog.json" }));
+    });
+    expect(await publish(t, eventId)).toMatchObject({ status: "failed", code: "STALE_REVISION" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(await candidateSet(t, eventId)).toEqual(before);
+    expect(await revisions(t, eventId)).toEqual(beforeRevisions);
+    expect(await t.run(ctx => ctx.db.query("agentRuns").collect())).toEqual(beforeRuns);
+    expect(await pendingAdvocateStarts(t)).toHaveLength(0);
+  });
+
   it("lets candidates.publish pin the evidence key and snapshot it was computed on", async () => {
     const { t, eventId } = await pairSetup();
     const args = { eventId, baseVersion: null, candidates: advocateCandidates, start: false };

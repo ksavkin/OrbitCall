@@ -195,7 +195,7 @@ export const publishFromOrbit = internalAction({
         const candidates = cardsFor(response, current, eventId, nowMs);
         const { version, changed } = await ctx.runMutation(internal.candidates.publish, {
           eventId, baseVersion: current.baseVersion, candidates,
-          expectedEvidenceKey: input.evidenceKey, expectedSnapshotId: input.eventSnapshotId,
+          expectedEvidenceKey: input.evidenceKey, expectedSnapshotId: input.eventSnapshotId, expectedOmmSnapshotId: input.snapshotId,
         });
         return { status: "published", version, changed, cards: candidates.length, sharedMoverEventIds: sharedMoverEventIds(candidates, current.sharedMovers) };
       };
@@ -206,6 +206,7 @@ export const publishFromOrbit = internalAction({
         // One retry, only when a concurrent publication already wrote these same cards on the same evidence.
         const fresh = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs });
         if ("skipped" in fresh || fresh.input.evidenceKey !== input.evidenceKey || fresh.input.eventSnapshotId !== input.eventSnapshotId ||
+          fresh.input.snapshotId !== input.snapshotId ||
           !sameCards(cardsFor(response, fresh.input, eventId, nowMs), fresh.input.currentCards)) throw error;
         return await publish(fresh.input);
       }

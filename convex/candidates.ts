@@ -6,6 +6,7 @@ import { validateCandidates } from "./lib/policies";
 import { loadFacts } from "./lib/events";
 import { inputKey } from "./lib/analyst";
 import { supersede } from "./lib/runs";
+import { ommSnapshotId } from "./lib/publishCandidates";
 import type { Id } from "./_generated/dataModel";
 
 export const publish = internalMutation({
@@ -13,16 +14,21 @@ export const publish = internalMutation({
     eventId: v.id("events"), baseVersion: v.union(v.number(), v.null()), candidates: v.array(candidate), start: v.optional(v.boolean()),
     // What the candidates were computed on; an event that moved on since then is refused rather than mislabeled.
     expectedEvidenceKey: v.optional(v.string()), expectedSnapshotId: v.optional(v.string()),
+    expectedOmmSnapshotId: v.optional(v.string()),
   },
-  handler: async (ctx, { eventId, baseVersion, candidates, start = true, expectedEvidenceKey, expectedSnapshotId }) => {
+  handler: async (ctx, { eventId, baseVersion, candidates, start = true, expectedEvidenceKey, expectedSnapshotId, expectedOmmSnapshotId }) => {
     const event = await ctx.db.get(eventId);
     if (!event) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
     const facts = await loadFacts(ctx, event);
     if (expectedEvidenceKey !== undefined && expectedEvidenceKey !== inputKey(facts)) {
       throw new ConvexError({ code: "STALE_REVISION", message: "The event's evidence changed while candidates were computed; recompute them." });
     }
-    if (expectedSnapshotId !== undefined && expectedSnapshotId !== (await ctx.db.get(event.snapshotId))?.snapshotId) {
+    const snapshot = await ctx.db.get(event.snapshotId);
+    if (expectedSnapshotId !== undefined && expectedSnapshotId !== snapshot?.snapshotId) {
       throw new ConvexError({ code: "STALE_REVISION", message: "The event's snapshot changed while candidates were computed; recompute them." });
+    }
+    if (expectedOmmSnapshotId !== undefined && (!snapshot || expectedOmmSnapshotId !== ommSnapshotId(snapshot))) {
+      throw new ConvexError({ code: "STALE_REVISION", message: "The orbital catalog changed while candidates were computed; recompute them." });
     }
     validateCandidates(candidates, facts);
     const [companyAId, companyBId] = await Promise.all([facts.objectA.objectId, facts.objectB.objectId].map(async objectId =>
