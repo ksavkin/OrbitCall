@@ -71,7 +71,7 @@ it("keeps incomplete coverage visible even when the service returns zero events"
 });
 it("does not overwrite supplied reference probabilities with absent computed Pc",async()=>{
  const {t,as}=await setup(); answers();
- const snapshotId=await registerSnapshot(t);
+ const snapshotId=await t.run(async ctx=>(await ctx.db.query("snapshots").first())!._id);
  const {eventId}=await t.mutation(internal.events.ingest,{snapshotId,simulated:false,objectA:catalogObject("100"),objectB:catalogObject("200"),tcaUtc:new Date(FIXTURE_NOW+3600000).toISOString(),missKm:0.7,relSpeedKmS:10,pcValue:0.00002});
  await as().mutation(start,{requestId:"reference"});await t.finishAllScheduledFunctions(vi.runAllTimers);
  expect(await t.run(ctx=>ctx.db.get(eventId))).toMatchObject({missKm:0.7,pcValue:0.00002});
