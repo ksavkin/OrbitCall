@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "convex/react";
 import { useMe } from "@/components/auth/session";
 import { smokeInviteActiveRef, smokeInvitePublishRef } from "@/lib/backend/api";
 import { CONVEX_ENABLED } from "@/lib/backend/provider";
+import { QueryBoundary } from "@/lib/backend/QueryBoundary";
 import {
   acceptSmokeInvite,
   ingestSmokeInvite,
@@ -27,37 +28,35 @@ function parseRemote(eventJson: string, meta: Omit<SmokeInvite, "event">): Smoke
   }
 }
 
-/** Toast + Convex bridge: when US opens the room, CN/RU Accept → Decision Center + call. */
+/** Toast when US opens the room. Convex is optional; BroadcastChannel always works same-origin. */
 export function SmokeInviteToast() {
-  const me = useMe();
-  const incident = useOps((s) => s.incident);
-  const [invite, setInvite] = useState<SmokeInvite | null>(() => (isSmokeDemo() ? readSmokeInvite() : null));
-  const [dismissedId, setDismissedId] = useState<string | null>(null);
-  const sounded = useRef<string | null>(null);
+  if (!isSmokeDemo()) return null;
+  return (
+    <QueryBoundary fallback={() => <SmokeInviteUi />}>
+      {CONVEX_ENABLED ? <SmokeInviteConvexBridge /> : null}
+      <SmokeInviteUi />
+    </QueryBoundary>
+  );
+}
 
+/** Cross-laptop invite over Convex. Isolated so a missing function cannot blank the app. */
+function SmokeInviteConvexBridge() {
   const publish = useMutation(smokeInvitePublishRef);
-  const remote = useQuery(smokeInviteActiveRef, isSmokeDemo() && CONVEX_ENABLED ? {} : "skip");
+  const remote = useQuery(smokeInviteActiveRef, {});
 
   useEffect(() => {
-    if (!isSmokeDemo() || !CONVEX_ENABLED) {
-      setSmokeInvitePublisher(null);
-      return;
-    }
     setSmokeInvitePublisher((inv) => {
       void publish({
         eventId: inv.eventId,
         pair: inv.pair,
         hostUserId: inv.hostUserId,
         eventJson: JSON.stringify(inv.event),
+      }).catch(() => {
+        /* Convex not updated yet — local BroadcastChannel still delivers on same origin */
       });
     });
     return () => setSmokeInvitePublisher(null);
   }, [publish]);
-
-  useEffect(() => {
-    if (!isSmokeDemo()) return;
-    return subscribeSmokeInvites((inv) => setInvite(inv));
-  }, []);
 
   useEffect(() => {
     if (!remote) return;
@@ -69,13 +68,33 @@ export function SmokeInviteToast() {
     });
     if (!inv) return;
     ingestSmokeInvite(inv);
-    setInvite(inv);
+    window.dispatchEvent(new CustomEvent("orbitcall-smoke-invite", { detail: inv }));
   }, [remote]);
+
+  return null;
+}
+
+function SmokeInviteUi() {
+  const me = useMe();
+  const incident = useOps((s) => s.incident);
+  const [invite, setInvite] = useState<SmokeInvite | null>(() => readSmokeInvite());
+  const [dismissedId, setDismissedId] = useState<string | null>(null);
+  const sounded = useRef<string | null>(null);
+
+  useEffect(() => subscribeSmokeInvites(setInvite), []);
+  useEffect(() => {
+    const onRemote = (e: Event) => {
+      const inv = (e as CustomEvent<SmokeInvite>).detail;
+      if (inv) setInvite(inv);
+    };
+    window.addEventListener("orbitcall-smoke-invite", onRemote);
+    return () => window.removeEventListener("orbitcall-smoke-invite", onRemote);
+  }, []);
 
   const side = smokeSideFor(me?.userId);
   const guest = side === "b" || side === "affected";
   const alreadyIn = !!incident && invite && incident === invite.eventId;
-  const show = isSmokeDemo() && guest && !!invite && !alreadyIn && dismissedId !== invite.eventId;
+  const show = guest && !!invite && !alreadyIn && dismissedId !== invite.eventId;
 
   useEffect(() => {
     if (!show || !invite) return;
@@ -84,8 +103,6 @@ export function SmokeInviteToast() {
     sounded.current = key;
     sfx.notice();
   }, [show, invite]);
-
-  if (!isSmokeDemo()) return null;
 
   return (
     <AnimatePresence>

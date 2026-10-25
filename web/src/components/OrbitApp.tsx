@@ -19,6 +19,7 @@ import { AgentsExpanded, AgentsPanel } from "@/components/ops/AgentsPanel";
 import { BackendSync } from "@/components/ops/BackendSync";
 import { RealModeStatus } from "@/components/ops/RealModeStatus";
 import { CONVEX_ENABLED } from "@/lib/backend/provider";
+import { QueryBoundary } from "@/lib/backend/QueryBoundary";
 import { ConjunctionMarkers } from "@/components/ops/ConjunctionMarkers";
 import { OrbitOps } from "@/components/ops/OrbitOps";
 import { OpsSync } from "@/components/ops/OpsSync";
@@ -94,7 +95,9 @@ export function OrbitApp() {
       <DecisionDock />
       <IncidentView />
       <UrgencyOverlay />
-      <SmokeInviteToast />
+      <QueryBoundary fallback={() => null}>
+        <SmokeInviteToast />
+      </QueryBoundary>
       <ScanResults />
       <ResolutionCue />
       <AgentsExpanded />

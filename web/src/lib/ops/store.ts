@@ -68,8 +68,13 @@ interface OpsState {
   set: (p: Partial<OpsState>) => void;
 }
 
+function smokeBuild() {
+  return process.env.NEXT_PUBLIC_SMOKE_DEMO === "1" || process.env.NEXT_PUBLIC_SMOKE_DEMO === "true";
+}
+
 export const useOps = create<OpsState>((set) => ({
-  dev: false,
+  // product recording build: start in case mode so the globe loads /api/catalog on first paint
+  dev: smokeBuild(),
   tab: "orbit",
   events: [],
   spans: [],
