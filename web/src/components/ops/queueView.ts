@@ -1,11 +1,12 @@
 "use client";
 
 import { create } from "zustand";
-import type { EventRow } from "@/lib/backend/types";
+import type { EventRow, MyQueueRow } from "@/lib/backend/types";
 
 // What part of the backend queue the dispatcher is looking at: a search, filters and a sort over the rows
 // `events.catalogPairs` returned. "Queue order" is the backend's own (severity, then earliest closest approach,
 // spec §3.2) and stays the default; every other order is an explicit choice in the Sort menu.
+// The operator's own queue (`myQueue.myQueue`) is shown as the backend sections and ranks it: `queueSections`.
 
 export type Sort = "queue" | "tca" | "pc" | "miss";
 export type Severity = "all" | "red" | "yellow";
@@ -65,5 +66,16 @@ export function applyView(rows: EventRow[], v: QueueView, fleet: ReadonlySet<str
   if (v.sort === "tca") out.sort((a, b) => tcaOf(a) - tcaOf(b));
   else if (v.sort === "pc") out.sort((a, b) => pcOf(b) - pcOf(a));
   else if (v.sort === "miss") out.sort((a, b) => (Number.isFinite(a.missKm) ? a.missKm : Infinity) - (Number.isFinite(b.missKm) ? b.missKm : Infinity));
+  return out;
+}
+
+export type QueueSection = MyQueueRow["queueSection"];
+
+/** The operator's queue by section (active, data review, history), each in the backend's rank (spec §3.2). */
+export function queueSections(rows: MyQueueRow[]): Record<QueueSection, MyQueueRow[]> {
+  const out: Record<QueueSection, MyQueueRow[]> = { active: [], data_review: [], history: [] };
+  // a section this client does not know yet (follow-up) is left out rather than shown in the wrong place
+  for (const r of rows) out[r.queueSection]?.push(r);
+  for (const list of Object.values(out)) list.sort((a, b) => a.rank - b.rank);
   return out;
 }

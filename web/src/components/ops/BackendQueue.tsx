@@ -2,12 +2,13 @@
 
 import { useQuery } from "convex/react";
 import { AnimatePresence, motion } from "motion/react";
-import { Database, ExternalLink, Loader2, RotateCw, ServerCrash, ShieldCheck, TriangleAlert } from "lucide-react";
+import { ChevronDown, Database, ExternalLink, Loader2, RotateCw, ServerCrash, ShieldCheck, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { agentSummaryRef } from "@/lib/backend/api";
 import { fmtAge, fmtObjectId, fmtStamp, pcMetric, pcSource, safeUrl, SOURCE_LABEL } from "@/lib/backend/format";
+import { openCase, useLive } from "@/lib/backend/live";
 import { QueryBoundary, briefError } from "@/lib/backend/QueryBoundary";
-import type { AgentSummary, Color, EventRow, Pc, SpaceObject } from "@/lib/backend/types";
+import type { AgentSummary, Color, EventRow, MyQueueRow, Pc, SpaceObject } from "@/lib/backend/types";
 import { fmtCountdown, fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { AGENTS } from "@/lib/ops/roster";
 import { useOps } from "@/lib/ops/store";
@@ -16,18 +17,24 @@ import { sfx } from "@/lib/sound";
 import { useNow } from "@/lib/useNow";
 import { Chip } from "@/components/ui/Chip";
 import { useMe } from "@/components/auth/session";
-import { applyView, useQueueView } from "./queueView";
+import { retryQueueSync, useQueueSync } from "@/components/live/sync/QueueSync";
+import { applyView, queueSections, useQueueView, type QueueSection } from "./queueView";
 import { Flag } from "@/components/ui/OwnerBadge";
 
 // The queue and event detail for backend data (dev switch off). Rows come from
 // `events.catalogPairs` in queue order; the dispatcher can search, filter and re-sort them
 // (queueView.ts), and never sees synthetic fields. Shapes: src/lib/backend/types.ts (docs/specification.md §2.2).
+// My Incidents (bottom of the file) is the operator's own queue, `myQueue.myQueue`: the one real mode shows.
 
 const TONE: Record<Color, string> = { red: "var(--red)", yellow: "var(--amber)", none: "var(--fg-2)" };
 const RAIL: Record<Color, string> = { red: "var(--red)", yellow: "var(--amber)", none: "rgba(255,255,255,0.18)" };
 const COLOR_LABEL: Record<Color, string> = { red: "Red", yellow: "Yellow", none: "No alert" };
 
 const hasPc = (pc: Pc): pc is Pc & { value: number } => pc.value !== null && Number.isFinite(pc.value);
+
+/** The row of the pair the globe is showing. */
+const focusStyle = (focused: boolean) =>
+  focused ? { background: "rgba(255,255,255,0.055)", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.09)" } : undefined;
 
 // Numbers can be missing in real data: say "unknown", never print NaN or throw.
 const missText = (row: EventRow) => (Number.isFinite(row.missKm) ? fmtMiss(row.missKm * 1000) : "unknown");
@@ -268,20 +275,10 @@ function PcInline({ pc, tone }: { pc: Pc; tone: string }) {
 
 function BackendRow({ row, now }: { row: EventRow; now: number }) {
   const focused = useOps((s) => s.focusEvent === row.eventId);
-  const tca = Date.parse(row.tcaUtc);
-  const tone = TONE[row.color];
-  const fa = flagOf(row.objectA);
-  const fb = flagOf(row.objectB);
   const working = row.agentsWorking && !row.agentsStalled;
 
   return (
-    <div
-      className="group relative mb-1 overflow-hidden rounded-[11px] transition-colors duration-200"
-      style={{
-        background: focused ? "rgba(255,255,255,0.055)" : undefined,
-        boxShadow: focused ? "inset 0 0 0 1px rgba(255,255,255,0.09)" : undefined,
-      }}
-    >
+    <div className="group relative mb-1 overflow-hidden rounded-[11px] transition-colors duration-200" style={focusStyle(focused)}>
       {working && <span className="agent-sheen pointer-events-none absolute inset-0 rounded-[11px]" />}
       <button
         className="relative block w-full px-2.5 py-2 text-left transition-colors hover:bg-white/[0.035]"
@@ -292,46 +289,7 @@ function BackendRow({ row, now }: { row: EventRow; now: number }) {
         }}
         onPointerEnter={() => sfx.hover()}
       >
-        <span
-          className="absolute bottom-2 left-0 top-2 w-[2px] rounded-full"
-          style={{ background: RAIL[row.color], boxShadow: row.color === "none" ? undefined : `0 0 8px ${RAIL[row.color]}` }}
-        />
-        <div className="flex items-center gap-1.5">
-          <span className="mono truncate text-[10px] text-muted">
-            {fmtObjectId(row.objectA.objectId)} × {fmtObjectId(row.objectB.objectId)}
-          </span>
-          {row.simulated && <span className="mono shrink-0 text-[8.5px] uppercase tracking-[0.1em] text-orange">sim</span>}
-          <span
-            className="mono tnum ml-auto shrink-0 text-[10.5px]"
-            style={{ color: Number.isFinite(tca) && tca - now < 24 * 3600_000 ? "var(--orange)" : "var(--fg-2)" }}
-          >
-            {now && Number.isFinite(tca) ? fmtCountdown(tca - now) : "—"}
-          </span>
-        </div>
-        <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[12px] font-medium tracking-[-0.005em]">
-          {fa && <Flag code={fa} h={10} />}
-          <span className="truncate">{row.objectA.name}</span>
-          <span className="shrink-0 text-faint">×</span>
-          {fb && <Flag code={fb} h={10} />}
-          <span className="truncate text-fg-2">{row.objectB.name}</span>
-        </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px]">
-          {row.agentsStalled ? (
-            <Chip color="var(--orange)" size="sm" icon={<TriangleAlert size={9} />}>
-              Agents stalled
-            </Chip>
-          ) : row.agentsWorking ? (
-            <Chip color="var(--blue)" size="sm" icon={<Loader2 size={9} className="animate-spin" />}>
-              Agents working
-            </Chip>
-          ) : (
-            <Chip color={row.color === "none" ? "var(--muted)" : tone} size="sm">
-              {COLOR_LABEL[row.color]}
-            </Chip>
-          )}
-          <span className="mono tnum text-fg-2">{missText(row)}</span>
-          <PcInline pc={row.pc} tone={tone} />
-        </div>
+        <RowFace row={row} pair={[row.objectA, row.objectB]} now={now} />
       </button>
       <AnimatePresence initial={false}>
         {focused && (
@@ -347,6 +305,62 @@ function BackendRow({ row, now }: { row: EventRow; now: number }) {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/** A queue row's face: both objects in `pair` order, time until closest approach, state, miss and Pc. */
+function RowFace({ row, pair: [a, b], now, review = false }: { row: EventRow; pair: [SpaceObject, SpaceObject]; now: number; review?: boolean }) {
+  const tca = Date.parse(row.tcaUtc);
+  // under a day to go reads orange; a passed approach (history) does not
+  const soon = Number.isFinite(tca) && tca >= now && tca - now < 24 * 3600_000;
+  const tone = TONE[row.color];
+  const fa = flagOf(a);
+  const fb = flagOf(b);
+  return (
+    <>
+      <span
+        className="absolute bottom-2 left-0 top-2 w-[2px] rounded-full"
+        style={{ background: RAIL[row.color], boxShadow: row.color === "none" ? undefined : `0 0 8px ${RAIL[row.color]}` }}
+      />
+      <div className="flex items-center gap-1.5">
+        <span className="mono truncate text-[10px] text-muted">
+          {fmtObjectId(a.objectId)} × {fmtObjectId(b.objectId)}
+        </span>
+        {row.simulated && <span className="mono shrink-0 text-[8.5px] uppercase tracking-[0.1em] text-orange">sim</span>}
+        <span className="mono tnum ml-auto shrink-0 text-[10.5px]" style={{ color: soon ? "var(--orange)" : "var(--fg-2)" }}>
+          {now && Number.isFinite(tca) ? fmtCountdown(tca - now) : "—"}
+        </span>
+      </div>
+      <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[12px] font-medium tracking-[-0.005em]">
+        {fa && <Flag code={fa} h={10} />}
+        <span className="truncate">{a.name}</span>
+        <span className="shrink-0 text-faint">×</span>
+        {fb && <Flag code={fb} h={10} />}
+        <span className="truncate text-fg-2">{b.name}</span>
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px]">
+        {row.agentsStalled ? (
+          <Chip color="var(--orange)" size="sm" icon={<TriangleAlert size={9} />}>
+            Agents stalled
+          </Chip>
+        ) : row.agentsWorking ? (
+          <Chip color="var(--blue)" size="sm" icon={<Loader2 size={9} className="animate-spin" />}>
+            Agents working
+          </Chip>
+        ) : review ? (
+          // no probability is not "no alert": the risk is unknown until the data is reviewed
+          <Chip color="var(--orange)" size="sm">
+            Needs review
+          </Chip>
+        ) : (
+          <Chip color={row.color === "none" ? "var(--muted)" : tone} size="sm">
+            {COLOR_LABEL[row.color]}
+          </Chip>
+        )}
+        <span className="mono tnum text-fg-2">{missText(row)}</span>
+        <PcInline pc={row.pc} tone={tone} />
+      </div>
+    </>
   );
 }
 
@@ -613,6 +627,189 @@ function Notice({ tone, icon, title, children }: { tone: string; icon?: ReactNod
         {icon} {title}
       </div>
       {children}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------ my incidents (real mode) */
+
+const SECTION_LABEL: Record<QueueSection, string> = { active: "Active", data_review: "Data needs review", history: "History" };
+/** Rows a section shows before "Show more": open incidents are few, history keeps growing. */
+const SECTION_PAGE = 20;
+
+/**
+ * The operator's own incidents (`myQueue.myQueue`, kept in useLive by QueueSync): the events that involve their fleet,
+ * in the backend's sections and rank, each with the backend's reason for its place. A row opens the case in the
+ * Decision Center; the globe flies to the pair as it does from any queue row. Real mode only, under My Fleet.
+ */
+export function MyIncidents() {
+  const rows = useLive((s) => s.myQueue);
+  const error = useQueueSync((s) => s.errors.myQueue);
+  const sections = useMemo(() => (rows ? queueSections(rows) : undefined), [rows]);
+  const open = sections ? sections.active.length + sections.data_review.length : 0;
+  const red = sections ? sections.active.filter((r) => r.color === "red").length : 0;
+
+  return (
+    <motion.section
+      initial={{ opacity: 0, x: -16, filter: "blur(8px)" }}
+      animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
+      exit={{ opacity: 0, x: -16, filter: "blur(8px)" }}
+      transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+      className="glass pointer-events-auto relative flex max-h-[360px] min-h-0 shrink flex-col overflow-hidden rounded-[14px]"
+    >
+      <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-3">
+        <span className="eyebrow">My incidents</span>
+        {sections && !error && (
+          <span className="text-[11px] text-muted">
+            <span className="mono tnum text-fg-2">{open}</span> open
+            {red > 0 && (
+              <>
+                {" · "}
+                <span className="text-red">
+                  <span className="mono tnum">{red}</span> red
+                </span>
+              </>
+            )}
+          </span>
+        )}
+      </div>
+      <div className="mx-3 h-px bg-white/[0.06]" />
+      <div className="thin-scroll min-h-0 overflow-y-auto px-1.5 py-1.5">
+        {error ? (
+          <IncidentsError message={error.message} retry={error.code !== "FORBIDDEN"} />
+        ) : sections ? (
+          <Sections sections={sections} />
+        ) : (
+          <LoadingRows />
+        )}
+      </div>
+    </motion.section>
+  );
+}
+
+function Sections({ sections }: { sections: Record<QueueSection, MyQueueRow[]> }) {
+  const now = useNow(1000);
+  const open = sections.active.length + sections.data_review.length;
+  if (open === 0 && sections.history.length === 0) {
+    return (
+      <div className="px-3 py-6 text-center">
+        <div className="text-[12px] font-medium">No incidents for your fleet</div>
+        <p className="mt-1 text-[11px] leading-[1.5] text-muted">Run a scan to check your satellites against the catalog for the next 72 hours.</p>
+      </div>
+    );
+  }
+  return (
+    <>
+      {open === 0 && <p className="px-2 pb-1 pt-1.5 text-[11px] leading-[1.5] text-muted">No open incidents for your fleet.</p>}
+      <Section id="active" rows={sections.active} now={now} />
+      <Section id="data_review" rows={sections.data_review} now={now} />
+      <Section id="history" rows={sections.history} now={now} collapsible />
+    </>
+  );
+}
+
+function Section({ id, rows, now, collapsible = false }: { id: QueueSection; rows: MyQueueRow[]; now: number; collapsible?: boolean }) {
+  const [open, setOpen] = useState(!collapsible);
+  const [count, setCount] = useState(SECTION_PAGE);
+  if (rows.length === 0) return null;
+  const head = (
+    <>
+      <span className="eyebrow">{SECTION_LABEL[id]}</span>
+      <span className="mono tnum ml-auto text-[10px] text-muted">{rows.length}</span>
+      {collapsible && <ChevronDown size={11} className={`shrink-0 text-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`} />}
+    </>
+  );
+  return (
+    <div className="mb-1">
+      {collapsible ? (
+        <button
+          className="flex w-full items-center gap-1.5 rounded-[7px] px-2 pb-1 pt-1.5 text-left transition-colors hover:bg-white/[0.035]"
+          aria-expanded={open}
+          onClick={() => {
+            sfx.click();
+            setOpen((o) => !o);
+          }}
+        >
+          {head}
+        </button>
+      ) : (
+        <div className="flex items-center gap-1.5 px-2 pb-1 pt-1.5">{head}</div>
+      )}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <AnimatePresence>
+              {rows.slice(0, count).map((row, i) => (
+                <motion.div
+                  key={row.eventId}
+                  layout="position"
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.97 }}
+                  transition={{ duration: 0.28, delay: Math.min(i, 12) * 0.015, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <QueueRow row={row} now={now} review={id === "data_review"} />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+            {rows.length > count && (
+              <button
+                className="flex h-8 w-full items-center justify-center text-[10.5px] text-muted transition-colors hover:text-fg"
+                onClick={() => {
+                  sfx.click();
+                  setCount((c) => c + SECTION_PAGE);
+                }}
+              >
+                Show {Math.min(SECTION_PAGE, rows.length - count)} more
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** One incident: the operator's object first, then the other, and the backend's reason for its rank. */
+function QueueRow({ row, now, review }: { row: MyQueueRow; now: number; review: boolean }) {
+  const focused = useOps((s) => s.focusEvent === row.eventId);
+  const working = row.agentsWorking && !row.agentsStalled;
+  const mineIsB = row.myObjectIds.includes(row.objectB.objectId) && !row.myObjectIds.includes(row.objectA.objectId);
+
+  return (
+    <div className="group relative mb-1 overflow-hidden rounded-[11px] transition-colors duration-200" style={focusStyle(focused)}>
+      {working && <span className="agent-sheen pointer-events-none absolute inset-0 rounded-[11px]" />}
+      <button
+        className="relative block w-full px-2.5 py-2 text-left transition-colors hover:bg-white/[0.035]"
+        onClick={() => {
+          sfx.select();
+          openCase(row.eventId);
+        }}
+        onPointerEnter={() => sfx.hover()}
+      >
+        <RowFace row={row} pair={mineIsB ? [row.objectB, row.objectA] : [row.objectA, row.objectB]} now={now} review={review} />
+        <p className="mt-1.5 break-words text-[10px] leading-[1.45] text-muted">{row.priorityReason}</p>
+      </button>
+    </div>
+  );
+}
+
+function IncidentsError({ message, retry }: { message: string; retry: boolean }) {
+  return (
+    <div className="flex flex-col items-center px-4 py-6 text-center">
+      <div className="text-[12px] font-medium">Couldn’t load your incidents</div>
+      <p className="mt-1 max-w-[220px] break-words text-[11px] leading-[1.5] text-muted">{message}</p>
+      {retry && (
+        <button className="btn btn-ghost-line mt-3 h-7 text-[11px]" onClick={() => retryQueueSync()}>
+          <RotateCw size={11} /> Retry
+        </button>
+      )}
     </div>
   );
 }
