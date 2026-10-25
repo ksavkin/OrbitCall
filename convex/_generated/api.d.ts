@@ -15,9 +15,11 @@ import type * as agentSummaries from "../agentSummaries.js";
 import type * as agents from "../agents.js";
 import type * as agents_advocate from "../agents/advocate.js";
 import type * as agents_analyst from "../agents/analyst.js";
+import type * as agents_rationale from "../agents/rationale.js";
 import type * as approvals from "../approvals.js";
 import type * as call_core from "../call/core.js";
 import type * as call_demo from "../call/demo.js";
+import type * as call_hostSpeech from "../call/hostSpeech.js";
 import type * as call_ingest from "../call/ingest.js";
 import type * as call_join from "../call/join.js";
 import type * as call_livekitToken from "../call/livekitToken.js";
@@ -62,6 +64,7 @@ import type * as lib_policyValidators from "../lib/policyValidators.js";
 import type * as lib_proposals from "../lib/proposals.js";
 import type * as lib_publishCandidates from "../lib/publishCandidates.js";
 import type * as lib_queue from "../lib/queue.js";
+import type * as lib_rationale from "../lib/rationale.js";
 import type * as lib_runs from "../lib/runs.js";
 import type * as lib_scheduleClient from "../lib/scheduleClient.js";
 import type * as lib_tiger from "../lib/tiger.js";
@@ -78,6 +81,7 @@ import type * as proposals from "../proposals.js";
 import type * as providerReadiness from "../providerReadiness.js";
 import type * as rationaleCheck from "../rationaleCheck.js";
 import type * as reports from "../reports.js";
+import type * as revisions from "../revisions.js";
 import type * as riskMonitor from "../riskMonitor.js";
 import type * as rooms from "../rooms.js";
 import type * as scans from "../scans.js";
@@ -91,6 +95,7 @@ import type * as schema_scans from "../schema/scans.js";
 import type * as schema_schedule from "../schema/schedule.js";
 import type * as session from "../session.js";
 import type * as spans from "../spans.js";
+import type * as summary from "../summary.js";
 import type * as verifications from "../verifications.js";
 
 import type {
@@ -107,9 +112,11 @@ declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   "agents/advocate": typeof agents_advocate;
   "agents/analyst": typeof agents_analyst;
+  "agents/rationale": typeof agents_rationale;
   approvals: typeof approvals;
   "call/core": typeof call_core;
   "call/demo": typeof call_demo;
+  "call/hostSpeech": typeof call_hostSpeech;
   "call/ingest": typeof call_ingest;
   "call/join": typeof call_join;
   "call/livekitToken": typeof call_livekitToken;
@@ -154,6 +161,7 @@ declare const fullApi: ApiFromModules<{
   "lib/proposals": typeof lib_proposals;
   "lib/publishCandidates": typeof lib_publishCandidates;
   "lib/queue": typeof lib_queue;
+  "lib/rationale": typeof lib_rationale;
   "lib/runs": typeof lib_runs;
   "lib/scheduleClient": typeof lib_scheduleClient;
   "lib/tiger": typeof lib_tiger;
@@ -170,6 +178,7 @@ declare const fullApi: ApiFromModules<{
   providerReadiness: typeof providerReadiness;
   rationaleCheck: typeof rationaleCheck;
   reports: typeof reports;
+  revisions: typeof revisions;
   riskMonitor: typeof riskMonitor;
   rooms: typeof rooms;
   scans: typeof scans;
@@ -183,6 +192,7 @@ declare const fullApi: ApiFromModules<{
   "schema/schedule": typeof schema_schedule;
   session: typeof session;
   spans: typeof spans;
+  summary: typeof summary;
   verifications: typeof verifications;
 }>;
 
