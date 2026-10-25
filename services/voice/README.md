@@ -5,7 +5,7 @@ explicit dispatch (`agent_name` `orbit-translator`; the call/join token's room c
 first member creates the room). One worker job per room.
 
 ## What it does per utterance
-1. Subscribes only to human microphones (`user-*` identities, `SOURCE_MICROPHONE`); never its own or `host-*` tracks.
+1. Subscribes only to human microphones (`user-*` identities, `SOURCE_MICROPHONE`); never its own or the `host` / `host-*` tracks.
 2. Grok STT streaming per speaker track (`wss://api.x.ai/v1/stt`, 16 kHz s16le, `format=true`, `endpointing` =
    `STT_ENDPOINTING_MS`, key terms from `orbit_voice/data/glossary.json`). Mute, unpublish or leave sends
    `audio.done` and closes the session; a dropped session reconnects with a new epoch.
@@ -27,6 +27,26 @@ first member creates the room). One worker job per room.
    `XAI_TTS_VOICE_RU_{MALE,FEMALE}` for ru; `CARTESIA_VOICE_EN`, `CARTESIA_VOICE_ZH` and `XAI_TTS_VOICE_ID` are the
    fallback for both genders of their language. A language and gender without an id is text-only for that gender;
    there is no provider substitution and no cross-gender substitution.
+
+## Host speech (Coordination Host voice)
+1. Convex `internal.call.hostSpeech.speak({ roomId, hostRunId, text })` accepts only a checked text of a succeeded host
+   run (a summary or a clarification question) of an open room, and only when someone is in the call. It sends one
+   reliable data packet through the LiveKit server API (`RoomService/SendData`) to `translator`, topic
+   `orbit.host-speech`, payload `{ v: 1, id, roomId, hostRunId, lang: "en", text }`.
+2. The room job accepts a packet only when `DataPacket.participant is None` (sent by a server SDK) and the topic
+   matches; the room, version, `lang` (`en`) and text length (1..2000) are checked, and a repeated `id` is dropped (the
+   last 256 ids are kept). Anything else is logged and ignored.
+3. Listener languages are the `lang` attributes of the `user-*` participants in the room. English listeners hear the
+   host text as is, enqueued at once (before the translation call); the other languages get one Claude call with protected values and the per-language check of
+   phrases. A language whose translation fails is not voiced (no substitution). Before each language is enqueued the
+   listeners are read again: a language nobody listens to any more is skipped, and once no human is left the line stops
+   without reconnecting `host`. Voice: the same TTS routes, in
+   `TTS_DEFAULT_VOICE` (the host has no member gender).
+4. Audio plays on `host:<lang>` from a second connection with identity `host` (name "Coordination Host", attribute
+   `role=host`): clients accept `host:<lang>` only from `host` / `host-*`. It connects on the first host line,
+   publishes only, subscribes to nothing (the host's voice is never transcribed), leaves when the last human leaves (so
+   the room can close) and closes with the job. Lines play in arrival order. No phrase rows are written: the host's
+   captions are its messages in the room.
 
 ## Run
 ```bash
@@ -62,7 +82,7 @@ or voice ids in the answer. The Docker image runs as the unprivileged user `work
 | `MAX_ROOMS` | `20` | load = active rooms / MAX_ROOMS (threshold 0.95) |
 
 ## Tests
-`pip install -r requirements-dev.txt && python -m pytest -q` (129 cases, providers faked; no keys needed).
+`pip install -r requirements-dev.txt && python -m pytest -q` (177 cases, providers faked; no keys needed).
 
 ## Measured (2026-10-24, recorded clips, local LiveKit)
 STT final 1.2–2.2 s after speech end; translation into two languages 2.4–4.2 s; voice first byte 0.8–1.5 s after the
