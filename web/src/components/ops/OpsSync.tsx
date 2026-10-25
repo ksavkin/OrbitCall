@@ -35,7 +35,9 @@ function catalogObject(objectId: string): SatObject | null {
 /** The focused backend pair as a globe item, or null when either object is not in the loaded catalog. */
 function backendItem(eventId: string | null): ConjItem | null {
   if (!eventId) return null;
-  const row = useOps.getState().backendRows?.find((r) => r.eventId === eventId);
+  // the global catalog queue first, else the operator's own queue (it also holds history and demo events)
+  const row =
+    useOps.getState().backendRows?.find((r) => r.eventId === eventId) ?? useLive.getState().myQueue?.find((r) => r.eventId === eventId);
   if (!row) return null;
   const a = catalogObject(row.objectA.objectId);
   const b = catalogObject(row.objectB.objectId);
