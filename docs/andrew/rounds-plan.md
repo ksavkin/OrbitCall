@@ -2,14 +2,16 @@
 
 Source of truth: [master roadmap v1.1](../master-roadmap.md) and [issue #6](https://github.com/ksavkin/OrbitCall/issues/6). This file turns Andrew's bullets into one brief per agent. Each brief lists the files the agent may touch, the interface it must produce for later rounds, the tests, and when the task counts as done.
 
-Round 1 contracts are written out in full because Kostya and Adil build against them in parallel. Round 2 and 3 briefs name their inputs, because those depend on code that has not landed yet. Each agent writes its own tests first (TDD) inside its brief.
+Round 1 contracts are retained as implementation history. The Round 2 briefs and later-round handoff follow the updated issue #6 assignments. Each implementation agent writes regression tests first (TDD) inside its brief.
 
 ## How every task runs
 
-- One agent per bullet, one branch per bullet, cut from current `origin/main`: `andrew-r1-host-checker`, `andrew-r1-candidate-cards`, `andrew-r1-memory-note`, `andrew-r2-publish-candidates`, `andrew-r2-host-trigger`, `andrew-r2-history`, `andrew-r3-advocate-memory`, `andrew-r3-host-speech`.
+- One agent per bullet, one branch per bullet, cut from current `origin/main`. Continue an existing task PR when it already contains the work; merge current `origin/main` into it without rewriting history.
 - Use a separate git worktree per agent so parallel agents never share a checkout.
-- Never commit `convex/_generated/`, `package.json`, or a lockfile. Run `npx convex codegen` locally so types resolve, then leave `_generated/` unstaged.
-- Never edit `convex/schema.ts` or `convex/schema/*`. Tables come only from the voice backend task (round 1) and the schema task (round 1.5).
+- Never commit `convex/_generated/` on ordinary task branches. For local branch checks, run `npx convex codegen --system-udfs --typecheck disable` and leave generated changes unstaged. After a merge wave, run real `npx convex codegen` on `main` and commit any generated API changes there. The named Round 3 schema-widening task has its explicit generated-file exception.
+- Root and web package manifests and lockfiles change only in a Round 0 dependency task.
+- The schema landed in Round 1.5 and is frozen. Only the named Round 3 schema-widening task may add the optional history fields listed in issue #6.
+- Update issue #6 by editing its body only; do not comment or add PR numbers or links. Tick task boxes after merge, and phase boxes only after the required demonstration. Re-fetch before editing so concurrent changes are preserved.
 - Done means `npm run check` passes (typecheck plus vitest, including the existing `tests/advocates.test.ts`), the commits are small and imperative per `AGENTS.md`, and the branch is pushed for review.
 - A model or provider failure never writes an approval, never selects a card, and never substitutes another provider silently (§6, §11).
 
@@ -19,9 +21,9 @@ Round 1 contracts are written out in full because Kostya and Adil build against 
 - [x] Round 0 landed in `e2c5502` (done by Andrew): root `@google/genai`, `pg`, `@types/pg`, `livekit-server-sdk`; web `livekit-client`. Backboard uses `fetch`, with no SDK.
 - [x] Provider keys are set: `ANTHROPIC_*`, `GEMINI_API_KEY`, `GEMINI_HOST_MODEL=gemini-3.8-flash`, `XAI_API_KEY`, `XAI_CHECKER_MODEL=grok-4.20-0309-reasoning`, `BACKBOARD_API_KEY`, `TIGER_DATABASE_URL`, `TIGER_DATABASE_CA`.
 - Prod (`basic-wildcat-552`) is the working deployment until the demo is deployed; the dev deployments were deleted. Local `.env.local` selects it, so `npx convex env list`, `npx convex run` and `npx convex codegen` target prod. Push code for a live test with `npx convex dev --prod --once`; a push replaces the functions on the shared deployment, so push only code that passes `npm run check`.
-- [x] Post the schema request below as a comment on #6. The schema task freezes `convex/schema.ts` for the rest of the project, and it starts as soon as the voice backend lands, possibly before any of Andrew's round 1 work merges.
+- [x] The Round 1.5 schema request below was resolved and the schema landed. The request is preserved as historical context; issue #6 is maintained through body edits only.
 
-### Schema request for the round 1.5 task (post on #6)
+### Original schema request for the round 1.5 task (resolved)
 
 1. **Host runs** (`hostRuns`): `roomId`, `trigger` (`final_message | candidates_changed | summary_requested | call_ended`), `inputVersion`, `status` (`running | succeeded | failed | superseded`), `span` (the `AgentSpan` below), `output` (the checked `HostOutput` or null), `check` (`{ span, agrees, reason, flaggedIds }` or null), `attempt`. Unique-ish index on `["roomId", "inputVersion", "trigger"]`, plus `["roomId"]` for the trace panel.
 2. **Observation exports** (`observationExports`): `observationKey` (unique, includes the observation time), `eventId`, `runId` (demo run or null), `observedAt`, `source`, `metric`, `value` (nullable), `evidenceVersion`, `simulated`, `exportState` (`pending | exported | failed`), `attempts`. Index by `observationKey` and by `eventId`.
@@ -29,11 +31,12 @@ Round 1 contracts are written out in full because Kostya and Adil build against 
 4. **Backboard assistants**: one memory assistant per company per demo run (§10). It needs a stored `{ companyId, demoRunId, assistantId, closedAt }`, either on demo runs or in its own table. Demo reset (Kostya, round 2) also needs it to close the namespace.
 5. **Debris advocate (blocking)**: `candidateSets.companyBId` is required today, and `candidates.publish` rejects an event without two distinct owners. #6 forbids rewriting `candidateSets`, but round 2 requires "debris: one advocate, no side B". Proposed fix: let the schema task widen `companyBId` to `v.union(v.id("companies"), v.null())`. Existing rows stay valid. Also add `convex/candidates.ts` to the round 2 publish task's file list. Alternative: debris candidates live only in the new proposals table and skip the advocate tables. Kostya should decide this before 1.5 lands.
 
-### Scope gaps to raise on #6 now
+### Scope decisions now recorded in issue #6
 
-- **Round 3 advocate memory** is limited to `convex/advocates.ts`. Backboard recall is an external call, and the prompt is built in `convex/agents/advocate.ts` (the action) and `convex/lib/advocate.ts`. Neither is in the allowed list, and nobody else owns them. Ask to add both files to that bullet.
-- **History export trigger**: "a committed observation schedules an export" needs a caller. Ingestion (`convex/ingest.ts`) and scans (`convex/scans.ts`) are Kostya's files. Ask for a round 3 line in which Kostya's scan or ingest commit calls `internal.history.recordObservation`.
-- **Host speech in round 3** depends on whatever `convex/call/` exposes after the voice backend lands. If it has no internal entry point that accepts canonical host text for translation and TTS, raise that in round 2 so Kostya can add one.
+- Round 3 advocate memory owns `convex/advocates.ts`, `convex/agents/advocate.ts`, and `convex/lib/advocate.ts`.
+- Kostya connects committed scan observations to `internal.history.recordObservation` in Round 3.
+- Kostya adds the voice host-speech entry in Round 3; Andrew connects succeeded Host runs to it in Round 4.
+- History's Node action belongs in `convex/historyActions.ts`, explicitly included in Round 2. Optional cache-point `evidenceVersion` and cache `truncated` fields belong to the Round 3 schema-widening task.
 
 ## Round 1 (starts after Round 0)
 
@@ -189,7 +192,7 @@ Branch `andrew-r1-memory-note`. Phase 10; Backboard.
 
 **Files**: create `convex/lib/advocateMemory.ts` and `tests/advocateMemory.test.ts`. Pure code: no Backboard call here, since Kostya's `convex/lib/backboard.ts` lands in parallel.
 
-Round 3 may only edit `convex/advocates.ts`, so everything the round 3 task needs (the read note *and* the write item) must land in this file now.
+This pure helper supplies the read note and write item for the Round 3 advocate-memory integration. That later task may edit the three advocate files listed above.
 
 **Produces**:
 
@@ -220,68 +223,93 @@ export function checkMemoryItem(item: MemoryItemDraft): void;
 - A memory item needs at least one source ID. It must be short (for example 280 characters or fewer), must not mention an approval, and must not contain raw private numbers (fuel kg, protected window times). Current policy outranks memory, and the prompt block says so.
 - `shareable` never contains memory text, only the fact that memory was used and the source event ID.
 
-## Round 1.5: no Andrew task
+## Round 1.5: schema landed
 
-Only follow up on the schema request. Check the landed tables against the fields above before round 2 starts. A missing field cannot be added later.
+The tables for rooms, Host runs, observation exports, history cache, memory assistants, and trajectory plans are on `main`. Candidate-set company IDs support the unilateral debris path. The remaining optional history fields are explicitly deferred to Round 3.
 
 ## Round 2 (starts after round 1 and the schema task are on `main`)
 
-### Multi-party rooms (rounds 2 and 3)
+### Multi-party rooms (rounds 2 through 4)
 
 Rooms have no fixed operator cap (roadmap §2, §16). Events stay pairs; a moved spacecraft links its events through one trajectory plan (spec §2.5, §4.1).
 
 - R2-B builds `HostContext` from every linked event in the room, not only the focused one. `MAX_EVENTS` in `convex/lib/host.ts` is 24: four assigned spacecraft for each of six companies. The demo fleets alone (three or four dispatchers, four spacecraft each) can exceed the old 10. A room with more events fails the host run visibly. Never drop events to fit.
-- R2-A checks shared movers before publishing. If a candidate moves a spacecraft that is also in another linked event, publish it against that spacecraft's trajectory plan, so one revision invalidates approvals in every affected event. Do not publish two independent maneuvers for the same spacecraft.
-- The schema task needs a `trajectoryPlans` table in the spec §2.5 shape. If round 1.5 has not added it, raise it on #6 before round 2 starts.
-- R3-B speaks per-event summaries for every linked event in the room, in each listener's language.
+- R2-A identifies shared movers in candidate assumptions. This is advisory provenance, not trajectory-plan enforcement. Round 4 adds Kostya's trajectory-plan lifecycle and Andrew's discussion-driven publication against that plan; every affected event's approvals must then sign the same plan version.
+- `trajectoryPlans` exists in the landed schema; its authorization lifecycle is still a Round 4 task.
+- Round 3 posts checked Host summaries into the room. Round 4 sends those summaries through the voice entry in each listener's language.
 
 ### R2-A: Publish candidates into the advocate tables
 
-Branch `andrew-r2-publish-candidates`. Files: `convex/advocates.ts`, `convex/lib/publishCandidates.ts`, `tests/advocateCandidates.test.ts`, and `convex/candidates.ts` if the debris decision adds it.
+Branch `andrew-r2-publish-candidates`. Files: `convex/advocates.ts`, `convex/lib/publishCandidates.ts`, `tests/advocateCandidates.test.ts`, plus evidence and snapshot pins in `convex/candidates.ts`.
 
-- Internal action: `orbitClient.candidates(...)`, then `mapCandidates(...)`, then `internal.candidates.publish`, using the event's current candidate set version as `baseVersion`.
-- Check the landed `OrbitCandidatesResponse` against `orbitClient.ts` types. If they differ, fix the mapper here.
-- Debris: one advocate run, no side B, no `negotiate` handoff to B. This follows whatever the schema decision allowed.
+- `advocates.publishFromOrbit` loads current facts and candidate revisions, calls the landed orbit client's `getCandidates`, adapts the response to `mapCandidates`, then calls `internal.candidates.publish` with the candidate-set base version and freshness pins.
+- The service snapshot ID comes from `catalog.snapshot.ommUrl` (`gp-20261024T2134Z`), not the SOCRATES snapshot ID. Recheck both snapshot provenance and the event evidence version before publication.
+- Use only returned numerical candidates, never invented post-maneuver probabilities. Source geometry must agree with the event used for the cards; publication must discard burns that expired while the service ran.
+- Debris: one advocate run, no side B, no negotiation handoff to a fabricated operator.
 - Orbit failure leaves the previous candidate set and runs untouched.
 - All existing `tests/advocates.test.ts` cases stay green.
 
 ### R2-B: Host trigger
 
-Branch `andrew-r2-host-trigger`. Files: `convex/hostTriggers.ts`, `tests/hostTriggers.test.ts`.
+Branch `andrew-r2-host-trigger`. Files: `convex/hostTriggers.ts`, `tests/hostTriggers.test.ts`; the existing PR also extracts `convex/lib/hostContext.ts` for Round 3 voice integration and allows stored candidate labels in `convex/lib/host.ts` number checks.
 
-- `hostTriggers.request` (internal mutation): `{ roomId, trigger, inputVersion }`. It dedupes on the host runs index `(roomId, inputVersion, trigger)`, so an existing running or succeeded row is a no-op. It inserts a `running` row and schedules the action.
+- `hostTriggers.request` (internal mutation): `{ roomId, trigger, inputVersion? }`. It computes a version from current shared context and authoritative freshness pins; an optional supplied version must match. It dedupes on `(roomId, inputVersion, trigger)`, so an existing running or succeeded row is a no-op. It inserts a `running` row and schedules the action.
 - The action builds `HostContext` by reading the round 1.5 tables directly (rooms, messages, proposals, approvals, advocate shared outcomes). It does not call Kostya's round 2 functions, which land in parallel. Messages written by the host are excluded, so the host never triggers itself.
 - It calls `internal.coordinationHost.run`. On success it calls `internal.rationaleCheck.run` on each summary. A finish mutation rechecks that `inputVersion` is still current, then stores the span, checked output, and check result. A stale result is stored as `superseded`, not published.
+- A completed Grok disagreement is stored as `agrees: false` alongside the checked Host output. It is data for the Round 3 disagreement message; a checker execution failure remains a failed run. No result changes selection or human approvals.
 - Requested revisions are stored as host output only. They go back through candidate calculation and never change proposals directly.
-- No subscription to new messages: round 3 connects `messages.send`.
+- Round 2 reads existing shared messages to construct context but does not subscribe to message arrival. Round 3 connects `messages.send`, room opening, and voice events to these entry points.
 - Bounded retry: one attempt per explicit `request` call, with the attempt number taken from existing rows.
 
 ### R2-C: History
 
-Branch `andrew-r2-history`. Files: `convex/history.ts`, `convex/lib/tigerExport.ts`, `tests/history.test.ts`.
+Branch `andrew-r2-history`. Files: `convex/history.ts`, `convex/historyActions.ts` (`"use node"` for the `pg` client), `convex/lib/tigerExport.ts`, `tests/history.test.ts`.
 
-- `history.recordObservation` (internal mutation) upserts an `observationExports` row by `observationKey` and schedules the export.
+- `history.recordObservation` (internal mutation) records an immutable `observationExports` row by `observationKey` and schedules an idempotent export. A repeated key with conflicting content is rejected.
 - `tigerExport` uses Kostya's `convex/lib/tiger.ts`. It creates the hypertable if absent and writes with `INSERT ... ON CONFLICT (observation_key, observed_at) DO NOTHING` using parameterized SQL only.
 - A refresh action queries Tiger and writes the versioned cache. `history.series({ eventId })` is an authorized query that reads only the cache.
 - Real and simulated points come back as separate series. Missing values stay null.
+- A new observation marks the chart stale until export and cache refresh finish. Closed demo runs cannot publish simulated points into the active run's chart; an in-flight refresh must recheck its observation state before overwriting newer progress.
 - An export or read failure marks the cache `stale` or `failed`. Tests assert that the approvals table is unchanged.
 
-## Round 3 (everything above on `main`)
+## Round 3 handoff (Round 2 merged; deployment before live integration)
+
+Andrew deferred DigitalOcean setup to Round 3. Keep both deployment boxes unchecked until the orbit service and voice worker are actually deployed and checked. Orbit setup still requires the pinned data and validation cache, reachable health endpoint, Convex service URL/token, and the measured US-fleet screening result from issue #6.
 
 ### R3-A: Advocate memory
 
-Branch `andrew-r3-advocate-memory`. Files: `convex/advocates.ts`, plus `convex/agents/advocate.ts` and `convex/lib/advocate.ts` if the scope request is accepted.
+Branch `andrew-r3-advocate-memory`. Files: `convex/advocates.ts`, `convex/agents/advocate.ts`, `convex/lib/advocate.ts`.
 
 - Before the Claude call, recall through Kostya's `backboard.ts`, then `memoryNote(...)`, and put `promptBlock` into this company's prompt only.
+- Create one run-scoped Backboard assistant lazily and store its `memoryAssistants` row.
 - After a recorded outcome, `buildMemoryItem` gives a checked item, which is written to the run's assistant. A write failure changes nothing else.
 - Demonstrate Phase 10: state a preference in incident one, and incident two shows "Memory used" with the source event.
 
-### R3-B: Host speech
+### Remaining Round 3 bullets
 
-Branch `andrew-r3-host-speech`. File: `convex/hostTriggers.ts` only.
+Each row is a separate task/branch. Issue #6 owns the exact file scopes.
 
-- After a checked host output is stored, send its canonical text through the voice backend's translation and TTS entry: Claude translation, Cartesia for EN/ZH, Grok TTS for RU.
-- Host speech never approves. A translation failure keeps the original text visible.
+| Task | Output and boundary |
+|---|---|
+| Host output to the room | Post checked clarifications, per-event summaries and Grok disagreements; add optional understood output, corrected understood rows, and summary log entries. Owns `hostTriggers.ts`, `lib/host.ts`, new `lib/hostPublish.ts`, and tests. |
+| Voice in Host context | Add final `call_phrases` to `lib/hostContext.ts`; new `tests/hostContext.test.ts`. |
+| Agent trace API | New `spans.ts` and tests: assigned-event access to public agent and Host spans/logs. |
+| Public rerun | `agents.ts` and new rerun tests: bounded Analyst/Host reruns and audit log, without reviving approvals. |
+| Provider evidence | New `providerReadiness.ts` and `docs/andrew/evidence.md`: checked calls and sanitized evidence for Claude, Gemini, Grok, Backboard and Tiger. |
+| Tiger seed | New `scripts/seed_tiger_history.mjs`: sourced or explicitly simulated observations through `history.recordObservation`. |
+| Factory schedule worker | New `services/scheduler/`, `lib/scheduleClient.ts`, client tests and workflow: prepare/commit/jobs/health, one write per authorized intent. |
+| Schema widening | Only this task changes `schema/records.ts` and generated files: optional history `truncated` and point `evidenceVersion`. |
+
+Kostya owns the Round 3 callers: final typed messages and voice phrases request Host runs, room opening requests candidates for linked events, committed scan observations call `history.recordObservation`, and a new voice entry accepts checked Host text. Andrew's Round 2 code does not install those callers.
+
+## Round 4 handoff
+
+- Revise candidates from discussion through new `revisions.ts` and `lib/publishCandidates.ts`, using requested revisions and hard constraints. Link shared movers to Kostya's trajectory plans and record source messages and revision changes.
+- Add checked per-card rationale and the Grok second check in `lib/rationale.ts` and `agents/rationale.ts`.
+- Add advocate follow-ups in `advocates.ts`: changed candidates request the Host, no-agreement is visible, and negotiation is logged.
+- Add `summary.ts` request/edit, with numerical re-screening and approval invalidation for a new revision.
+- Connect succeeded Host text to the voice entry in `hostTriggers.ts`: Claude translation, Cartesia EN/ZH, Grok RU. A translation failure keeps original text available; speech cannot approve.
+- Add the Factory scheduler service, workspace volume and route to `deploy/`. Kostya owns maneuver-to-worker wiring and trajectory-plan approval enforcement.
 
 ## Which phases this proves
 
