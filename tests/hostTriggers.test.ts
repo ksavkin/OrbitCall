@@ -762,6 +762,26 @@ describe("Room host runs", () => {
 });
 
 describe("Host input freshness", () => {
+  it.each(["missing", "closed_at"] as const)("stops a queued host job when its demo run becomes %s", async change => {
+    const t = backend();
+    const room = await approvedRoom(t);
+    const demoRunId = await t.run(async ctx => {
+      const id = await ctx.db.insert("demoRuns", { scenario: "fixture", state: "open", startedBy: null, manifest: null, startedAt: FIXTURE_NOW, closedAt: null });
+      await ctx.db.patch(room.roomId, { demoRunId: id });
+      return id;
+    });
+    const calls = stubProviders();
+    const hostRunId = (await request(t, room.roomId))!;
+    await t.run(async ctx => {
+      if (change === "missing") await ctx.db.delete(demoRunId);
+      else await ctx.db.patch(demoRunId, { closedAt: FIXTURE_NOW });
+    });
+    expect(await request(t, room.roomId)).toBeNull();
+    await execute(t, hostRunId);
+    expect(calls.host).toHaveLength(0);
+    expect(await t.run(ctx => ctx.db.get(hostRunId))).toMatchObject({ status: "superseded", output: null });
+  });
+
   it.each(["probability", "snapshot", "set_version", "selection", "assignment", "membership", "demo_run"] as const)(
     "supersedes a provider response after %s changes even when displayed geometry is unchanged", async change => {
       const t = backend();

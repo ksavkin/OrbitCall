@@ -21,9 +21,10 @@ type HostCheck = { span: AgentSpan; result: CheckResult | null };
 
 // A closed room or a reset demo run takes no host work and publishes none.
 async function isOpen(ctx: QueryCtx, room: Doc<"rooms">): Promise<boolean> {
-  if (room.state === "closed") return false;
-  const demo = room.demoRunId && await ctx.db.get(room.demoRunId);
-  return !(demo && demo.state === "closed");
+  if (room.state !== "open" || room.closedAt !== null) return false;
+  if (room.demoRunId === null) return true;
+  const demo = await ctx.db.get(room.demoRunId);
+  return demo !== null && demo.state === "open" && demo.closedAt === null;
 }
 
 async function currentInputs(ctx: MutationCtx, run: Doc<"hostRuns">): Promise<boolean> {
