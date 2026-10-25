@@ -6,6 +6,7 @@ import { requireFleetScope, type FleetScope } from "./fleetQuery";
 import { isoUtc, TCA_MATCH_MS } from "./lib/events";
 import { color, eventStatus, workflow } from "./lib/validators";
 import { side } from "./lib/policyValidators";
+import { decisionTurn, isResolved } from "./lib/decision";
 
 // Coordination rooms (spec §3.4) on the round 1.5 tables in schema/rooms.ts. A room is the optional, automatically
 // connected communication channel of one case (user-flow "App navigation and the decision flow"): an operator presses
@@ -114,6 +115,10 @@ const roomEvent = v.object({
   workflow: v.union(workflow, v.null()),
   requiredApprovalSides: v.array(side),
   canAct: v.boolean(),
+  // Decision turns: while a card is selected and approvals are outstanding, only the side in turn acts.
+  deciding: v.boolean(),
+  turn: v.union(side, v.null()),
+  myTurn: v.boolean(),
 });
 const roomMember = v.object({
   userId: v.id("users"), companyId: v.id("companies"), name: v.union(v.string(), v.null()),
@@ -133,6 +138,29 @@ export const roomProjection = v.object({
   linkedEvents: v.array(roomEvent),
 });
 
+/**
+ * The caller's view of each linked incident: side (as myQueue derives it, spec §1; the company's whole fleet decides
+ * whether a pair is internal), stored classification, whether the caller may act, and the decision turn.
+ */
+export async function roomTurns(ctx: QueryCtx, scope: FleetScope, pairs: Pair[], open: boolean) {
+  const own = (objectId: string) =>
+    scope.companyObjects.some(o => o.objectId === objectId) || scope.objects.some(o => o.objectId === objectId);
+  const assigned = (objectId: string) => scope.objects.some(o => o.objectId === objectId);
+  return Promise.all(pairs.map(async ({ event, a, b }) => {
+    const mySide = own(a) && own(b) ? null : own(a) ? "A" as const : own(b) ? "B" as const : null;
+    const required = event.requiredApprovalSides ?? [];
+    const canAct = open && scope.user.role === "operator" && event.active && event.workflow !== undefined &&
+      event.workflow !== "internal_review" && mySide !== null && required.includes(mySide) && assigned(mySide === "A" ? a : b);
+    const { deciding, turn } = await decisionTurn(ctx, event);
+    return {
+      eventId: event._id, objectIds: [a, b], tcaUtc: isoUtc(event.tcaMs), color: event.color, active: event.active,
+      status: event.status ?? "new" as const, simulated: event.simulated, mySide,
+      workflow: event.workflow ?? null, requiredApprovalSides: required, canAct,
+      deciding, turn, myTurn: canAct && deciding && turn === mySide,
+    };
+  }));
+}
+
 async function project(ctx: QueryCtx, scope: FleetScope, room: Doc<"rooms">, pairs: Pair[]) {
   const open = await isOpenRoom(ctx, room);
   const companies = (await Promise.all(room.companyIds.map(id => ctx.db.get(id))))
@@ -142,21 +170,7 @@ async function project(ctx: QueryCtx, scope: FleetScope, room: Doc<"rooms">, pai
     userId: m.userId, companyId: m.companyId, name: (await ctx.db.get(m.userId))?.name ?? null,
     inRoom: m.inRoom, inCall: m.inCall, updatedAt: isoUtc(m.updatedAt),
   })));
-  // Sides as myQueue derives them (spec §1): the company's whole fleet decides whether a pair is internal.
-  const own = (objectId: string) =>
-    scope.companyObjects.some(o => o.objectId === objectId) || scope.objects.some(o => o.objectId === objectId);
-  const assigned = (objectId: string) => scope.objects.some(o => o.objectId === objectId);
-  const linked = pairs.map(({ event, a, b }) => {
-    const mySide = own(a) && own(b) ? null : own(a) ? "A" as const : own(b) ? "B" as const : null;
-    const required = event.requiredApprovalSides ?? [];
-    return {
-      eventId: event._id, objectIds: [a, b], tcaUtc: isoUtc(event.tcaMs), color: event.color, active: event.active,
-      status: event.status ?? "new" as const, simulated: event.simulated, mySide,
-      workflow: event.workflow ?? null, requiredApprovalSides: required,
-      canAct: open && scope.user.role === "operator" && event.active && event.workflow !== undefined &&
-        event.workflow !== "internal_review" && mySide !== null && required.includes(mySide) && assigned(mySide === "A" ? a : b),
-    };
-  });
+  const linked = await roomTurns(ctx, scope, pairs, open);
   return {
     roomId: room._id, state: open ? "open" as const : "closed" as const, createdAt: isoUtc(room.createdAt),
     closedAt: room.closedAt === null ? null : isoUtc(room.closedAt), simulated: room.simulated,
@@ -326,8 +340,6 @@ export const setInCall = mutation({
   handler: (ctx, { roomId, inCall }) => setPresence(ctx, roomId, { inCall }),
 });
 
-// Statuses after human agreement or with nothing left to decide (functionality §3).
-const RESOLVED = new Set(["approved", "scheduled", "monitoring", "awaiting_verification_data", "verified", "no_action_needed"]);
 
 /**
  * Closes the event's open room once every linked incident is resolved: its stored status is past agreement, or it
@@ -339,7 +351,7 @@ export async function closeRoomIfResolved(ctx: MutationCtx, eventId: Id<"events"
   const room = event && await roomOfEvent(ctx, event);
   if (!room) return null;
   const pairs = await roomPairs(ctx, room._id);
-  if (!pairs.every(({ event: e }) => !e.active || RESOLVED.has(e.status ?? "new"))) return null;
+  if (!pairs.every(({ event: e }) => isResolved(e))) return null;
   const now = Date.now();
   await ctx.db.patch(room._id, { state: "closed", closedAt: now });
   await ctx.db.insert("messages", {

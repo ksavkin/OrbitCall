@@ -87,8 +87,19 @@ async function seed() {
 const rows = <T extends "rooms" | "roomEvents" | "roomMembers" | "call_members" | "inbox" | "messages">(t: Backend, table: T) =>
   t.run(ctx => ctx.db.query(table).collect());
 const classify = (t: Backend, eventIds: Id<"events">[]) => t.run(async ctx => {
-  for (const id of eventIds) await ctx.db.patch(id, { workflow: "bilateral", requiredApprovalSides: ["A", "B"] });
+  for (const id of eventIds) await ctx.db.patch(id, { workflow: "bilateral", requiredApprovalSides: ["A", "B"], approvalRuleVersion: 1 });
 });
+// A selected card for the event, as the proposals module will store it.
+const select = (t: Backend, eventId: Id<"events">) => t.run(async ctx => {
+  const proposalId = await ctx.db.insert("proposals", { eventId, candidateId: "P1", label: "P1", latestRevision: 1, demoRunId: null, createdAt: FIXTURE_NOW });
+  await ctx.db.insert("selections", { eventId, proposalId, revision: 1, generation: 1, by: { kind: "agents" }, at: FIXTURE_NOW, lastReset: null });
+  return proposalId;
+});
+const approve = (t: Backend, eventId: Id<"events">, proposalId: Id<"proposals">, side: "A" | "B", userId: Id<"users">, companyId: Id<"companies">) =>
+  t.run(ctx => ctx.db.insert("approvals", {
+    eventId, side, status: "approved", userId, companyId, proposalId, revision: 1, selectionGeneration: 1, approvalRuleVersion: 1,
+    trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, current: true, at: FIXTURE_NOW,
+  }));
 
 type Projection = {
   roomId: string; state: string; closedAt: string | null; myCompanyId: string;
@@ -232,6 +243,27 @@ describe("rooms.byId / rooms.listMine / presence", () => {
     expect(await code(as(t, "ana").query(byId, { roomId: red10 }))).toBe("FORBIDDEN");
     await t.mutation(internal.operators.provision, north([]));
     expect(await list("ana")).toEqual([]);
+  });
+});
+
+describe("rooms decision turns", () => {
+  it("gives the turn to side A, then B, and closes it when both approved the selection", async () => {
+    const { t, ids, user, company } = await seed();
+    const { roomId } = await as(t, "ana").mutation(startWorkflow, { eventId: ids.cross });
+    type Turn = { eventId: string; deciding: boolean; turn: string | null; myTurn: boolean };
+    const turn = async (who: string) => ((await as(t, who).query(byId, { roomId })) as { linkedEvents: Turn[] })
+      .linkedEvents.find(e => e.eventId === ids.cross)!;
+    await classify(t, [ids.cross]);
+    expect(await turn("ana")).toMatchObject({ deciding: false, turn: null, myTurn: false });   // nothing selected yet
+    const proposalId = await select(t, ids.cross);
+    expect(await turn("ana")).toMatchObject({ deciding: true, turn: "A", myTurn: true });
+    expect(await turn("bo")).toMatchObject({ deciding: true, turn: "A", myTurn: false });
+    expect(await turn("hoa")).toMatchObject({ deciding: true, turn: "A", myTurn: false });
+    await approve(t, ids.cross, proposalId, "A", user.ana, company.north);
+    expect(await turn("ana")).toMatchObject({ turn: "B", myTurn: false });
+    expect(await turn("bo")).toMatchObject({ turn: "B", myTurn: true });
+    await approve(t, ids.cross, proposalId, "B", user.bo, company.south);
+    expect(await turn("bo")).toMatchObject({ deciding: false, turn: null, myTurn: false });
   });
 });
 
