@@ -13,7 +13,12 @@ const updateMySettings = makeFunctionReference<"mutation">("session:updateMySett
 const token = (name: string) => `https://orbitcall.us.auth0.com/|${name}`;
 const as = (t: Backend, name: string, claims: Record<string, string> = {}) =>
   t.withIdentity({ tokenIdentifier: token(name), subject: name, issuer: "https://orbitcall.us.auth0.com/", ...claims });
-const code = async (p: Promise<unknown>) => ((await p.catch(e => e)) as { data?: { code?: string } }).data?.code;
+// The error code of a call that must fail. A call that unexpectedly succeeds fails the test with its result.
+const code = async (p: Promise<unknown>) => {
+  const outcome = await p.then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
+  if (outcome.ok) throw new Error(`Expected a failure, got ${JSON.stringify(outcome.value)}`);
+  return (outcome.error as { data?: { code?: string } }).data?.code;
+};
 
 type Member = { tokenIdentifier: string; role: "operator" | "head_of_ops" | "demo_observer"; assignedObjectIds: string[];
   name?: string; language?: "en" | "ru" | "zh"; dispatcherCountry?: string };
@@ -62,6 +67,7 @@ describe("session.me", () => {
     const { t } = await seed();
     expect((await as(t, "hoa", { name: "Hoa Tran" }).query(me, {})).name).toBe("Hoa Tran");
     expect((await as(t, "hoa").query(me, {})).name).toBeNull();
+    expect((await as(t, "hoa", { name: "   " }).query(me, {})).name).toBeNull();
   });
 
   it("reads a legacy row without the new fields as null", async () => {
@@ -145,9 +151,10 @@ describe("provisioning", () => {
     expect(await as(t, "ana").query(getMySettings, {})).toEqual({ language: "en", contact: "ops@north.example" });
   });
 
-  it("rejects the same account twice in one request", async () => {
+  it("rejects the same account twice in one request, and a padded identifier", async () => {
     const { t } = await seed();
     expect(await code(provision(t, north([ana(["48211"]), ana(["48212"])])))).toBe("VALIDATION");
+    expect(await code(provision(t, north([{ ...ana(["48211"]), tokenIdentifier: ` ${token("ana")}` }])))).toBe("VALIDATION");
   });
 
   it("refuses observer assignments and clears them when an operator becomes an observer", async () => {

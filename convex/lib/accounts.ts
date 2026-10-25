@@ -11,7 +11,7 @@ export const MAX_CONTACT = 200;
 
 /**
  * Normalizes a contact value for a patch. undefined: leave the stored value alone.
- * Blank after trimming: clear it. Otherwise the trimmed text, at most MAX_CONTACT characters.
+ * Blank after trimming: clear it. Otherwise the trimmed text; longer than MAX_CONTACT is rejected, never truncated.
  */
 export function contactPatch(contact: string | undefined): { contact?: string } | { clear: true } | null {
   if (contact === undefined) return null;

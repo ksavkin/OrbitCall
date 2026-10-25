@@ -34,7 +34,8 @@ export const provision = internalMutation({
       if (!owner) await ctx.db.insert("satelliteOwners", { objectId, companyId });
     }
     for (const member of members) {
-      if (!member.tokenIdentifier.trim()) throw new ConvexError({ code: "VALIDATION", message: "A verified issuer and subject identifier is required." });
+      // Auth0 never emits padding, so a padded identifier could never sign in; refuse it instead of storing an orphan.
+      if (!member.tokenIdentifier.trim() || member.tokenIdentifier !== member.tokenIdentifier.trim()) throw new ConvexError({ code: "VALIDATION", message: "A verified issuer and subject identifier is required." });
       if (member.role === "demo_observer" && member.assignedObjectIds.length) throw new ConvexError({ code: "VALIDATION", message: "Observers cannot hold fleet assignments." });
       if (member.assignedObjectIds.some(id => !objectIds.includes(id))) throw new ConvexError({ code: "FORBIDDEN", message: "Assignments must belong to the registered company." });
       const user = await ctx.db.query("users").withIndex("by_token_identifier", q => q.eq("tokenIdentifier", member.tokenIdentifier)).unique();

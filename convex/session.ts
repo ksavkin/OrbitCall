@@ -37,7 +37,7 @@ export const me = query({
     return {
       userId: user._id,
       // Stored display name first, then the Auth0 profile name, else unavailable.
-      name: user.name ?? identity.name ?? null,
+      name: user.name ?? (identity.name?.trim() || null),
       role: user.role,
       language: user.language ?? null,
       dispatcherCountry: user.dispatcherCountry ?? null,
