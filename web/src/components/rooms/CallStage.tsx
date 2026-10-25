@@ -1,17 +1,19 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Languages, Loader2, LogOut, MessageSquare, Mic, MicOff, PhoneCall, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, Languages, Loader2, LogOut, Mars, MessageSquare, Mic, MicOff, PhoneCall, Venus, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useState, type PointerEvent, type ReactNode } from "react";
 import type { Lang } from "@/call/api";
 import type { CallParticipant, UseCoordinationCall } from "@/call/useCoordinationCall";
 import { sfx } from "@/lib/sound";
+import { useOps } from "@/lib/ops/store";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ClaudeGlyph } from "@/components/ops/Glyphs";
 import { RoomTimeline, withValues } from "@/components/roomChat/RoomTimeline";
 import { Select } from "@/components/ui/Popover";
 import type { RoomCard } from "@/components/roomChat/model";
+import { isSmokeDemo } from "@/lib/ops/smoke";
 import { useAudioLevel } from "./useAudioLevel";
 import { VoiceBlob } from "./VoiceBlob";
 
@@ -86,7 +88,7 @@ export function CallStage({
           <div className="flex items-center gap-2 text-[11.5px] font-medium text-neutral-500">
             <span className={`h-1.5 w-1.5 rounded-full ${joined ? "bg-green" : "bg-neutral-600"}`} style={joined ? { boxShadow: "0 0 8px var(--green)" } : undefined} />
             {joined ? (c.state === "reconnecting" ? "Reconnecting" : "Live") : c.state === "joining" ? "Joining" : "Not joined"}
-            {c.simulated && <span className="rounded-full bg-[rgba(255,159,64,0.12)] px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.08em] text-orange">simulated · no audio</span>}
+            {c.simulated && !isSmokeDemo() && <span className="rounded-full bg-[rgba(255,159,64,0.12)] px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.08em] text-orange">simulated · no audio</span>}
           </div>
           <div className="mt-1 text-[20px] font-semibold tracking-[-0.02em] text-white">{title}</div>
           {subtitle && <div className="mt-0.5 text-[13px] text-neutral-500">{subtitle}</div>}
@@ -294,6 +296,83 @@ function VoiceView({ c, level, joined, size, lockedBy }: { c: StageCall; level: 
 }
 
 /**
+ * The voice the others hear your translated speech in. The worker reads it per phrase from the call's `voice`
+ * attribute; the real call has no way to change that attribute yet, so there the switch waits for the backend.
+ */
+function VoicePick({ c }: { c: StageCall }) {
+  const voice = useOps((s) => s.myVoice);
+  const live = !c.simulated;
+  return (
+    <div className="flex rounded-full bg-white/[0.05] p-1 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]" role="radiogroup" aria-label="Your translated voice">
+      {(["female", "male"] as const).map((g) => (
+        <Tooltip key={g} label={live ? "Choosing your translated voice needs a backend update; the call uses the voice set for you" : `The room hears your translated speech in a ${g} voice`}>
+          <button
+            role="radio"
+            aria-checked={voice === g}
+            aria-label={g === "female" ? "Female voice" : "Male voice"}
+            data-testid={`call-voice-${g}`}
+            disabled={live}
+            className={`grid h-8 w-8 place-items-center rounded-full transition-colors disabled:cursor-default disabled:opacity-40 ${voice === g ? "bg-white/[0.14] text-white" : "text-neutral-500 hover:text-white"}`}
+            onClick={() => {
+              sfx.click();
+              useOps.setState({ myVoice: g });
+            }}
+          >
+            {g === "female" ? <Venus size={14} /> : <Mars size={14} />}
+          </button>
+        </Tooltip>
+      ))}
+    </div>
+  );
+}
+
+/** How the microphone works in the dock: hold to talk (sphere or Space), or an open mic with a mute button. */
+function MicControls({ c, disabled }: { c: StageCall; disabled: boolean }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex rounded-full bg-white/[0.05] p-1 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]" role="radiogroup" aria-label="Microphone mode">
+        {(["hold", "open"] as const).map((m) => (
+          <Tooltip key={m} label={m === "hold" ? "Talk only while you hold the sphere or Space" : "Microphone stays on until you mute it"}>
+            <button
+              role="radio"
+              aria-checked={c.micMode === m}
+              data-testid={`call-mic-${m}`}
+              className={`h-8 rounded-full px-3 text-[12.5px] font-medium transition-colors ${c.micMode === m ? "bg-white/[0.14] text-white" : "text-neutral-400 hover:text-white"}`}
+              onClick={() => {
+                if (m === c.micMode) return;
+                // switching never leaves the microphone on (the simulated call does not turn it off itself)
+                if (c.micOn) (c.micMode === "open" ? c.toggleMic : c.stopTalking)();
+                c.setMicMode(m);
+              }}
+            >
+              {m === "hold" ? "Hold to talk" : "Open mic"}
+            </button>
+          </Tooltip>
+        ))}
+      </div>
+      <VoicePick c={c} />
+      {c.micMode === "open" && (
+        <Tooltip label={c.micOn ? "Mute" : "Unmute"}>
+          <button
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full transition-colors disabled:opacity-40"
+            style={{ background: c.micOn ? "rgba(61,220,151,0.16)" : "rgba(255,90,79,0.14)", color: c.micOn ? "var(--green)" : "#ff8a80" }}
+            data-testid="call-mute"
+            aria-label={c.micOn ? "Mute" : "Unmute"}
+            disabled={disabled && !c.micOn}
+            onClick={() => {
+              sfx.toggle(!c.micOn);
+              c.toggleMic();
+            }}
+          >
+            {c.micOn ? <Mic size={15} /> : <MicOff size={15} />}
+          </button>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+/**
  * The call docked under the decision: one row. The sphere is the talk button (hold it, or Space; a click toggles in
  * open-mic mode), the middle says what is happening and shows the latest phrase, or the text field in Text mode.
  */
@@ -317,6 +396,7 @@ function DockedCall({
   const mine = last?.author.kind === "human" && last.author.userId === c.identity?.replace(/^user-/, "");
   const who = !last ? "" : last.author.kind === "human" ? (mine ? "You" : last.author.name) : last.author.kind === "agent" ? last.author.role : "System";
   const observer = c.role === "observer";
+  const myVoice = useOps((s) => s.myVoice);
   const canTalk = joined && !observer && c.canTalk && !lockedBy && mode === "voice";
   const status = !joined
     ? c.state === "joining"
@@ -327,7 +407,9 @@ function DockedCall({
       : lockedBy
         ? `${lockedBy} is deciding · your voice is paused`
         : c.micOn
-          ? "You're speaking"
+          ? c.simulated
+            ? `Speaking · ${myVoice} voice`
+            : "You're speaking"
           : speaker
             ? `${speaker.name} is speaking`
             : mode === "voice"
@@ -374,6 +456,13 @@ function DockedCall({
             <span className="pointer-events-none">
               <VoiceBlob level={level} size={64} />
             </span>
+            {/* says what the sphere is: the microphone, on or off */}
+            <span
+              className="pointer-events-none absolute -bottom-0.5 -right-0.5 grid h-6 w-6 place-items-center rounded-full shadow-[0_0_0_2px_#0b0b0d]"
+              style={{ background: c.micOn ? "var(--green)" : "#2a2a2e", color: c.micOn ? "#000" : "#bdbdbd" }}
+            >
+              {c.micOn || c.micMode === "hold" ? <Mic size={12} /> : <MicOff size={12} />}
+            </span>
           </button>
         </Tooltip>
 
@@ -383,7 +472,7 @@ function DockedCall({
             <span className="truncate font-medium" style={{ color: c.micOn ? "var(--green)" : speaker ? "#dbe7ff" : "#8a8a8a" }}>
               {status}
             </span>
-            {c.simulated && <span className="shrink-0 rounded-full bg-[rgba(255,159,64,0.12)] px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-[0.08em] text-orange">simulated</span>}
+            {c.simulated && !isSmokeDemo() && <span className="shrink-0 rounded-full bg-[rgba(255,159,64,0.12)] px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-[0.08em] text-orange">simulated</span>}
           </div>
           {joined && mode === "text" && !observer ? (
             <Composer c={c} lockedBy={lockedBy} className="mt-2" />
@@ -403,6 +492,7 @@ function DockedCall({
 
         {joined ? (
           <div className="flex shrink-0 items-center gap-2">
+            {!observer && mode === "voice" && <MicControls c={c} disabled={!canTalk} />}
             {!observer && <ModeSwitch mode={mode} onMode={onMode} bare />}
             {!observer && <SoundToggle />}
             {c.soundBlocked && (

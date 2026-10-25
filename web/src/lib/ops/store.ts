@@ -48,6 +48,8 @@ interface OpsState {
   voiceIntent: { eventId: string; label: string; said: string; at: number } | null;
   /** The case call as this screen sees it: party ids in the call and speaking now (the parties bar reads it). */
   callLive: { eventId: string; inCall: string[]; speaking: string[]; messages: CallMessage[]; me: string | null } | null;
+  /** The voice the room hears this person's translated speech in (the call's `voice` attribute). */
+  myVoice: "female" | "male";
   /** Risk Monitor screening pass in progress (drives the globe sweep). */
   scanning: boolean;
   lastScan: { at: number; objects: number; pairs: number; flagged: number; ms: number } | null;
@@ -93,6 +95,7 @@ export const useOps = create<OpsState>((set) => ({
   humans: [],
   voiceIntent: null,
   callLive: null,
+  myVoice: "female",
   scanning: false,
   lastScan: null,
   validation: null,

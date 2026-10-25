@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUpRight, DoorOpen } from "lucide-react";
+import { ArrowUpRight, Check, DoorOpen } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
@@ -14,10 +14,17 @@ import { useSimCall } from "./simCall";
 import { SAMPLE_ID, sampleCards, sampleEvent, sampleMessages } from "./sampleRoom";
 import { roomCards } from "@/components/roomChat/model";
 import { LiveRoom, useLiveTarget, type LiveTarget } from "./LiveRoom";
+import { SmokeLiveCall } from "./SmokeLiveCall";
+import { useMe } from "@/components/auth/session";
+import {
+  acceptSmokeInvite,
+  isSmokeDemo,
+  readSmokeInvite,
+  smokeSideFor,
+  subscribeSmokeInvites,
+} from "@/lib/ops/smoke";
 
 // Rooms: one coordination room per incident, with the live call in the middle and the case beside it.
-// Dev mode runs a simulated call with the same shape as the real hook; live mode waits for the backend's
-// call module (convex/call) and the voice worker, and the /call test page proves the real path until then.
 
 const ROOM_STATUSES: ConjunctionEvent["status"][] = [
   "proposal",
@@ -39,13 +46,16 @@ export function RoomsScreen() {
       events
         // a room needs someone on the other side: debris and dead satellites have no operator to call
         .filter((e) => (e.parties ?? []).some((p) => p.role === "b"))
-        .filter((e) => e.id === incident || ROOM_STATUSES.includes(e.status))
+        .filter((e) => !e.outcome?.resolvedAt && (e.id === incident || ROOM_STATUSES.includes(e.status)))
         .sort((a, b) => (a.id === incident ? -1 : b.id === incident ? 1 : a.tca - b.tca)),
     [events, incident],
   );
-  // with no case room yet, dev mode shows a sample call in progress so the room's look is always visible
+  // closed rooms stay readable: the whole meeting and the report, newest first
+  const past = useMemo(() => events.filter((e) => e.outcome?.resolvedAt).sort((a, b) => b.outcome!.resolvedAt! - a.outcome!.resolvedAt!), [events]);
+  const smoke = isSmokeDemo();
+  // product recording: never fall back to a sample room; only real open cases
   const [sample] = useState(sampleEvent);
-  const shown = rooms.length ? rooms : [sample];
+  const shown = rooms.length ? rooms : smoke ? [] : [sample];
   const [pick, setPick] = useState<string | null>(null);
   const roomId = pick && shown.some((r) => r.id === pick) ? pick : (shown[0]?.id ?? null);
   const e = shown.find((r) => r.id === roomId);
@@ -59,25 +69,66 @@ export function RoomsScreen() {
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="pointer-events-auto absolute inset-x-2.5 bottom-[42px] top-[58px] z-[38] grid grid-cols-[280px_minmax(0,1fr)_320px] overflow-hidden rounded-[18px] bg-[rgba(4,4,5,0.94)] text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_40px_100px_-30px_rgba(0,0,0,0.9)] backdrop-blur-2xl"
     >
-      {dev ? <RoomList rooms={shown} active={roomId} onPick={setPick} /> : <LiveList target={live} onClose={() => setLive(null)} />}
+      {dev || smoke ? <RoomList rooms={shown} past={past} active={roomId} onPick={setPick} /> : <LiveList target={live} onClose={() => setLive(null)} />}
       <div className="flex min-h-0 flex-col border-x border-white/[0.06]">
-        {!dev ? (
+        {!dev && !smoke ? (
           <LiveRoom target={live} onOpen={setLive} onLeave={() => setLive(null)} />
         ) : e ? (
           <RoomCall key={e.id} e={e} />
+        ) : smoke ? (
+          <SmokeInvitePanel />
         ) : (
           <Empty
             title="No open rooms"
-            body="A room opens when another operator is in a case and the agents have a plan. Debris cases have no one to call. Run a scan on Conjunctions and pick a case with two operators."
+            body="A room opens when operators are on a case and the agents have a plan. Run a scan on Orbit and open a case."
           />
         )}
       </div>
-      {dev ? <CaseSide e={e} /> : <LiveSide />}
+      {dev || smoke ? <CaseSide e={e} /> : <LiveSide />}
     </motion.div>
   );
 }
 
-/** One room's call. Keyed by room: switching rooms leaves the call, as the real hook does. */
+/** Waiting for / accepting a coordination invite into the open case. */
+function SmokeInvitePanel() {
+  const me = useMe();
+  const [invite, setInvite] = useState(() => readSmokeInvite());
+  useEffect(() => subscribeSmokeInvites(setInvite), []);
+  const side = smokeSideFor(me?.userId);
+  const guest = side === "b" || side === "affected";
+  if (!guest) {
+    return (
+      <Empty
+        title="No open rooms"
+        body="Run a scan on Orbit, open the red case, and let the agents invite the other operators."
+      />
+    );
+  }
+  const pair = invite?.pair ?? "HAWK-7A × JILIN-1";
+  const eventId = invite?.eventId ?? "coordination case";
+  return (
+    <div className="grid flex-1 place-items-center p-8 text-center">
+      <div className="max-w-sm">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#9cc2ff]">Invitation</div>
+        <h2 className="mt-2 text-[18px] font-semibold text-white">Join the coordination room</h2>
+        <p className="mt-2 text-[13px] leading-relaxed text-neutral-400">
+          American Satellite Dynamics opened {eventId} · {pair}. Accept to enter Decision Center and the live call.
+        </p>
+        <button
+          className="btn btn-primary mt-5 h-10 px-5 text-[13px]"
+          onClick={() => {
+            if (!me?.userId) return;
+            sfx.whoosh();
+            acceptSmokeInvite(me.userId);
+          }}
+        >
+          Accept invite
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** The plan a phrase names: "option B" / "plan 2" / "P2" / "вариант Б" → "P2". Null when it names none. */
 function planNamed(text: string): string | null {
   const t = text.toLowerCase();
@@ -88,20 +139,39 @@ function planNamed(text: string): string | null {
   return n >= 1 && n <= 4 ? `P${n}` : null;
 }
 
-export function RoomCall({ e, compact = false }: { e: ConjunctionEvent; compact?: boolean }) {
-  const isSample = e.id === SAMPLE_ID;
-  const [mode, setMode] = useState<StageMode>("voice");
-  const [seed] = useState(() => (isSample ? sampleMessages(e) : undefined));
-  // turns: while another party decides on this case, this dispatcher's voice and text pause
+function useCallLock(e: ConjunctionEvent) {
   const viewer = useOps((s) => s.actAs ?? "a");
-  // select the stable array, filter outside the selector: a new array per read loops the store forever
   const humans = useOps((s) => s.humans);
   const deciding = useMemo(() => humans.filter((h) => h.eventId === e.id), [humans, e.id]);
   const otherSide = deciding.find((h) => h.side !== viewer);
-  const lockedBy =
-    otherSide && !deciding.some((h) => h.side === viewer)
-      ? (e.parties?.find((p) => p.role === otherSide.side)?.operator ?? `Side ${otherSide.side.toUpperCase()}`).replace(/\s*\(synthetic\)/i, "")
-      : undefined;
+  return otherSide && !deciding.some((h) => h.side === viewer)
+    ? (e.parties?.find((p) => p.role === otherSide.side)?.operator ?? `Side ${otherSide.side.toUpperCase()}`).replace(/\s*\(synthetic\)/i, "")
+    : undefined;
+}
+
+export function RoomCall({ e, compact = false }: { e: ConjunctionEvent; compact?: boolean }) {
+  const isSample = e.id === SAMPLE_ID;
+  const lockedBy = useCallLock(e);
+  // product recording: real LiveKit + translator, not the local stand-in
+  if (isSmokeDemo() && !isSample) {
+    return <SmokeLiveCall e={e} compact={compact} lockedBy={lockedBy} />;
+  }
+  return <SimRoomCall e={e} compact={compact} lockedBy={lockedBy} isSample={isSample} />;
+}
+
+function SimRoomCall({
+  e,
+  compact = false,
+  lockedBy,
+  isSample,
+}: {
+  e: ConjunctionEvent;
+  compact?: boolean;
+  lockedBy?: string;
+  isSample: boolean;
+}) {
+  const [mode, setMode] = useState<StageMode>("voice");
+  const [seed] = useState(() => (isSample ? sampleMessages(e) : undefined));
   const call = useSimCall(e, { seed, joined: isSample, spaceToTalk: mode === "voice" && !lockedBy });
 
   // in a running case the call joins on its own: nobody should hunt for Join in the middle of a decision
@@ -158,8 +228,13 @@ export function RoomCall({ e, compact = false }: { e: ConjunctionEvent; compact?
   );
 }
 
-function RoomList({ rooms, active, onPick }: { rooms: ConjunctionEvent[]; active: string | null; onPick: (id: string) => void }) {
+function RoomList({ rooms, past, active, onPick }: { rooms: ConjunctionEvent[]; past: ConjunctionEvent[]; active: string | null; onPick: (id: string) => void }) {
   const incident = useOps((s) => s.incident);
+  // a past room opens as its case: the meeting from the first note to the report
+  const openPast = (id: string) => {
+    sfx.click();
+    useOps.setState({ incident: id, focusEvent: id, tab: "decision", incidentView: "expanded", resolved: null });
+  };
   return (
     <div className="flex min-h-0 flex-col">
       <div className="px-5 pb-3 pt-5">
@@ -167,6 +242,7 @@ function RoomList({ rooms, active, onPick }: { rooms: ConjunctionEvent[]; active
         <div className="text-[12px] text-neutral-500">One room per case · voice and text, translated live</div>
       </div>
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-2.5 pb-3">
+        {past.length > 0 && <div className="px-3 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500">Open</div>}
         {rooms.length === 0 && <div className="px-3 py-6 text-[12.5px] text-neutral-600">No rooms yet.</div>}
         {rooms.map((e) => {
           const st = STATUS_META[e.status];
@@ -206,6 +282,38 @@ function RoomList({ rooms, active, onPick }: { rooms: ConjunctionEvent[]; active
             </button>
           );
         })}
+        {past.length > 0 && (
+          <>
+            <div className="px-3 pb-1.5 pt-4 text-[11px] font-medium text-neutral-500">Past · {past.length}</div>
+            {past.map((e) => {
+              const p = e.proposal;
+              const plan = !p ? "Closed" : p.action === "wait" ? "Both waited" : `${p.mover === "a" ? e.a.name : e.b.name} ${p.action === "raise" ? "raised" : "lowered"} ${p.dvMs} m/s`;
+              const at = new Date(e.outcome!.resolvedAt!);
+              return (
+                <button
+                  key={e.id}
+                  data-testid="past-room"
+                  onClick={() => openPast(e.id)}
+                  onPointerEnter={() => sfx.hover()}
+                  className="mb-1 block w-full rounded-[12px] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.035]"
+                >
+                  <div className="flex items-center gap-2 text-[11px] text-neutral-600">
+                    <span className="mono">{e.id}</span>
+                    <span className="tnum ml-auto">
+                      Resolved {String(at.getUTCHours()).padStart(2, "0")}:{String(at.getUTCMinutes()).padStart(2, "0")} UTC
+                    </span>
+                  </div>
+                  <div className="mt-1 truncate text-[13px] font-medium text-neutral-300">
+                    {e.a.name} <span className="text-neutral-600">×</span> {e.b.name}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 truncate text-[11.5px] text-neutral-500">
+                    <Check size={11} className="shrink-0 text-green" /> {plan}
+                  </div>
+                </button>
+              );
+            })}
+          </>
+        )}
       </div>
     </div>
   );

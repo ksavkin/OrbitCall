@@ -22,3 +22,24 @@ export const policyUpdateRef = anyApi.policies.update as unknown as Mutation<{ s
 /** Shareable company language and contact, stored apart from the policy. */
 export const settingsMineRef = anyApi.session.getMySettings as unknown as Query<Record<string, never>, CompanySettings>;
 export const settingsUpdateRef = anyApi.session.updateMySettings as unknown as Mutation<{ language?: CompanyLang; contact?: string }, null>;
+
+/** Shared LiveKit room for the product recording (stable en/ru/zh tokens). */
+export const smokeCallEnsureRef = anyApi.smokeCall.ensureRoom as unknown as Mutation<
+  { who: "en" | "ru" | "zh" },
+  { roomId: string; devToken: string; lang: "en" | "ru" | "zh" }
+>;
+
+export type SmokeInviteRemote = {
+  eventId: string;
+  pair: string;
+  hostUserId: string;
+  eventJson: string;
+  openedAt: number;
+};
+
+/** Cross-laptop invite: host publishes, guests subscribe. */
+export const smokeInvitePublishRef = anyApi.smokeCall.publishInvite as unknown as Mutation<
+  { eventId: string; pair: string; hostUserId: string; eventJson: string },
+  SmokeInviteRemote
+>;
+export const smokeInviteActiveRef = anyApi.smokeCall.activeInvite as unknown as Query<Record<string, never>, SmokeInviteRemote | null>;

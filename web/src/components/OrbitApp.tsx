@@ -36,6 +36,7 @@ import { ProfileSheet } from "@/components/auth/ProfileSheet";
 import { ScenarioBar } from "@/components/ops/ScenarioBar";
 import { useLocalhost } from "@/lib/localhost";
 import { ensureSmokeDev, isSmokeDemo } from "@/lib/ops/smoke";
+import { SmokeInviteToast } from "@/components/ops/SmokeInviteToast";
 import { useOps } from "@/lib/ops/store";
 import { sceneRef } from "@/lib/sceneRef";
 import { sfx } from "@/lib/sound";
@@ -93,6 +94,7 @@ export function OrbitApp() {
       <DecisionDock />
       <IncidentView />
       <UrgencyOverlay />
+      <SmokeInviteToast />
       <ScanResults />
       <ResolutionCue />
       <AgentsExpanded />
@@ -199,7 +201,7 @@ function useShortcuts() {
         else if (s.following) s.set({ following: false });
         else if (ops.tab === "orbit" && ops.focusEvent && !ops.incident) ops.set({ focusEvent: null });
         else s.set({ selected: null });
-      } else if (k === "d") {
+      } else if (k === "d" && !isSmokeDemo()) {
         toggleDev();
       } else if (k === "e" && useOps.getState().incident) {
         const ops = useOps.getState();

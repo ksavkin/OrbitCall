@@ -18,4 +18,13 @@ export const demoTables = {
     demoRunId: v.id("demoRuns"), companyId: v.id("companies"), assistantId: v.string(),
     createdAt: v.number(), closedAt: v.union(v.number(), v.null()),
   }).index("by_run_company", ["demoRunId", "companyId"]).index("by_run", ["demoRunId"]),
+  // Cross-laptop invite for the product recording (one active slot).
+  smokeInvites: defineTable({
+    slot: v.string(),
+    eventId: v.string(),
+    pair: v.string(),
+    hostUserId: v.string(),
+    eventJson: v.string(),
+    openedAt: v.number(),
+  }).index("by_slot", ["slot"]),
 };

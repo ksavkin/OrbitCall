@@ -115,12 +115,11 @@ export function Navbar() {
   );
 }
 
-/** Dev mode on localhost only. A deployment stays on the real backend and does not offer the switch. */
+/** Dev mode on localhost only. Hidden on deploy and during the product recording. */
 function DevSwitch() {
   const local = useLocalhost();
   const dev = useOps((s) => s.dev);
-  // smoke demo on Vercel keeps the Dev switch so the recording can toggle if needed
-  if (local !== true && !isSmokeDemo()) return null;
+  if (isSmokeDemo() || local !== true) return null;
   return (
     <Tooltip
       label={

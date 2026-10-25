@@ -12,6 +12,7 @@ import { policyMineRef, policyUpdateRef, settingsMineRef, settingsUpdateRef } fr
 import { QueryBoundary, briefError } from "@/lib/backend/QueryBoundary";
 import { CONVEX_AUTH, CONVEX_ENABLED } from "@/lib/backend/provider";
 import { fmtUtc } from "@/lib/format";
+import { isSmokeDemo } from "@/lib/ops/smoke";
 import { useOps } from "@/lib/ops/store";
 import { sfx } from "@/lib/sound";
 import {
@@ -203,7 +204,7 @@ function PolicyForm({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="text-[16px] font-semibold text-white">Policy</h1>
-            {simulated && <Chip color="var(--orange)" size="sm">Synthetic</Chip>}
+            {simulated && !isSmokeDemo() && <Chip color="var(--orange)" size="sm">Synthetic</Chip>}
             {revision ? <span className="mono text-[11px] text-neutral-500">rev {revision}</span> : null}
           </div>
           <p className="mt-1 text-[12.5px] text-neutral-500">Private to {companyName}. The other operator never sees these numbers.</p>

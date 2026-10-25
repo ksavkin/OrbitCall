@@ -450,14 +450,14 @@ async function openRoom(eng: Engine, gen: number, e: ConjunctionEvent, pr: Propo
   const calls = [eng.span({ agent: "host", target: "humanA", kind: "human", name: "Call Operator A", eventId: id, model: "grok-voice" }, 1400, gen)];
   if (e.b.kind !== "debris") calls.push(eng.span({ agent: "host", target: "humanB", kind: "human", name: "Call Operator B", eventId: id, model: "grok-voice" }, 1900, gen));
   await Promise.all(calls);
-  // smoke recording: US host publishes the case so CN/RU see Accept in Inbox (same origin / BroadcastChannel)
+  // product recording: US host publishes so CN/RU get the invite toast and can Accept into the room
   if (isSmokeDemo() || e.scenario === SMOKE_VARIANT) {
     const live = eng.event(id)!;
     if (!live.parties?.some((p) => p.role === "affected")) {
       eng.update(id, {
         parties: [
           ...(live.parties ?? []),
-          partyOf("humanC", "affected", "Sever Imaging (synthetic)", "CIS"),
+          partyOf("humanC", "affected", "Sever Imaging", "CIS"),
         ],
       });
     }
@@ -687,10 +687,10 @@ const RU_DAY: Record<string, string> = {
 
 const RED_B = { bName: "SEVER-7 (SYN)", bOperator: "Sever Imaging (synthetic)", bOwner: "CIS" };
 
-/** Cal Hacks smoke: US × CN encounter, RU invited as affected. First red after Run scan. */
+/** US × CN encounter, RU invited as affected. First red after Run scan. */
 const TRI_B = {
-  bName: "JILIN-1 (SYN)",
-  bOperator: "Jade Orbit (synthetic)",
+  bName: "JILIN-1",
+  bOperator: "Jade Orbit",
   bOwner: "PRC",
 };
 
@@ -699,7 +699,7 @@ export const SCENARIOS: Scenario[] = [
     id: "trilateral",
     title: "US · China · Russia room",
     story: "ASD HAWK against Jade JILIN. Sever is invited because the burn grazes GEOSCAN. Three languages in one room.",
-    refs: "smoke demo · ROOM-2, AGT-4",
+    refs: "ROOM-2 · AGT-4",
     run: async (eng, gen, existing) => {
       const cross = existing ? crossOf(existing) : 71;
       const e = await redEvent(
@@ -711,9 +711,9 @@ export const SCENARIOS: Scenario[] = [
       eng.update(e.id, {
         scenario: SMOKE_VARIANT,
         parties: [
-          partyOf("humanA", "a", "American Satellite Dynamics (synthetic)", "US"),
-          partyOf("humanB", "b", "Jade Orbit (synthetic)", "PRC"),
-          partyOf("humanC", "affected", "Sever Imaging (synthetic)", "CIS"),
+          partyOf("humanA", "a", "American Satellite Dynamics", "US"),
+          partyOf("humanB", "b", "Jade Orbit", "PRC"),
+          partyOf("humanC", "affected", "Sever Imaging", "CIS"),
         ],
       });
       await analyze(eng, gen, eng.event(e.id)!, cross);
@@ -956,7 +956,7 @@ const CANDIDATES: {
     missM: 165,
     tcaInH: 19,
     crossDeg: 71,
-    b: { name: "JILIN-1 (SYN)", operator: "Jade Orbit (synthetic)", owner: "PRC" },
+    b: { name: "JILIN-1", operator: "Jade Orbit", owner: "PRC" },
     source: "SOCRATES + CDM",
     confidence: { level: "high", why: "Matched CDM and SOCRATES; ASD × Jade pair with Sever in the graze volume" },
   },
@@ -966,7 +966,7 @@ const CANDIDATES: {
   { variant: "checker", salt: 19, pc: 1.9e-4, missM: 210, tcaInH: 36, crossDeg: 80, b: { name: "KANOPUS-V9 (SYN)", operator: "Sever Imaging (synthetic)", owner: "CIS" }, source: "SOCRATES + CDM", confidence: { level: "high", why: "Both sources agree within 40 m" } },
   { variant: "happy", salt: 7, pc: 2.2e-4, missM: 240, tcaInH: 44, crossDeg: 72, b: { name: "ORLAN-2 (SYN)", operator: "Sever Imaging (synthetic)", owner: "CIS" }, source: "CDM", confidence: { level: "medium", why: "CDM only; our screening agrees within 300 m" } },
   { variant: "noagree", salt: 29, pc: 1.4e-4, missM: 260, tcaInH: 18, crossDeg: 66, b: { name: "AIST-4 (SYN)", operator: "Sever Imaging (synthetic)", owner: "CIS" }, source: "SOCRATES", confidence: { level: "low", why: "No operator ephemeris; GP element set is 3 days old" } },
-  { variant: "happy", salt: 41, pc: 6.0e-5, missM: 640, tcaInH: 58, crossDeg: 88, b: { name: "TALON-5 (SYN)", operator: "Talon Orbital (synthetic)", owner: "UK" }, source: "SOCRATES", confidence: { level: "medium", why: "Yellow: below the action line, trend flat" } },
+  { variant: "happy", salt: 41, pc: 6.0e-5, missM: 640, tcaInH: 58, crossDeg: 88, b: { name: "TALON-5", operator: "Talon Orbital", owner: "UK" }, source: "SOCRATES", confidence: { level: "medium", why: "Yellow: below the action line, trend flat" } },
 ];
 
 const variantOf = new Map<string, string>();
@@ -992,7 +992,7 @@ export function runScan() {
           a,
           aOperator:
             c.variant === "trilateral"
-              ? "American Satellite Dynamics (synthetic)"
+              ? "American Satellite Dynamics"
               : a.category === "starlink"
                 ? "SpaceX Starlink"
                 : a.owner,
@@ -1011,9 +1011,9 @@ export function runScan() {
         if (c.variant === "trilateral") {
           eng.update(e.id, {
             parties: [
-              partyOf("humanA", "a", "American Satellite Dynamics (synthetic)", "US"),
-              partyOf("humanB", "b", "Jade Orbit (synthetic)", "PRC"),
-              partyOf("humanC", "affected", "Sever Imaging (synthetic)", "CIS"),
+              partyOf("humanA", "a", "American Satellite Dynamics", "US"),
+              partyOf("humanB", "b", "Jade Orbit", "PRC"),
+              partyOf("humanC", "affected", "Sever Imaging", "CIS"),
             ],
           });
         }

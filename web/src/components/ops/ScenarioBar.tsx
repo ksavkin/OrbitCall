@@ -9,11 +9,13 @@ import { useOps } from "@/lib/ops/store";
 import { sfx } from "@/lib/sound";
 import { useOrbit } from "@/lib/store";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { isSmokeDemo } from "@/lib/ops/smoke";
 
 const SPEEDS = [1, 2, 4];
 
-/** Dev-only controls for the simulator: pick a user story, run it, pace it. */
+/** Controls to pick a case story, run it, and pace the clock. */
 export function ScenarioBar() {
+  const smoke = isSmokeDemo();
   const scenario = useOps((s) => s.scenario);
   const done = useOps((s) => s.scenarioDone);
   const playing = useOps((s) => s.playing);
@@ -61,7 +63,7 @@ export function ScenarioBar() {
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             className="glass glass-strong absolute bottom-[calc(100%+8px)] left-0 w-[340px] overflow-hidden rounded-[13px] p-1"
           >
-            <div className="eyebrow px-2.5 pb-1 pt-2">User stories</div>
+            <div className="eyebrow px-2.5 pb-1 pt-2">{smoke ? "Cases" : "User stories"}</div>
             {SCENARIOS.map((s) => (
               <button
                 key={s.id}
@@ -84,9 +86,11 @@ export function ScenarioBar() {
       </AnimatePresence>
 
       <div className="glass relative flex h-10 items-center gap-1 rounded-[13px] px-1">
-        <span className="mono ml-1.5 mr-1 rounded-[4px] px-1 py-px text-[9px] font-medium uppercase tracking-[0.12em] text-orange shadow-[inset_0_0_0_1px_rgba(255,159,64,0.28)]">
-          Dev
-        </span>
+        {!smoke && (
+          <span className="mono ml-1.5 mr-1 rounded-[4px] px-1 py-px text-[9px] font-medium uppercase tracking-[0.12em] text-orange shadow-[inset_0_0_0_1px_rgba(255,159,64,0.28)]">
+            Dev
+          </span>
+        )}
         <button
           className="btn h-7 max-w-[220px] gap-1.5 px-2 text-[11.5px]"
           onClick={() => {

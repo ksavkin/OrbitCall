@@ -161,7 +161,7 @@ function AuditBody({ companyName }: { companyName: string }) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="text-[16px] font-semibold text-white">Inbox</h1>
-              {dev && rows.length > 0 && <Chip color="var(--orange)" size="sm">Synthetic</Chip>}
+              {dev && !isSmokeDemo() && rows.length > 0 && <Chip color="var(--orange)" size="sm">Synthetic</Chip>}
             </div>
             <p className="mt-1 text-[12.5px] text-neutral-500">{companyName} · notifications and the shared record, newest first</p>
           </div>

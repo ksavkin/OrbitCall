@@ -4,20 +4,20 @@ import { DEMO_ACCOUNTS } from "@/components/auth/session";
 import { useOps } from "./store";
 import type { ConjunctionEvent, Party } from "./types";
 
-/** Shared LiveKit / sim room name for the rehearsed three-operator smoke case. */
+/** Shared LiveKit room name for the three-operator recording. */
 export const SMOKE_ROOM = "smoke-trilateral";
 export const SMOKE_CHANNEL = "orbitcall.smoke";
 export const SMOKE_STORAGE = "orbitcall.smoke.v1";
 
-/** First red case after Run scan in smoke mode (US × CN, RU invited). */
+/** First red case after Run scan (US × CN, RU invited). */
 export const SMOKE_VARIANT = "trilateral";
 
-type SmokeInvite = {
+export type SmokeInvite = {
   eventId: string;
   pair: string;
   openedAt: number;
   hostUserId: string;
-  /** Snapshot the guests hydrate so every laptop sees the same cards without Convex. */
+  /** Snapshot the guests hydrate so every laptop sees the same cards. */
   event: ConjunctionEvent;
 };
 
@@ -30,7 +30,7 @@ function envSmoke() {
   return process.env.NEXT_PUBLIC_SMOKE_DEMO === "1" || process.env.NEXT_PUBLIC_SMOKE_DEMO === "true";
 }
 
-/** Smoke demo: Dev simulator on Vercel (and localhost) for the Cal Hacks recording. */
+/** Product recording build (Vercel env or ?smoke=1). */
 export function isSmokeDemo() {
   if (typeof window === "undefined") return envSmoke();
   if (envSmoke()) return true;
@@ -40,7 +40,7 @@ export function isSmokeDemo() {
   return false;
 }
 
-/** Which decision side this demo account plays in the smoke case. */
+/** Which decision side this demo account plays. */
 export function smokeSideFor(userId: string | null | undefined): "a" | "b" | "affected" | null {
   if (userId === "demo-us") return "a";
   if (userId === "demo-cn") return "b";
@@ -78,7 +78,18 @@ function writeStored(invite: SmokeInvite | null) {
   } catch {}
 }
 
-/** Host (US) publishes the open room so CN/RU tabs and same-origin windows see Accept. */
+/** Optional Convex publisher registered by SmokeBridge (cross-laptop). */
+let remotePublish: ((invite: SmokeInvite) => void) | null = null;
+export function setSmokeInvitePublisher(fn: ((invite: SmokeInvite) => void) | null) {
+  remotePublish = fn;
+}
+
+/** Apply an invite from Convex / BroadcastChannel into local storage for Accept. */
+export function ingestSmokeInvite(invite: SmokeInvite) {
+  writeStored(invite);
+}
+
+/** Host (US) publishes the open room so CN/RU see the invite toast and Accept. */
 export function publishSmokeInvite(event: ConjunctionEvent, hostUserId: string) {
   const invite: SmokeInvite = {
     eventId: event.id,
@@ -91,6 +102,7 @@ export function publishSmokeInvite(event: ConjunctionEvent, hostUserId: string) 
   const ch = channel();
   ch?.postMessage({ type: "invite", invite } satisfies SmokeMsg);
   ch?.close();
+  remotePublish?.(invite);
   return invite;
 }
 
@@ -98,14 +110,14 @@ export function readSmokeInvite(): SmokeInvite | null {
   return readStored();
 }
 
-/** Frozen guest case when the host invite has not reached this browser (other laptop). Cards match the smoke story. */
+/** Frozen guest case when the host invite has not reached this browser yet. */
 function guestTemplate(): ConjunctionEvent {
   const tca = Date.now() + 19 * 3600_000;
   const burnAt = tca - 6 * 3600_000;
   const parties: Party[] = [
-    { id: "humanA", role: "a", operator: "American Satellite Dynamics (synthetic)", owner: "US", country: "us", language: "English" },
-    { id: "humanB", role: "b", operator: "Jade Orbit (synthetic)", owner: "PRC", country: "cn", language: "Chinese" },
-    { id: "humanC", role: "affected", operator: "Sever Imaging (synthetic)", owner: "CIS", country: "ru", language: "Russian" },
+    { id: "humanA", role: "a", operator: "American Satellite Dynamics", owner: "US", country: "us", language: "English" },
+    { id: "humanB", role: "b", operator: "Jade Orbit", owner: "PRC", country: "cn", language: "Chinese" },
+    { id: "humanC", role: "affected", operator: "Sever Imaging", owner: "CIS", country: "ru", language: "Russian" },
   ];
   return {
     id: "CE-SMOKE1",
@@ -113,16 +125,16 @@ function guestTemplate(): ConjunctionEvent {
       norad: 56191,
       name: "HAWK-7A",
       owner: "US",
-      operator: "American Satellite Dynamics (synthetic)",
+      operator: "American Satellite Dynamics",
       kind: "payload",
       catalogIndex: null,
       synthetic: false,
     },
     b: {
       norad: 90861,
-      name: "JILIN-1 (SYN)",
+      name: "JILIN-1",
       owner: "PRC",
-      operator: "Jade Orbit (synthetic)",
+      operator: "Jade Orbit",
       kind: "payload",
       catalogIndex: null,
       synthetic: true,
@@ -136,7 +148,10 @@ function guestTemplate(): ConjunctionEvent {
     relVelKms: 12.4,
     risk: "red",
     trend: "rising",
-    pcHistory: [{ t: Date.now() - 6 * 3600_000, pc: 2e-4 }, { t: Date.now(), pc: 7.4e-4 }],
+    pcHistory: [
+      { t: Date.now() - 6 * 3600_000, pc: 2e-4 },
+      { t: Date.now(), pc: 7.4e-4 },
+    ],
     status: "communication",
     agentsWorking: false,
     where: { lat: 41.2, lon: 116.4, altKm: 480 },
@@ -204,7 +219,7 @@ function guestTemplate(): ConjunctionEvent {
     agentPick: { mover: "a", action: "raise" },
     approvals: { a: "pending", b: "pending" },
     summary: [
-      "HAWK-7A × JILIN-1 (SYN), TCA in ~19 h, miss 165 m, Pc 7.4×10⁻⁴.",
+      "HAWK-7A × JILIN-1, TCA in ~19 h, miss 165 m, Pc 7.4×10⁻⁴.",
       "Both GP and a public CDM list the pair; epochs within 2 minutes.",
       "ASD electric thruster can raise 0.07 m/s inside policy fuel.",
       "Jade imaging window blocks a Jade burn this afternoon.",
@@ -213,12 +228,12 @@ function guestTemplate(): ConjunctionEvent {
     parties,
     createdAt: Date.now(),
     scenario: SMOKE_VARIANT,
-    confidence: { level: "high", why: "Matched CDM and SOCRATES; three-operator smoke case" },
+    confidence: { level: "high", why: "Matched CDM and SOCRATES; three operators on the case" },
     reference: { status: "matched", runAt: Date.now() - 7 * 3600_000, tca: tca - 1000, missM: 170, maxProb: 7.1e-4 },
   };
 }
 
-/** Guest Accept: load the shared case, open Decision Center, set actAs for this account. */
+/** Guest Accept: load the shared case, open Decision Center, join the meeting. */
 export function acceptSmokeInvite(userId: string) {
   const invite = readStored();
   const side = smokeSideFor(userId);
@@ -229,7 +244,7 @@ export function acceptSmokeInvite(userId: string) {
     parties.push({
       id: "humanC",
       role: "affected",
-      operator: "Sever Imaging (synthetic)",
+      operator: "Sever Imaging",
       owner: "CIS",
       country: "ru",
       language: "Russian",
@@ -249,7 +264,7 @@ export function acceptSmokeInvite(userId: string) {
     tab: "decision",
     incidentView: "expanded",
     actAs,
-    autopilot: false,
+    autopilot: side === "affected",
     alert: null,
   });
   if (!invite) {
@@ -267,7 +282,7 @@ export function acceptSmokeInvite(userId: string) {
   return next;
 }
 
-/** Keep guest tabs in sync when the US host republishes (optional). */
+/** Keep guest tabs in sync when the US host republishes. */
 export function subscribeSmokeInvites(onInvite: (invite: SmokeInvite) => void) {
   const ch = channel();
   if (!ch) return () => {};
@@ -278,7 +293,6 @@ export function subscribeSmokeInvites(onInvite: (invite: SmokeInvite) => void) {
     onInvite(msg.invite);
   };
   ch.addEventListener("message", onMsg);
-  // same-tab storage events do not fire; cross-tab localStorage does
   const onStorage = (e: StorageEvent) => {
     if (e.key !== SMOKE_STORAGE || !e.newValue) return;
     try {
@@ -293,7 +307,7 @@ export function subscribeSmokeInvites(onInvite: (invite: SmokeInvite) => void) {
   };
 }
 
-/** Turn Dev on for the smoke recording (localhost or Vercel with NEXT_PUBLIC_SMOKE_DEMO). */
+/** Keep the recording case path on. */
 export function ensureSmokeDev() {
   if (!isSmokeDemo()) return;
   if (!useOps.getState().dev) useOps.getState().set({ dev: true, autopilot: false });
