@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight, Check, CheckCheck, CircleDot, Hourglass, Radar, RotateCcw, Sparkles, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CallMessage } from "@/call/api";
+import { endActiveCall } from "@/call/session";
 import { fmtMiss, fmtMs, fmtOdds, fmtUsd, fmtWhen } from "@/lib/ops/format";
 import { runScan } from "@/lib/ops/scenarios";
 import { sfx } from "@/lib/sound";
@@ -348,8 +349,10 @@ function Report({ e }: { e: ConjunctionEvent }) {
         <button
           className="btn btn-ghost-line ml-auto h-8 gap-1.5 px-3 text-[12px]"
           onClick={() => {
-            useOps.setState({ resolved: null, incident: null, incidentView: "expanded", tab: "orbit" });
-            runScan();
+            void endActiveCall().finally(() => {
+              useOps.setState({ resolved: null, incident: null, incidentView: "expanded", tab: "orbit" });
+              runScan();
+            });
           }}
         >
           <Radar size={12} /> Run another scan
@@ -358,7 +361,9 @@ function Report({ e }: { e: ConjunctionEvent }) {
           className="btn btn-primary h-8 gap-1.5 px-3.5 text-[12px]"
           onClick={() => {
             sfx.close();
-            useOps.setState({ resolved: null, incident: null, incidentView: "expanded", tab: "orbit" });
+            void endActiveCall().finally(() => {
+              useOps.setState({ resolved: null, incident: null, incidentView: "expanded", tab: "orbit" });
+            });
           }}
         >
           <Check size={12} /> Close case

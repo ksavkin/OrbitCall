@@ -9,9 +9,10 @@ import { callError } from "./call/core";
 export const SMOKE_ROOM_ID = "smoke-trilateral";
 const INVITE_SLOT = "live";
 
+/** Fixed voice gender per seat — never rotate; worker TTS uses this attribute every phrase. */
 const MEMBERS = [
   { key: "en" as const, lang: "en" as const, name: "Alex Carter", companyId: "asd", userId: "demo-us", voice: "female" as const },
-  { key: "ru" as const, lang: "ru" as const, name: "Irina Volkova", companyId: "sever", userId: "demo-ru", voice: "male" as const },
+  { key: "ru" as const, lang: "ru" as const, name: "Irina Volkova", companyId: "sever", userId: "demo-ru", voice: "female" as const },
   { key: "zh" as const, lang: "zh" as const, name: "Wei Zhang", companyId: "jade", userId: "demo-cn", voice: "female" as const },
 ];
 

@@ -12,6 +12,7 @@ import { callApi, type CallError, type CallMessage, type Lang } from "./api";
 import { RootAudio } from "./audio";
 import { callDebugEnabled, watchCallDebug } from "./debug";
 import { pickable, resolveRealDeviceId } from "./devices";
+import { registerActiveCall } from "./session";
 import { TRANSLATOR_IDENTITY, isLang, parseTranslationTrack, shouldHear } from "./tracks";
 
 // The live call of one coordination room, headless (team spec §5): join from a click, publish the microphone, hear only
@@ -254,7 +255,17 @@ export function useCoordinationCall({ roomId, devToken, spaceToTalk = true }: {
     stopDebugRef.current = null;
     audioRef.current?.dispose();
     audioRef.current = null;
-    if (room) void room.disconnect();
+    if (room) {
+      // stop local mic tracks first so the browser does not keep the session open
+      for (const pub of room.localParticipant.trackPublications.values()) {
+        try {
+          pub.track?.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
+      void room.disconnect(true);
+    }
     setMe(null);
     setRole(null);
     setMicOn(false);
@@ -407,14 +418,20 @@ export function useCoordinationCall({ roomId, devToken, spaceToTalk = true }: {
   }, [beat, byRoom, canChooseSpeaker, hears, mint, readDevices, reconcile, reconcileAll, refresh, setMic, teardown]);
 
   const leave = useCallback(async () => {
-    if (!roomRef.current) return;
+    if (!roomRef.current && state !== "joining" && state !== "joined" && state !== "reconnecting") return;
     leavingRef.current = true;
     teardown();
     setState("left");
     const p = presence.current;
     // Independent: a failed inCall update must not keep the presence row alive.
     await Promise.allSettled([p.setInCall({ ...p.byRoom, inCall: false }), p.presenceLeave(p.byRoom)]);
-  }, [teardown]);
+  }, [state, teardown]);
+
+  // so Close case / resolution can hang up without relying only on React unmount order
+  useEffect(() => {
+    if (state !== "joined" && state !== "reconnecting" && state !== "joining") return;
+    return registerActiveCall(leave);
+  }, [leave, state]);
 
   const startTalking = useCallback(() => { if (micModeRef.current === "hold") setMic(true); }, [setMic]);
   const stopTalking = useCallback(() => { if (micModeRef.current === "hold") setMic(false); }, [setMic]);

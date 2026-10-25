@@ -350,7 +350,7 @@ function MicControls({ c, disabled }: { c: StageCall; disabled: boolean }) {
           </Tooltip>
         ))}
       </div>
-      <VoicePick c={c} />
+      {!isSmokeDemo() && <VoicePick c={c} />}
       {c.micMode === "open" && (
         <Tooltip label={c.micOn ? "Mute" : "Unmute"}>
           <button

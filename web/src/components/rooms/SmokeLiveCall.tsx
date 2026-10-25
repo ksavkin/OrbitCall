@@ -107,13 +107,20 @@ function LiveJoined({
 }) {
   const [mode, setMode] = useState<StageMode>("voice");
   const call = useCoordinationCall({ roomId, devToken, spaceToTalk: mode === "voice" && !lockedBy });
+  const closed = !!e.outcome?.resolvedAt;
 
   const joinedOnce = useRef(false);
   useEffect(() => {
-    if (!compact || joinedOnce.current || call.state !== "idle") return;
+    if (!compact || closed || joinedOnce.current || call.state !== "idle") return;
     joinedOnce.current = true;
     void call.join();
-  }, [compact, call]);
+  }, [compact, closed, call]);
+
+  // resolution / closed case: hang up so LiveKit sessions do not stay open
+  useEffect(() => {
+    if (!closed) return;
+    if (call.state === "joined" || call.state === "reconnecting" || call.state === "joining") void call.leave();
+  }, [closed, call]);
 
   const inCallKey = call.participants.filter((p) => !p.isTranslator).map((p) => p.identity.replace(/^user-/, "")).join(",");
   const speakingKey = call.participants.filter((p) => p.speaking).map((p) => p.identity.replace(/^user-/, "")).join(",");
