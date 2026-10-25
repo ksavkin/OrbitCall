@@ -8,7 +8,7 @@ import { maneuverStatus } from "./schema/schedule";
 import { verificationResult } from "./schema/records";
 import { scanPhase, scanStatus } from "./schema/scans";
 
-// The large display's read model: spec §3.2 `demo.publicView`, hosted here as `api.observer.publicView` because
+// The large display's read model: spec §3.1 `demo.publicView`, hosted here as `api.observer.publicView` because
 // issue #6 allocates this module (the same precedent as `fleet.*` in fleetQuery.ts). A provisioned observer role
 // alone is insufficient: the server grants one specific run in its scalar manifest, and only that run is readable.
 
@@ -52,7 +52,7 @@ const observerEvent = v.object({
   simulated: v.boolean(),
   candidates: v.array(observerCard),
   selection: v.union(observerCard, v.null()),
-  // Counts only: who signed is shared in the room record, not on the public display.
+  // Counts of valid current signatures only; per-side approval state and signer identities are not projected.
   approval: v.object({ approved: v.number(), required: v.number(), allRequiredApproved: v.boolean() }),
   jobs: v.array(observerJob),
   verification: v.union(observerVerification, v.null()),
