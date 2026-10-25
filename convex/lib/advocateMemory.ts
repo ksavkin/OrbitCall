@@ -17,6 +17,8 @@ export interface MemoryItemDraft { companyId: string; demoRunId: string; text: s
 const MAX_TEXT = 280, MAX_SOURCE_MESSAGES = 20;
 // Source event IDs reach shareable text, so they must be opaque identifiers, never prose.
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_:.-]{0,127}$/;
+// Control characters, Unicode line breaks and bidi controls can split or visually reorder quoted text.
+const NOT_SINGLE_LINE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 // "acceptable" describes risk, not a decision, so only accept/accepted/acceptance count.
 const APPROVAL = new RegExp([
   "approv", "authori[sz]", "\\bsign(?:ed|s|ing)?[\\s-]*off\\b", "signoff", "\\bsign(?:ed|s)?\\b", "veto", "consent", "\\bagree",
@@ -45,7 +47,7 @@ function sourcesValid(sourceEventId: unknown, sourceMessageIds: unknown) {
 }
 
 function textProblem(value: unknown): AnalystError | null {
-  if (typeof value !== "string" || !value.trim() || value.trim().length > MAX_TEXT || /[\u0000-\u001f\u007f]/.test(value)) {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > MAX_TEXT || NOT_SINGLE_LINE.test(value)) {
     return new AnalystError("INVALID_OUTPUT", `Memory text must be a single line of 1 to ${MAX_TEXT} characters.`);
   }
   // Fullwidth letters and digits must not slip past the ASCII patterns.

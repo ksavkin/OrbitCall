@@ -212,6 +212,15 @@ describe("memory items", () => {
     rejects(() => checkMemoryItem({ ...draft, sourceMessageIds: ["msg-1", "msg-1"] }));
     rejects(() => checkMemoryItem({ ...draft, text: "P2 approved." }));
   });
+
+  it.each([
+    ["next line", "\u0085"], ["C1 control", "\u009b"], ["line separator", "\u2028"], ["paragraph separator", "\u2029"],
+    ["bidi override", "\u202e"], ["bidi embedding", "\u202a"], ["bidi isolate", "\u2066"], ["pop isolate", "\u2069"],
+  ])("rejects a %s in memory text, in drafts and in recalled entries", (_, char) => {
+    const text = `Prefers burns${char} after the imaging pass.`;
+    rejects(() => checkMemoryItem({ companyId: "company-a", demoRunId: "run-1", text, sourceEventId: "event-1", sourceMessageIds: ["msg-1"] }));
+    expect(memoryNote(available(entry({ text })), "company-a").status).toBe("none");
+  });
 });
 
 describe("memory does not approve", () => {
