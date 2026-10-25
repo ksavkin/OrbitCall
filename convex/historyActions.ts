@@ -18,11 +18,11 @@ export async function exportWith(db: TigerSql, observation: TigerObservation): P
   return writeObservations(db, [observation]);
 }
 
-// Every real observation of the event, and simulated observations of its current demo run only.
+// Real observations carry no run; simulated ones are read for the event's current demo run only.
 export async function readHistory(db: TigerSql, eventId: string, demoRunId: string | null): Promise<Pick<TigerSeries, "real" | "simulated">> {
-  const all = await readSeries(db, { eventId });
-  const run = await readSeries(db, { eventId, runId: demoRunId });
-  return { real: all.real, simulated: run.simulated };
+  const real = await readSeries(db, { eventId, runId: null });
+  const run = demoRunId === null ? real : await readSeries(db, { eventId, runId: demoRunId });
+  return { real: real.real, simulated: run.simulated };
 }
 
 export const exportObservation = internalAction({
@@ -53,11 +53,11 @@ export const refreshSeries = internalAction({
     try {
       series = await withTiger(db => readHistory(db, eventId, scope.demoRunId), connectTiger);
     } catch (error) {
-      await ctx.runMutation(internal.history.markSeriesFailed, { eventId, ...safeTigerFailure(error) });
+      await ctx.runMutation(internal.history.markSeriesFailed, { eventId, ...safeTigerFailure(error), fetchedAt, baseVersion: scope.baseVersion });
       return null;
     }
     const points = [...toSeriesPoints(series.real), ...toSeriesPoints(series.simulated)];
-    await ctx.runMutation(internal.history.storeSeries, { eventId, points, fetchedAt });
+    await ctx.runMutation(internal.history.storeSeries, { eventId, points, fetchedAt, baseVersion: scope.baseVersion });
     return null;
   },
 });

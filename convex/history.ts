@@ -83,13 +83,21 @@ export const loadExport = internalQuery({
 });
 
 // Simulated points are read for the event's current demo run only, so an old run cannot look like fresh history.
+// `baseVersion` is the cache version the read starts from; with the start time it orders reads (see isOlderRead).
 export const seriesScope = internalQuery({
   args: { eventId: v.id("events") },
   handler: async (ctx, { eventId }) => {
     const event = await ctx.db.get(eventId);
-    return event && { demoRunId: event.demoRunId ?? null };
+    if (!event) return null;
+    const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
+    return { demoRunId: event.demoRunId ?? null, baseVersion: cache?.seriesVersion ?? 0 };
   },
 });
+
+// A read is older than the cache when it started earlier, or in the same millisecond but before the cached version
+// was published. Such a read can neither replace the points nor mark them stale.
+const isOlderRead = (cache: Doc<"historySeries"> | null, fetchedAt: number, baseVersion: number) =>
+  cache !== null && (cache.fetchedAt > fetchedAt || (cache.fetchedAt === fetchedAt && cache.seriesVersion > baseVersion));
 
 export const markExported = internalMutation({
   args: { exportId: v.id("observationExports") },
@@ -120,11 +128,13 @@ export const markFailed = internalMutation({
 });
 
 export const markSeriesFailed = internalMutation({
-  args: { eventId: v.id("events"), code: v.string(), message: v.string() },
-  returns: v.null(),
-  handler: async (ctx, { eventId, code, message }) => {
+  args: { eventId: v.id("events"), code: v.string(), message: v.string(), fetchedAt: v.number(), baseVersion: v.number() },
+  returns: v.object({ marked: v.boolean() }),
+  handler: async (ctx, { eventId, code, message, fetchedAt, baseVersion }) => {
+    const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
+    if (isOlderRead(cache, fetchedAt, baseVersion)) return { marked: false };
     await markStale(ctx, eventId, failureText(code, message));
-    return null;
+    return { marked: true };
   },
 });
 
@@ -136,17 +146,16 @@ async function markStale(ctx: MutationCtx, eventId: Id<"events">, error: string)
 }
 
 /**
- * Publishes one Tiger read as the next cache version. `fetchedAt` is when the read started; a read that started
- * before the cached one is dropped. The cache stays stale while any of the event's exports is failed or still
- * pending, because Tiger may then lack an observation that Convex holds; the chart never shows fresh while a point
- * is missing.
+ * Publishes one Tiger read as the next cache version, unless it is older than the cached read (isOlderRead).
+ * The cache stays stale while any of the event's exports is failed or still pending, because Tiger may then lack
+ * an observation that Convex holds; the chart never shows fresh while a point is missing.
  */
 export const storeSeries = internalMutation({
-  args: { eventId: v.id("events"), points: v.array(historyPoint), fetchedAt: v.number() },
+  args: { eventId: v.id("events"), points: v.array(historyPoint), fetchedAt: v.number(), baseVersion: v.number() },
   returns: v.object({ stored: v.boolean() }),
-  handler: async (ctx, { eventId, points, fetchedAt }) => {
+  handler: async (ctx, { eventId, points, fetchedAt, baseVersion }) => {
     const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
-    if (cache && cache.seriesVersion > 0 && cache.fetchedAt > fetchedAt) return { stored: false };
+    if (isOlderRead(cache, fetchedAt, baseVersion)) return { stored: false };
     const unsettled = (state: "failed" | "pending") => ctx.db.query("observationExports").withIndex("by_event", q => q.eq("eventId", eventId))
       .filter(q => q.eq(q.field("exportState"), state)).first();
     const failed = await unsettled("failed");
