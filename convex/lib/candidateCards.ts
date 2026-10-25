@@ -52,11 +52,14 @@ export function parseCandidatesResponse(value: unknown): OrbitCandidatesResponse
   return value as unknown as OrbitCandidatesResponse;
 }
 
+export type StoredCandidate = Candidate & { _id?: string; _creationTime?: number; eventId?: string };
+
 export interface CardContext {
   facts: EventFacts;                  // from convex/lib/analyst.ts
   activeSide: Side;                   // the side whose operator acts
   counterpartSide: Side | null;       // null for debris
-  previous: Candidate[];              // last published revisions, for revision bumping
+  // Every stored revision for this event (all candidateRevisions via by_event_candidate_revision), not only the current set.
+  previous: StoredCandidate[];
   nowMs: number;
   eventId: string;                    // the service must echo these three
   evidenceVersion: string;
@@ -90,11 +93,14 @@ function canonical(value: unknown): string {
   }
   return JSON.stringify(value);
 }
-const sameContent = (a: Candidate, b: Candidate) => {
-  const { revision: _a, ...left } = a;
-  const { revision: _b, ...right } = b;
-  return canonical(left) === canonical(right);
-};
+// Same rule as candidates.publish: only the card's own keys count, so stored document fields are ignored.
+const sameContent = (card: Candidate, prior: StoredCandidate) => (Object.keys(card) as (keyof Candidate)[])
+  .every(key => key === "revision" || canonical(card[key]) === canonical(prior[key]));
+function latestRevision(previous: StoredCandidate[], candidateId: string) {
+  let latest: StoredCandidate | undefined;
+  for (const p of previous) if (p.candidateId === candidateId && (!latest || p.revision > latest.revision)) latest = p;
+  return latest;
+}
 
 function label(c: OrbitCandidatesResponse["candidates"][number], tcaUtc: string): string {
   if (c.kind === "wait") return "Wait for update";
@@ -131,7 +137,7 @@ export function mapCandidates(response: OrbitCandidatesResponse, context: CardCo
       estimatedFuelKg: c.estimatedFuelKg, missBeforeKm: facts.missKm, missAfterKm: c.missAfterKm, indicative: true,
       reviewCondition: c.reviewCondition, assumptions: [...c.assumptions], simulated,
     };
-    const prior = previous.find(p => p.candidateId === candidateId);
+    const prior = latestRevision(previous, candidateId);
     if (prior) card.revision = sameContent(card, prior) ? prior.revision : prior.revision + 1;
     cards.push(card);
   }

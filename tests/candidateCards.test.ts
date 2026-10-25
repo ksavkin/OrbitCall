@@ -4,7 +4,7 @@ import {
   mapCandidates, parseCandidatesResponse, stableCandidateId,
   type CardContext, type OrbitCandidatesResponse,
 } from "../convex/lib/candidateCards";
-import { validateCandidates } from "../convex/lib/policies";
+import { validateCandidates, type Candidate } from "../convex/lib/policies";
 import { advocateEvent } from "../fixtures/policies";
 import { FIXTURE_NOW } from "../fixtures/events";
 import type { EventFacts } from "../convex/lib/analyst";
@@ -173,6 +173,74 @@ describe("mapCandidates", () => {
       const [first] = mapCandidates(response([maneuver()]), context());
       const cards = mapCandidates(response([maneuver(), maneuver({ deltaVMs: 0.1 })]), context({ previous: [{ ...first, revision: 4 }] }));
       expect(cards.map(c => c.revision)).toEqual([4, 1]);
+    });
+    it("bumps the revision when only the simulated label changes", () => {
+      const real = response([maneuver({ movingObjectId: "12345" })]);
+      const [first] = mapCandidates(real, context({ facts: realFacts }));
+      const [flagged] = mapCandidates({ ...real, simulated: true }, context({ facts: realFacts, previous: [first] }));
+      expect(flagged).toMatchObject({ candidateId: first.candidateId, simulated: true, revision: 2 });
+    });
+  });
+
+  describe("revision sequence against publish's rule", () => {
+    // In-memory copy of candidates.publish: a revision at or below the latest stored one must be identical to it.
+    type Stored = Candidate & { _id: string; _creationTime: number; eventId: string };
+    function store() {
+      const rows: Stored[] = [];
+      return {
+        rows,
+        publish(cards: Candidate[]) {
+          for (const c of cards) {
+            const latest = rows.filter(r => r.candidateId === c.candidateId).sort((a, b) => b.revision - a.revision)[0];
+            if (latest && c.revision <= latest.revision) {
+              if (c.revision !== latest.revision || Object.keys(c).some(k => JSON.stringify(c[k as keyof Candidate]) !== JSON.stringify(latest[k as keyof Candidate]))) {
+                throw new Error("STALE_REVISION");
+              }
+            } else rows.push({ ...c, _id: `row-${rows.length}`, _creationTime: rows.length, eventId: "event-1" });
+          }
+          return cards;
+        },
+      };
+    }
+    const run = (s: ReturnType<typeof store>, items: Item[], facts: EventFacts = advocateEvent) =>
+      s.publish(mapCandidates(response(items), context({ facts, previous: s.rows })));
+
+    it("brings a dropped wait card back with a new revision", () => {
+      const s = store();
+      expect(run(s, [maneuver(), wait()]).map(c => c.revision)).toEqual([1, 1]);
+      run(s, [maneuver()]);
+      const back = run(s, [maneuver(), wait({ reviewCondition: "Reassess after the next tracking pass." })]);
+      expect(back.map(c => c.revision)).toEqual([1, 2]);
+    });
+    it("bumps maneuvers that return after the miss distance changed", () => {
+      const s = store(), second = maneuver({ deltaVMs: 0.1 });
+      run(s, [maneuver(), second]);
+      run(s, [maneuver()]);
+      const again = run(s, [maneuver(), second], { ...advocateEvent, missKm: 0.25 });
+      expect(again.map(c => c.revision)).toEqual([2, 2]);
+      expect(again.every(c => c.missBeforeKm === 0.25)).toBe(true);
+    });
+    it("does not bump an unchanged response published twice", () => {
+      const s = store();
+      const first = run(s, [maneuver(), wait()]);
+      expect(run(s, [maneuver(), wait()])).toEqual(first);
+      expect(s.rows).toHaveLength(2);
+    });
+    it("accepts stored documents as previous revisions", () => {
+      const s = store();
+      run(s, [maneuver()]);
+      expect(s.rows[0]).toHaveProperty("_id");
+      const [card] = mapCandidates(response([maneuver()]), context({ previous: s.rows }));
+      expect(card.revision).toBe(1);
+      expect(card).not.toHaveProperty("_id");
+    });
+    it("bumps from the highest stored revision", () => {
+      const [first] = mapCandidates(response([maneuver()]), context());
+      const previous = [first, { ...first, revision: 2, missAfterKm: 1.9 }];
+      const [changed] = mapCandidates(response([maneuver({ missAfterKm: 2.5 })]), context({ previous }));
+      expect(changed.revision).toBe(3);
+      const [matchesLatest] = mapCandidates(response([maneuver({ missAfterKm: 1.9 })]), context({ previous }));
+      expect(matchesLatest.revision).toBe(2);
     });
   });
 
