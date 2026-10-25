@@ -248,8 +248,8 @@ function PartyList({ e }: { e: ConjunctionEvent }) {
         const color = state === "approved" || state === "notified" ? "var(--green)" : state === "vetoed" ? "var(--red)" : state === "countered" ? "var(--orange)" : "#737373";
         return (
           <div key={p.id} className="flex items-center gap-3">
-            <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
-              {p.country && <Flag code={p.country} h={28} />}
+            <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-[6px] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
+              {p.country && <Flag code={p.country} h={28} square />}
             </span>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[13.5px] font-medium text-white">{p.operator.replace(/\s*\(synthetic\)/i, "")}</div>
@@ -297,7 +297,8 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
   return (
     <div className="flex min-h-0 flex-col border-r border-white/[0.06]">
       {/* a fixed slot for the room's state, so changes crossfade in place instead of moving the calls */}
-      <div className={`shrink-0 px-5 pt-4 ${st?.mode === "decide" ? "thin-scroll max-h-[70%] overflow-y-auto" : ""}`}>
+      {/* the decision box scrolls inside this slot; bottom padding keeps its edge clear of the slot's edge */}
+      <div className={`shrink-0 px-5 pt-4 ${st?.mode === "decide" ? "thin-scroll max-h-[70%] overflow-y-auto pb-3" : ""}`}>
         <div className="relative min-h-[76px]">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
@@ -308,7 +309,8 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
               transition={{ duration: 0.22 }}
             >
               {st?.mode === "decide" ? (
-                <div className="overflow-hidden rounded-[16px] bg-white/[0.02] shadow-[0_0_0_1px_rgba(255,159,64,0.35),0_0_40px_-12px_rgba(255,159,64,0.4)]">
+                // no overflow-hidden here: it would stop the Approve bar from staying pinned while the plans scroll
+                <div className="rounded-[16px] bg-white/[0.02] shadow-[inset_0_0_0_1px_rgba(255,159,64,0.38),inset_0_0_32px_-14px_rgba(255,159,64,0.35)]">
                   <Decide e={e} viewer={room.viewer} now={now} embedded />
                 </div>
               ) : st?.mode === "waiting" ? (

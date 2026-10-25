@@ -75,8 +75,8 @@ export function ProposalPanel({
     <div className="text-fg">
       <div className="flex items-start gap-3 px-5 pb-3 pt-5">
         {!readOnly && (
-          <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
-            {me?.country ? <Flag code={me.country} h={36} /> : null}
+          <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-[8px] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
+            {me?.country ? <Flag code={me.country} h={36} square /> : null}
           </span>
         )}
         <div className="min-w-0 flex-1">
@@ -131,7 +131,12 @@ export function ProposalPanel({
           </div>
           <div className="px-5 pt-1.5 text-[11.5px] text-neutral-600">A message is a counter or a question. It never approves anything.</div>
 
-          <div className="mt-4 flex items-center gap-2 border-t border-white/[0.07] px-5 py-3">
+          {/* embedded in the case view the plans scroll; Approve and Veto stay pinned and visible */}
+          <div
+            className={`mt-4 flex items-center gap-2 border-t border-white/[0.07] px-5 py-3 ${
+              embedded ? "sticky bottom-0 z-10 rounded-b-[16px] bg-[rgba(13,13,15,0.97)] shadow-[inset_1px_0_0_rgba(255,159,64,0.38),inset_-1px_0_0_rgba(255,159,64,0.38),inset_0_-1px_0_rgba(255,159,64,0.38)] backdrop-blur-md" : ""
+            }`}
+          >
             {autopilot ? (
               <span className="flex items-center gap-1.5 text-[12px] text-neutral-500">
                 <Sparkles size={12} className="text-blue" /> Autopilot answers for the other side
@@ -167,7 +172,7 @@ function Approvals({ e, sel, rev }: { e: ConjunctionEvent; sel: Card | undefined
           const word = st === "approved" ? `approved ${sel?.label} · R${rev}` : st === "vetoed" ? "vetoed" : "not approved yet";
           return (
             <span key={side} className="flex items-center gap-2 text-[12.5px]">
-              <span className="overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">{p?.country && <Flag code={p.country} h={16} />}</span>
+              <span className="h-4 w-4 shrink-0 overflow-hidden rounded-[3px] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">{p?.country && <Flag code={p.country} h={16} square />}</span>
               <span className="text-neutral-200">{clean(p?.operator) || `Side ${side.toUpperCase()}`}</span>
               <span className={tone}>{word}</span>
             </span>
