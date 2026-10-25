@@ -18,6 +18,7 @@ const call = {
   start: makeFunctionReference<"mutation">("maneuvers:start"),
   reserveCommit: makeFunctionReference<"mutation">("maneuvers:reserveCommit"),
   recordCommit: makeFunctionReference<"mutation">("maneuvers:recordCommit"),
+  requestPreview: makeFunctionReference<"mutation">("maneuvers:requestPreview"),
 };
 const identity = (t: Backend, who: string) => t.withIdentity({ tokenIdentifier: `https://fixture.invalid|${who}` });
 const SHA = "a".repeat(40);
@@ -111,8 +112,19 @@ describe("prepared schedule and reads", () => {
   it("reports the absent Factory worker without inventing a preview or a committed maneuver", async () => {
     const s = await setup();
     const preview = await s.t.query(call.preview, { ref: s.selection });
-    expect(preview).toMatchObject({ workerAvailable: false, error: expect.stringContaining("WORKER_UNAVAILABLE") });
+    expect(preview).toMatchObject({ trajectory: null, intentKey: expect.stringContaining(":generation:1") });
+    expect(preview).not.toHaveProperty("workerAvailable");
+    expect(await s.t.mutation(call.requestPreview, { eventId: s.eventId })).toEqual({ status: "skipped", code: "WORKER_UNAVAILABLE" });
+    await finish(s.t);
     expect(await rows(s, "maneuvers")).toEqual([]);
+    expect((await rows(s, "log")).filter(l => l.action === "schedule_failed")).toEqual([]);
+    // A configured but unreachable worker is logged once for the intent.
+    vi.stubEnv("SCHEDULE_SERVICE_URL", "https://scheduler.test"); vi.stubEnv("SCHEDULE_SERVICE_TOKEN", "fixture-token-of-at-least-thirty-two-chars");
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("connection refused"); }));
+    expect(await s.t.mutation(call.requestPreview, { eventId: s.eventId })).toEqual({ status: "requested", code: null });
+    await finish(s.t);
+    expect((await rows(s, "log")).filter(l => l.action === "schedule_failed").map(l => l.summary)).toEqual([expect.stringMatching(/^WORKER_UNAVAILABLE/)]);
+    vi.unstubAllEnvs(); vi.stubEnv("ORBIT_SERVICE_URL", "https://orbit.test"); vi.stubEnv("ORBIT_SERVICE_TOKEN", "test-service-token");
     await approve(s);
     await expect(s.t.mutation(call.start, { ref: s.selection, expectedPinned: preview.pinned })).rejects.toMatchObject({ data: { code: "WORKER_UNAVAILABLE" } });
   });
