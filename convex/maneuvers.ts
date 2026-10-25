@@ -330,7 +330,7 @@ export const requestPreview = internalMutation({
       if (!code) throw error;
       // Otherwise approval later refuses for a preview that never comes. Once per selection; a partner that has not
       // selected yet is a normal wait.
-      const message = (error as ConvexError<{ message: string }>).data.message;
+      const message = String((error as { data?: { message?: unknown } }).data?.message ?? "");
       if (code === "SHARED_TRAJECTORY_REQUIRED" && message !== PLAN_PENDING) await auditOnce(ctx, ref, `${code}: ${message}`, intentOf(ref));
       return { status: "skipped" as const, code };
     }
