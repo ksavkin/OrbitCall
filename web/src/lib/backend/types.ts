@@ -466,7 +466,7 @@ export interface AgentLog {
 export interface HostTriggerRow {
   hostRunId: Id;
   trigger: string;
-  inputVersion: number;
+  inputVersion: string;
   attempt: number;
   status: string;
   span: unknown;

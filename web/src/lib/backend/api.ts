@@ -120,7 +120,10 @@ export const summaryEditRef = anyApi.summary.edit as unknown as Mutation<
   ByEvent & { proposalId: ProposalId; baseRevision: number; expectedGeneration?: number; changes: SummaryChanges },
   { accepted: true }
 >;
-export const revisionRequestRef = anyApi.revisions.request as unknown as Mutation<ByEvent & { hostRunId: Id }, null>;
+export const revisionRequestRef = anyApi.revisions.request as unknown as Mutation<
+  ByEvent & { hostRunId: Id },
+  { accepted: boolean; alreadyApplied: boolean }
+>;
 
 /** Agents (wiring map §4). */
 export const spansListRef = anyApi.spans.list as unknown as Query<{ eventId?: EventId; limit?: number }, PublicSpan[]>;

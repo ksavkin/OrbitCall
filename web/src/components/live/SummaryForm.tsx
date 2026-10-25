@@ -1,11 +1,10 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { anyApi, type FunctionReference } from "convex/server";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, PenLine, RotateCcw, Sparkles, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { hostTriggersRef, summaryEditRef, summaryRequestRef } from "@/lib/backend/api";
+import { hostTriggersRef, revisionRequestRef, summaryEditRef, summaryRequestRef } from "@/lib/backend/api";
 import { backendError, type BackendError } from "@/lib/backend/errors";
 import { useLive, useRealMode } from "@/lib/backend/live";
 import { QueryBoundary } from "@/lib/backend/QueryBoundary";
@@ -34,14 +33,6 @@ const field =
   "w-full min-w-0 rounded-[8px] bg-white/[0.045] px-2.5 text-[12px] text-white outline-none shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] placeholder:text-neutral-600 focus:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.28)] disabled:opacity-40";
 const input = `h-8 ${field}`;
 const invalid = "shadow-[inset_0_0_0_1px_rgba(255,90,79,0.75)]";
-
-/** revisions.request answers { accepted, alreadyApplied } (convex/revisions.ts:200-231); api.ts still types it null. */
-const revisionRequestRef = anyApi.revisions.request as unknown as FunctionReference<
-  "mutation",
-  "public",
-  { eventId: EventId; hostRunId: Id },
-  { accepted: boolean; alreadyApplied: boolean }
->;
 
 /** End-of-call summary form and its edit (wiring map §5.4). Real mode only. */
 export function SummaryFormPanel({ eventId, roomId }: { eventId: EventId; roomId: RoomId | null }) {
