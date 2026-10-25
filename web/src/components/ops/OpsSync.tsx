@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 import type { ConjItem } from "@/components/globe/conjunctions";
+import { useLive } from "@/lib/backend/live";
+import { stopWatching, watchedCase } from "@/lib/backend/workflow";
 import { engine } from "@/lib/ops/engine";
 import { realEncounter } from "@/lib/ops/encounter";
 import type { Catalog, SatObject } from "@/lib/catalog/client";
@@ -42,6 +44,25 @@ function backendItem(eventId: string | null): ConjItem | null {
   const enc = realEncounter(a.elements, b.elements, tca);
   if (!enc) return null;
   return { id: row.eventId, enc, risk: row.color === "red" ? "red" : "yellow", aIndex: a.index, quiet: false };
+}
+
+/**
+ * Dev off: the case this screen ran the agents on moves from Orbit to the Decision Center when its first plans arrive
+ * (the cards, or the room reporting the event at `proposal`). Once only, and only from Orbit: someone on another tab
+ * or case by then is not pulled back later. Other operators' screens never move (wiring map §2.2).
+ */
+function followPlans() {
+  const eventId = watchedCase();
+  if (!eventId) return;
+  const ops = useOps.getState();
+  if (ops.dev || ops.incident !== eventId) return stopWatching();
+  const live = useLive.getState();
+  const ready = !!live.proposals?.length || !!live.room?.linkedEvents.some((e) => e.eventId === eventId && e.status === "proposal");
+  if (!ready) return;
+  stopWatching();
+  if (ops.tab !== "orbit") return;
+  sfx.whoosh();
+  useOps.setState({ tab: "decision", incidentView: "expanded" });
 }
 
 /** Ops store → simulator and globe. Renders nothing. */
@@ -119,6 +140,11 @@ export function OpsSync() {
           if (before.status !== e.status && (e.status === "proposal" || e.status === "verified")) sfx.chime();
         }
       }
+      // last: it may switch the tab, which runs this listener again
+      followPlans();
+    });
+    const unsubLive = useLive.subscribe((s, p) => {
+      if (s.proposals !== p.proposals || s.room !== p.room) followPlans();
     });
     const unsubCat = useOrbit.subscribe((s, p) => {
       if (s.catalog && !p.catalog) startIfReady();
@@ -127,6 +153,7 @@ export function OpsSync() {
     startIfReady();
     return () => {
       unsubOps();
+      unsubLive();
       unsubCat();
       engine.encounterListeners.delete(pushItems);
     };
