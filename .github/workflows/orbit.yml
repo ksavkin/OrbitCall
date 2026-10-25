@@ -1,14 +1,19 @@
 name: Orbit service checks
 
+# The tests read the repo's pinned snapshots and TLE groups through setup-data.sh.
 on:
   pull_request:
     paths:
       - "services/orbit/**"
+      - "data/snapshots/**"
+      - "web/data/snapshot/**"
       - ".github/workflows/orbit.yml"
   push:
     branches: [main]
     paths:
       - "services/orbit/**"
+      - "data/snapshots/**"
+      - "web/data/snapshot/**"
       - ".github/workflows/orbit.yml"
 
 permissions:
@@ -21,6 +26,7 @@ concurrency:
 jobs:
   orbit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: services/orbit
@@ -36,62 +42,19 @@ jobs:
             echo "::notice::services/orbit is not on this branch yet, so its checks are skipped"
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Detect dependency format
-        id: layout
-        if: steps.present.outputs.present == 'true'
-        run: |
-          if [ -f uv.lock ]; then
-            manager=uv
-          elif ls requirements*.txt >/dev/null 2>&1 || [ -f pyproject.toml ]; then
-            manager=pip
-          else
-            echo "::error::services/orbit has no uv.lock, requirements*.txt or pyproject.toml"
-            exit 1
-          fi
-          if [ -z "$(find . -path ./.venv -prune -o \( -name 'test_*.py' -o -name '*_test.py' \) -print -quit)" ]; then
-            echo "::error::services/orbit has no test_*.py or *_test.py files"
-            exit 1
-          fi
-          echo "manager=$manager" >> "$GITHUB_OUTPUT"
       - if: steps.present.outputs.present == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: ${{ steps.layout.outputs.manager == 'pip' && 'pip' || '' }}
-          cache-dependency-path: |
-            services/orbit/requirements*.txt
-            services/orbit/pyproject.toml
-      - if: steps.present.outputs.present == 'true' && steps.layout.outputs.manager == 'uv'
-        uses: astral-sh/setup-uv@v10.3.2
-        with:
-          working-directory: services/orbit
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          cache: pip
+          cache-dependency-path: services/orbit/src/requirements.txt
       - name: Install dependencies
         if: steps.present.outputs.present == 'true'
-        env:
-          MANAGER: ${{ steps.layout.outputs.manager }}
-          UV_PYTHON: "3.12"
-        run: |
-          if [ "$MANAGER" = uv ]; then
-            uv sync --frozen
-          elif ls requirements*.txt >/dev/null 2>&1; then
-            for f in requirements.txt requirements-dev.txt; do
-              if [ -f "$f" ]; then pip install -r "$f"; fi
-            done
-            if [ -f pyproject.toml ]; then pip install -e .; fi
-          else
-            extra=$(python -c "import tomllib; print('[test]' if 'test' in tomllib.load(open('pyproject.toml', 'rb')).get('project', {}).get('optional-dependencies', {}) else '')")
-            pip install -e ".$extra"
-          fi
+        run: pip install -r src/requirements.txt
+      - name: Build the data folder
+        if: steps.present.outputs.present == 'true'
+        run: ./setup-data.sh "$GITHUB_WORKSPACE"
       - name: Run tests
         if: steps.present.outputs.present == 'true'
-        env:
-          MANAGER: ${{ steps.layout.outputs.manager }}
-          UV_PYTHON: "3.12"
-        run: |
-          if [ "$MANAGER" = uv ]; then
-            uv run --frozen pytest
-          else
-            python -m pytest
-          fi
+        working-directory: services/orbit/src
+        run: python -m pytest -q tests
