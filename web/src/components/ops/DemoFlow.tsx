@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowRight, Clock, ListChecks, Loader2, Lock, Play, Radar, ShieldAlert, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { scanStartRef } from "@/lib/backend/api";
-import { backendError, type BackendError } from "@/lib/backend/errors";
+import { backendError } from "@/lib/backend/errors";
 import { fmtAge, fmtObjectId, fmtStamp, pcMetric, pcSource, SOURCE_LABEL } from "@/lib/backend/format";
 import { setLiveError, useLive, useRealMode } from "@/lib/backend/live";
 import { mutate } from "@/lib/backend/run";
@@ -188,35 +188,11 @@ function SimScanResults() {
     sfx.close();
     useOps.setState((s) => ({ scan: { ...s.scan, phase: "idle" } }));
   };
-  const real = useRealMode();
-  const me = useMe();
-  // the server lets only operators start a workflow; a session known to be another role is not offered Run
-  const canStart = !real || !me || me.role === "operator";
-  // real mode: one start at a time (the ref also stops ↵ and double-click), and the last refusal with its case
-  const inFlight = useRef(false);
-  const [starting, setStarting] = useState(false);
-  const [refused, setRefused] = useState<{ id: string; error: BackendError } | null>(null);
-  const failure = refused && refused.id === chosen ? refused.error : null;
   const run = (id: string | null) => {
     if (!id) return;
-    if (!real) {
-      sfx.whoosh();
-      setSel(null);
-      runIncident(id);
-      return;
-    }
-    if (!canStart || inFlight.current || (refused?.id === id && refused.error.code === "FORBIDDEN")) return;
-    inFlight.current = true;
-    sfx.click();
-    setStarting(true);
-    setRefused(null);
-    void runAgentsOn(id).then((error) => {
-      inFlight.current = false;
-      setStarting(false);
-      if (error) return setRefused({ id, error });
-      sfx.whoosh();
-      setSel(null);
-    });
+    sfx.whoosh();
+    setSel(null);
+    runIncident(id);
   };
 
   useEffect(() => {
@@ -372,36 +348,15 @@ function SimScanResults() {
             </div>
 
             <div className="flex items-center gap-3 border-t border-white/[0.07] px-7 py-4">
-              {failure ? (
-                <motion.span
-                  key={failure.message}
-                  role="alert"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.2 }}
-                  className="min-w-0 truncate text-[12px] text-[#ff8a80]"
-                >
-                  {failure.message}
-                </motion.span>
-              ) : (
-                <span className="text-[12px] text-neutral-500">
-                  <span className="kbd">↑</span> <span className="kbd">↓</span> choose · <span className="kbd">↵</span> run · hover a row for its detail
-                </span>
-              )}
+              <span className="text-[12px] text-neutral-500">
+                <span className="kbd">↑</span> <span className="kbd">↓</span> choose · <span className="kbd">↵</span> run · hover a row for its detail
+              </span>
               <button className="btn ml-auto h-10 px-4 text-[13px] text-neutral-300" onClick={close}>
                 Later
               </button>
-              {canStart ? (
-                <button
-                  className="btn btn-primary h-10 px-5 text-[14px]"
-                  disabled={!chosen || starting || failure?.code === "FORBIDDEN"}
-                  onClick={() => run(chosen)}
-                >
-                  {starting ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} Run agents on case {rows.findIndex((r) => r.id === chosen) + 1} <ArrowRight size={13} />
-                </button>
-              ) : (
-                <span className="text-[13px] text-neutral-500">Operators run the agents on a case</span>
-              )}
+              <button className="btn btn-primary h-10 px-5 text-[14px]" disabled={!chosen} onClick={() => run(chosen)}>
+                <Play size={13} /> Run agents on case {rows.findIndex((r) => r.id === chosen) + 1} <ArrowRight size={13} />
+              </button>
             </div>
           </motion.div>
         </motion.div>
