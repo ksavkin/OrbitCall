@@ -135,6 +135,9 @@ interface Fly {
   fromPos?: THREE.Vector3;
 }
 
+/** Altitude profile of the selected satellite over the next revolution (what the panel charts). */
+export type SelectedPath = { index: number; alts: Float32Array; periodMs: number; start: number };
+
 /* ----------------------------------------------------------------- scene */
 
 export class GlobeScene {
@@ -210,6 +213,8 @@ export class GlobeScene {
   private pathReq = 0;
   private selPathStart = 0;
   private selPathSpan = 0;
+  /** Last accepted path of the selected satellite; the worker answers in a few ms, before the panel can subscribe. */
+  private selPath: SelectedPath | null = null;
   private hovPathTimer: ReturnType<typeof setTimeout> | null = null;
 
   // interaction
@@ -756,6 +761,11 @@ export class GlobeScene {
 
   /* --------------------------------------------------------------- orbits */
 
+  /** The selected satellite's last accepted path, for a subscriber that arrives after the worker replied. */
+  getSelectedPath(index: number): SelectedPath | null {
+    return this.selPath !== null && this.selPath.index === index && index === this.selected ? this.selPath : null;
+  }
+
   private requestPath(index: number, kind: "sel" | "hov") {
     if (!this.worker) return;
     const id = ++this.pathReq;
@@ -794,6 +804,7 @@ export class GlobeScene {
       const ahead = new Float32Array(m.alts.length);
       ahead.set(m.alts.subarray(half));
       ahead.set(m.alts.subarray(0, half), m.alts.length - half);
+      this.selPath = { index: m.index, alts: ahead, periodMs: m.periodMs, start: this.selPathStart };
       this.pathListeners.forEach((fn) => fn(m.index, ahead, m.periodMs, this.selPathStart));
       // ground track in the Earth-fixed frame
       const gt = new Float32Array(m.points.length);
@@ -1053,6 +1064,12 @@ export class GlobeScene {
 
   select(i: number | null, opts: { fly?: boolean } = {}) {
     if (i === this.selected && !opts.fly) return;
+    if (i !== this.selected) {
+      // Another satellite: its path is not known yet. A re-select of the same one keeps
+      // the last path, so the chart does not blink while the refresh is in flight.
+      this.selPath = null;
+      this.selPathSpan = 0;
+    }
     this.selected = i;
     this.satMat.uniforms.uSelected.value = i ?? -1;
     this.selOrbit.visible = this.selGlow.visible = false;

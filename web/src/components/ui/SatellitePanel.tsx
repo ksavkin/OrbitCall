@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight, Check, Copy, Crosshair, Route, Satellite, Sun, Moon, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { SatLive } from "@/components/globe/GlobeScene";
 import { formatCospar, type SatObject } from "@/lib/catalog/client";
 import { fmtAgo, fmtInt, fmtLat, fmtLon, fmtNum } from "@/lib/format";
@@ -48,7 +48,6 @@ function Body({ obj, owners }: { obj: SatObject; owners: Record<string, string> 
   const groundTrack = useOrbit((s) => s.showGroundTrack);
   const set = useOrbit((s) => s.set);
   const [live, setLive] = useState<SatLive | null>(null);
-  const [path, setPath] = useState<{ alts: Float32Array; periodMs: number; start: number } | null>(null);
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
@@ -62,17 +61,21 @@ function Body({ obj, owners }: { obj: SatObject; owners: Record<string, string> 
     return () => clearInterval(id);
   }, [obj.index]);
 
-  useEffect(() => {
+  // The worker usually answers before this panel mounts (it waits for the previous panel's
+  // exit animation), so read the path the scene already holds and subscribe for refreshes.
+  const subscribePath = useCallback((onChange: () => void) => {
     const scene = sceneRef.get();
-    if (!scene) return;
-    const fn = (i: number, alts: Float32Array, periodMs: number, start: number) => {
-      if (i === obj.index) setPath({ alts, periodMs, start });
-    };
-    scene.pathListeners.add(fn);
+    if (!scene) return () => {};
+    scene.pathListeners.add(onChange);
     return () => {
-      scene.pathListeners.delete(fn);
+      scene.pathListeners.delete(onChange);
     };
-  }, [obj.index]);
+  }, []);
+  const path = useSyncExternalStore(
+    subscribePath,
+    () => sceneRef.get()?.getSelectedPath(obj.index) ?? null,
+    () => null,
+  );
 
   const epochAge = now - obj.epoch.getTime();
   const owner = ownerInfo(obj.owner, owners);
