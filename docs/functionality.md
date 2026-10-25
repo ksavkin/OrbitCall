@@ -271,8 +271,8 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 
 **System**
 
-- **DSP-1** Starts the workflow on an incident: creates the coordination room and joins every operator currently assigned to an involved object, including the other companies' operators, to the room and its call. Operators joined by someone else get an inbox notice and are not taken to the room screen; the room is an optional channel and deciding never requires opening it.
-- **DSP-2** Later, not in the base build (question 6): finds and calls the two owners. For now Start workflow joins both operators to the room (DSP-1), and each sees the notice in their inbox.
+- **DSP-1** Starts the workflow on an incident (in the UI, Run agents on this case): creates the coordination room and joins every operator currently assigned to an involved object, including the other companies' operators, to the room and its call. Operators joined by someone else get an inbox notice and are not taken to the room screen; the room is an optional channel and deciding never requires opening it.
+- **DSP-2** Later, not in the base build (question 6): finds and calls the two owners. For now starting the workflow joins both operators to the room (DSP-1), and each sees the notice in their inbox.
 - **DSP-3** Later, not in the base build (question 7): finds operators whose satellites the proposed maneuver affects, and notifies them before the maneuver.
 - **DSP-4** Gemini hosts the shared conversation, asks relevant clarification questions, requests checked revisions when discussion changes a plan, and produces source-linked per-event summaries. Convex records validated outputs in the log. Gemini receives only shareable room context and cannot create approval or alter schedule state directly.
 - **DSP-7** Makes the incident and available operator contact methods accessible in each relevant person's inbox regardless of whether they answer the call or join the room.

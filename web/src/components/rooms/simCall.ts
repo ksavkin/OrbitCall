@@ -71,7 +71,7 @@ const B_LINES: { ru: string; en: string }[] = [
 
 export function useSimCall(
   e: ConjunctionEvent | undefined,
-  opts: { seed?: CallMessage[]; joined?: boolean } = {},
+  opts: { seed?: CallMessage[]; joined?: boolean; spaceToTalk?: boolean } = {},
 ): UseCoordinationCall & { simulated: true; sendText: (t: string) => void } {
   const replies = useOps((s) => s.replies);
   // the sample room starts mid-conversation, already joined, so its look is visible at once
@@ -192,7 +192,7 @@ export function useSimCall(
 
   // Space to talk in hold mode, like the real hook (never while typing)
   useEffect(() => {
-    if (micMode !== "hold" || state !== "joined") return;
+    if (micMode !== "hold" || state !== "joined" || opts.spaceToTalk === false) return;
     const typing = (t: EventTarget | null) => t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
     const down = (ev: KeyboardEvent) => {
       if (ev.code !== "Space" || ev.repeat || typing(ev.target)) return;
@@ -211,7 +211,7 @@ export function useSimCall(
       window.removeEventListener("keydown", down, true);
       window.removeEventListener("keyup", up, true);
     };
-  }, [micMode, state, startTalking, stopTalking]);
+  }, [micMode, state, startTalking, stopTalking, opts.spaceToTalk]);
 
   const participants: CallParticipant[] = useMemo(() => {
     if (state !== "joined") return [];

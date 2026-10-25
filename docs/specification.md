@@ -173,7 +173,7 @@ interface EventRow {
   outcome: VerificationResult | null;          // [Q-8]
   reviewRequired: boolean;          // scheduled plan flagged by new data or a policy edit [POL-3]
   roomId: Id<"rooms"> | null;       // coordination room may link several pair events
-  roomOpen: boolean;                // an open room exists (created by Start workflow) [DSP-1]
+  roomOpen: boolean;                // an open room exists (created when the workflow starts) [DSP-1]
   sources: SourceRef[];
   reference: ReferenceCheck | null; // SOCRATES check of our scan's event; null before matching_sources ran
   simulated: boolean;
@@ -572,11 +572,11 @@ Counter uses `messages.send`, optionally referencing the selected proposal/revis
 
 | Function | Kind | Arguments → result | Notes |
 |---|---|---|---|
-| `rooms.startWorkflow` | mutation | `{ eventId }` → `{ roomId, created: boolean, joined: Id<"users">[] }` | Operator of a party object, active incident. Creates or returns the encounter's open room (every pair row within ±60 s, both object orders), joins every assigned operator of the involved companies to the room and its call, and leaves an inbox notice for those joined by someone else. Nobody is redirected. Idempotent [DSP-1, DSP-5] |
+| `rooms.startWorkflow` | mutation | `{ eventId }` → `{ roomId, created: boolean, joined: Id<"users">[] }` | Operator of a party object, active incident. Creates or returns the encounter's open room (every pair row within ±60 s, both object orders), joins every assigned operator of the involved companies to the room and its call, and leaves an inbox notice for those joined by someone else. Nobody is redirected. Idempotent. The UI calls it from Run agents on this case; publishing candidates on start is wired in round 3 [DSP-1, DSP-5] |
 | `rooms.get` | query | `{ eventId }` → `RoomState \| null` | `null` until someone starts the workflow, or after the room closed |
 | `rooms.byId` | query | `{ roomId }` → shared group-room projection | Membership required; no private policy/memory/context |
 | `rooms.listMine` | query | `{}` → shared room projections | Open rooms of the caller's incidents |
-| `rooms.join` / `rooms.leave` | mutation | `{ roomId }` → `null` | Presence for "is B in the room" [DSP-5]. Start workflow already joins; operators only. `INVALID_STATE` on a closed room |
+| `rooms.join` / `rooms.leave` | mutation | `{ roomId }` → `null` | Presence for "is B in the room" [DSP-5]. Starting the workflow already joins; operators only. `INVALID_STATE` on a closed room |
 | `rooms.setInCall` | mutation | `{ roomId, inCall: boolean }` → `null` | Called on LiveKit connect/disconnect |
 | `proposals.list` | query | `{ eventId }` → `ProposalCard[]` | Up to four computed candidate cards total, including wait when justified. Fewer/zero options are explicit; do not require exactly one shared recommendation [ROOM-5] |
 | `proposals.revisions` | query | `{ proposalId }` → `Revision[]` | History, oldest first |
@@ -658,7 +658,7 @@ Unrelated messages never reset approvals. Old approvals stay in the log and neve
 
 - Status and color change only on the backend. The lifecycle is functionality section 3, including `no_action_needed`.
 - A room is created when an operator starts the workflow on an active incident. Every operator currently assigned to an involved object is joined; the others receive an inbox notice and stay on their screen. While no room exists, `rooms.get` returns `null` and the UI shows the event without a room.
-- The room closes when every linked incident is resolved. A later Start workflow on a still-active incident opens a new room.
+- The room closes when every linked incident is resolved. Starting the workflow again on a still-active incident opens a new room.
 - `situation` is set only while the status is `communication`.
 
 ### 4.4 Simulated data [DATA-5, DATA-7]

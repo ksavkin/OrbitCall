@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Languages, Loader2, LogOut, Mic, MicOff, PhoneCall, Send, Volume2, VolumeX } from "lucide-react";
+import { Languages, Loader2, LogOut, MessageSquare, Mic, MicOff, PhoneCall, Send, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useState, type PointerEvent, type ReactNode } from "react";
 import type { Lang } from "@/call/api";
 import type { CallParticipant, UseCoordinationCall } from "@/call/useCoordinationCall";
@@ -9,12 +9,17 @@ import { sfx } from "@/lib/sound";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ClaudeGlyph } from "@/components/ops/Glyphs";
-import { RoomTimeline } from "@/components/roomChat/RoomTimeline";
+import { RoomTimeline, withValues } from "@/components/roomChat/RoomTimeline";
 import { Select } from "@/components/ui/Popover";
 import type { RoomCard } from "@/components/roomChat/model";
+import { useAudioLevel } from "./useAudioLevel";
+import { VoiceBlob } from "./VoiceBlob";
 
 // The coordination call, in the app's design, on useCoordinationCall (or its dev stand-in: same shape).
-// Rules from the call module: join from a click; only the primary button talks; speech never approves anything.
+// Two modes, switched in the middle of the room: Voice (a dot sphere that moves with your voice and the
+// translated voice of the others, the latest phrase as a subtitle) and Text (the room's messages and an input;
+// the microphone is off while typing). Rules from the call module: join from a click; only the primary button
+// talks; speech never approves anything.
 
 const LANG_NAME: Record<Lang, string> = { en: "English", ru: "Russian", zh: "Mandarin" };
 const ERROR_TEXT: Record<string, string> = {
@@ -27,16 +32,48 @@ const ERROR_TEXT: Record<string, string> = {
 };
 
 export type StageCall = UseCoordinationCall & { simulated?: boolean; sendText?: (t: string) => void };
+export type StageMode = "voice" | "text";
 
 /** Flag per participant identity, from the room's parties (falls back to none). */
 export type FlagOf = (p: CallParticipant) => string | null;
 
-export function CallStage({ call: c, title, subtitle, flagOf, cards }: { call: StageCall; title: ReactNode; subtitle?: ReactNode; flagOf: FlagOf; cards?: RoomCard[] }) {
+export function CallStage({
+  call: c,
+  title,
+  subtitle,
+  flagOf,
+  cards,
+  mode,
+  onMode,
+}: {
+  call: StageCall;
+  title: ReactNode;
+  subtitle?: ReactNode;
+  flagOf: FlagOf;
+  cards?: RoomCard[];
+  /** Owned by the caller so Space-to-talk can follow it (off while typing). */
+  mode: StageMode;
+  onMode: (m: StageMode) => void;
+}) {
   const joined = c.state === "joined" || c.state === "reconnecting";
+  const othersSpeaking = c.participants.some((p) => !p.isMe && !p.isTranslator && p.speaking);
+  const level = useAudioLevel({ micOn: c.micOn, othersSpeaking });
+
+  const switchTo = (m: StageMode) => {
+    if (m === mode) return;
+    sfx.click();
+    // typing turns the microphone off; coming back to voice leaves it off until the person talks
+    if (m === "text") {
+      c.stopTalking();
+      if (c.micMode === "open" && c.micOn) c.toggleMic();
+    }
+    onMode(m);
+  };
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-testid="call-panel" data-state={c.state}>
+    <div className="flex min-h-0 flex-1 flex-col" data-testid="call-panel" data-state={c.state} data-mode={mode}>
       {/* header */}
-      <div className="flex items-start gap-3 px-6 pb-4 pt-5">
+      <div className="flex items-start gap-3 px-6 pb-3 pt-5">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-[11.5px] font-medium text-neutral-500">
             <span className={`h-1.5 w-1.5 rounded-full ${joined ? "bg-green" : "bg-neutral-600"}`} style={joined ? { boxShadow: "0 0 8px var(--green)" } : undefined} />
@@ -62,11 +99,44 @@ export function CallStage({ call: c, title, subtitle, flagOf, cards }: { call: S
       {/* who is here */}
       <AnimatePresence>{joined && <Participants list={c.participants} flagOf={flagOf} />}</AnimatePresence>
 
-      {/* captions */}
-      <Captions c={c} cards={cards} />
+      {/* voice or text, switched in the middle of the room */}
+      {joined && <ModeSwitch mode={mode} onMode={switchTo} />}
 
-      {/* controls */}
-      <Controls c={c} joined={joined} />
+      <div className="relative min-h-0 flex-1">
+        <AnimatePresence mode="wait" initial={false}>
+          {!joined || mode === "voice" ? (
+            <motion.div
+              key="voice"
+              initial={{ opacity: 0, scale: 0.97, filter: "blur(6px)" }}
+              animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+              exit={{ opacity: 0, scale: 0.97, filter: "blur(6px)" }}
+              transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+              className="absolute inset-0"
+            >
+              <VoiceView c={c} level={level} joined={joined} />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="text"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 12 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="absolute inset-0 flex flex-col"
+            >
+              <RoomTimeline
+                messages={c.captions ?? []}
+                cards={cards}
+                myUserId={c.identity?.replace(/^user-/, "") ?? null}
+                testId="call-captions"
+                empty="No messages yet. Type below, or switch to Voice and talk."
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <Controls c={c} joined={joined} mode={mode} />
     </div>
   );
 }
@@ -96,50 +166,38 @@ function TranslatorBadge({ c }: { c: StageCall }) {
   );
 }
 
-/** "Dispatcher US" → "DU", "Ирина Волкова" → "ИВ": two letters for an avatar without a flag. */
+/** "Dispatcher US" → "DU", "Ирина Волкова" → "ИВ": two letters for a tile without a flag. */
 function initials(name: string) {
   const parts = name.replace(/\(.*?\)/g, "").trim().split(/\s+/).filter(Boolean);
   return ((parts[0]?.[0] ?? "?") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 }
 
+/** One tile per person, name underneath. A single element carries the speaking ring; nothing is boxed twice. */
 function Participants({ list, flagOf }: { list: CallParticipant[]; flagOf: FlagOf }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: "auto" }}
-      exit={{ opacity: 0, height: 0 }}
-      className="overflow-hidden"
-      data-testid="call-participants"
-    >
-      <div className="flex flex-wrap gap-2.5 px-6 pb-4">
+    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden" data-testid="call-participants">
+      <div className="flex flex-wrap items-start gap-6 px-6 pb-2 pt-1">
         {list.map((p) => {
           const flag = flagOf(p);
           return (
-            <div
-              key={p.identity}
-              data-identity={p.identity}
-              data-speaking={p.speaking}
-              className="flex items-center gap-2.5 rounded-full bg-white/[0.04] py-1.5 pl-1.5 pr-3.5 transition-shadow duration-200"
-              style={p.speaking ? { boxShadow: "0 0 0 1.5px var(--green), 0 0 18px -4px rgba(61,220,151,0.7)" } : { boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.07)" }}
-            >
-              <span className="relative grid h-8 w-8 place-items-center overflow-hidden rounded-[7px] bg-[#16171b] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
+            <div key={p.identity} data-identity={p.identity} data-speaking={p.speaking} className="flex w-[104px] flex-col items-center text-center">
+              <span
+                className="grid h-11 w-11 place-items-center overflow-hidden rounded-[11px] bg-[#16171b] transition-shadow duration-200"
+                style={{ boxShadow: p.speaking ? "0 0 0 2px var(--green), 0 0 22px -4px rgba(61,220,151,0.75)" : "0 0 0 1px rgba(255,255,255,0.12)" }}
+              >
                 {p.isTranslator ? (
-                  <ClaudeGlyph size={15} />
+                  <ClaudeGlyph size={18} />
                 ) : flag ? (
-                  <Flag code={flag} h={32} square />
+                  <Flag code={flag} h={44} square />
                 ) : (
-                  // no flag known for this person: their initials, never an empty circle
-                  <span className="text-[11px] font-semibold tracking-[0.02em] text-neutral-300">{initials(p.name)}</span>
+                  <span className="text-[12px] font-semibold tracking-[0.02em] text-neutral-300">{initials(p.name)}</span>
                 )}
               </span>
-              <span className="min-w-0">
-                <span className="block text-[13px] font-medium leading-tight text-white">
-                  {p.isTranslator ? "Translator" : p.name}
-                  {p.isMe && <span className="text-neutral-500"> · you</span>}
-                </span>
-                <span className="block text-[11px] text-neutral-500">{p.isTranslator ? "agent · numbers locked" : p.lang ? LANG_NAME[p.lang] : ""}</span>
+              <span className="mt-1.5 w-full truncate text-[12px] font-medium leading-tight text-white">{p.isTranslator ? "Translator" : p.name}</span>
+              <span className="w-full truncate text-[11px] leading-tight text-neutral-500">
+                {p.isMe ? "you · " : ""}
+                {p.isTranslator ? "numbers locked" : p.lang ? LANG_NAME[p.lang] : ""}
               </span>
-              {p.speaking && <Bars />}
             </div>
           );
         })}
@@ -148,31 +206,79 @@ function Participants({ list, flagOf }: { list: CallParticipant[]; flagOf: FlagO
   );
 }
 
-/** Small live level bars next to whoever is speaking. */
-function Bars() {
+function ModeSwitch({ mode, onMode }: { mode: StageMode; onMode: (m: StageMode) => void }) {
   return (
-    <span className="flex h-3.5 items-end gap-[2px]">
-      {[0, 1, 2, 3].map((i) => (
-        <motion.span
-          key={i}
-          className="w-[2.5px] rounded-full bg-green"
-          animate={{ height: ["30%", "100%", "45%", "80%", "30%"] }}
-          transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.12 }}
-        />
-      ))}
-    </span>
+    <div className="flex justify-center pb-1 pt-2">
+      <div className="flex rounded-full bg-white/[0.05] p-1 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]" role="tablist" aria-label="Talk or type">
+        {(
+          [
+            { id: "voice", label: "Voice", icon: <Mic size={13} /> },
+            { id: "text", label: "Text", icon: <MessageSquare size={13} /> },
+          ] as const
+        ).map((m) => (
+          <button
+            key={m.id}
+            role="tab"
+            aria-selected={mode === m.id}
+            data-testid={`call-mode-${m.id}`}
+            className={`relative flex h-8 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-medium transition-colors ${mode === m.id ? "text-black" : "text-neutral-400 hover:text-white"}`}
+            onClick={() => onMode(m.id)}
+          >
+            {mode === m.id && <motion.span layoutId="call-mode-pill" className="absolute inset-0 rounded-full bg-white" transition={{ type: "spring", stiffness: 520, damping: 38 }} />}
+            <span className="relative flex items-center gap-1.5">
+              {m.icon}
+              {m.label}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
-function Captions({ c, cards }: { c: StageCall; cards?: RoomCard[] }) {
+/** The blob, what is happening in one line, and the latest phrase as a subtitle. */
+function VoiceView({ c, level, joined }: { c: StageCall; level: ReturnType<typeof useAudioLevel>; joined: boolean }) {
+  const speaker = c.participants.find((p) => !p.isMe && !p.isTranslator && p.speaking);
+  const last = (c.captions ?? []).at(-1);
+  const mine = last?.author.kind === "human" && last.author.userId === c.identity?.replace(/^user-/, "");
+  const who = !last ? "" : last.author.kind === "human" ? (mine ? "You" : last.author.name) : last.author.kind === "agent" ? last.author.role : "System";
+  const status = !joined
+    ? "Join to talk. Each of you speaks your own language."
+    : c.micOn
+      ? "You're speaking · the room hears it in their language"
+      : speaker
+        ? `${speaker.name} is speaking`
+        : c.micMode === "hold"
+          ? "Hold the button or Space to talk"
+          : "Microphone off · click the button to open it";
   return (
-    <RoomTimeline
-      messages={c.captions ?? []}
-      cards={cards}
-      myUserId={c.identity?.replace(/^user-/, "") ?? null}
-      testId="call-captions"
-      empty={c.state === "joined" ? "Nobody has spoken yet. Hold the talk button or press Space." : "Join the call to talk. Every phrase appears here in your language."}
-    />
+    <div className="flex h-full flex-col items-center justify-center px-8">
+      <div className={joined ? "" : "opacity-50"}>
+        <VoiceBlob level={level} size={300} />
+      </div>
+      <div className="mt-1 text-[13px] font-medium" style={{ color: c.micOn ? "var(--green)" : speaker ? "#dbe7ff" : "#8a8a8a" }}>
+        {status}
+      </div>
+      <div className="mt-4 flex min-h-[64px] w-full max-w-[640px] items-start justify-center text-center">
+        <AnimatePresence mode="wait">
+          {joined && last && (
+            <motion.div
+              key={last.messageId + last.translationStatus}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.25 }}
+              data-testid="call-subtitle"
+            >
+              <div className="text-[11.5px] text-neutral-500">{who}</div>
+              <div className="mt-1 text-[17px] leading-[1.5] text-neutral-100">
+                {last.translationStatus === "pending" && !mine ? <span className="shimmer">Translating…</span> : withValues(mine ? last.originalText : last.text, last.values)}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
   );
 }
 
@@ -209,7 +315,7 @@ function SoundToggle() {
   );
 }
 
-function Controls({ c, joined }: { c: StageCall; joined: boolean }) {
+function Controls({ c, joined, mode }: { c: StageCall; joined: boolean; mode: StageMode }) {
   const [text, setText] = useState("");
   // primary button only: a right click opens the context menu and may never deliver pointerup (a stuck microphone)
   const press = (e: PointerEvent) => {
@@ -236,6 +342,59 @@ function Controls({ c, joined }: { c: StageCall; joined: boolean }) {
       </div>
     );
   }
+
+  const leave = (
+    <button
+      className="btn h-10 shrink-0 gap-1.5 px-3.5 text-[13px] text-neutral-300 hover:text-red"
+      data-testid="call-leave"
+      onClick={() => {
+        sfx.close();
+        void c.leave();
+      }}
+    >
+      <LogOut size={14} /> Leave
+    </button>
+  );
+  const sound = c.soundBlocked && (
+    <button className="btn h-10 shrink-0 gap-1.5 px-3 text-[13px] text-amber" data-testid="call-sound" onClick={() => void c.enableSound()}>
+      <Volume2 size={14} /> Enable sound
+    </button>
+  );
+
+  if (mode === "text") {
+    return (
+      <div className="flex items-center gap-3 border-t border-white/[0.06] px-6 py-4">
+        {/* the text path (LANG-7): same translation, for noisy rooms. Live calls get it with the room-messages backend */}
+        <form
+          className={`flex h-11 min-w-0 flex-1 items-center gap-2 rounded-full bg-white/[0.05] pl-5 pr-1.5 focus-within:bg-white/[0.08] ${c.sendText ? "" : "opacity-60"}`}
+          title={c.sendText ? undefined : "Typed messages in live calls need room messages on the backend (messages.send) and a worker that voices text"}
+          onSubmit={(ev) => {
+            ev.preventDefault();
+            if (!text.trim()) return;
+            c.sendText?.(text);
+            setText("");
+          }}
+        >
+          <input
+            value={text}
+            disabled={!c.sendText || c.role === "observer"}
+            autoFocus
+            onChange={(ev) => setText(ev.target.value)}
+            onKeyDown={(ev) => ev.stopPropagation()}
+            placeholder={c.role === "observer" ? "Observers read only" : c.sendText ? "Type a message · the room reads it in their language" : "Typing in live calls is coming · switch to Voice to talk"}
+            className="min-w-0 flex-1 bg-transparent text-[14px] text-white outline-none placeholder:text-neutral-600"
+          />
+          <button className="grid h-8 w-8 place-items-center rounded-full bg-white text-black disabled:opacity-30" disabled={!c.sendText || !text.trim()} aria-label="Send">
+            <Send size={13} />
+          </button>
+        </form>
+        {c.role !== "observer" && <SoundToggle />}
+        {sound}
+        {leave}
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-4 border-t border-white/[0.06] px-6 py-4">
       {c.role === "observer" ? (
@@ -272,10 +431,6 @@ function Controls({ c, joined }: { c: StageCall; joined: boolean }) {
               {c.micOn ? <Mic size={22} /> : <MicOff size={22} />}
             </button>
           )}
-          <div className="min-w-0">
-            <div className="text-[14px] font-semibold text-white">{c.micOn ? "Talking…" : c.micMode === "hold" ? "Hold to talk" : "Microphone off"}</div>
-            <div className="text-[12px] text-neutral-500">{c.micMode === "hold" ? "or hold Space · release to send" : "click to turn the microphone on or off"}</div>
-          </div>
           <div className="flex rounded-full bg-white/[0.05] p-0.5 text-[12px]">
             {(["hold", "open"] as const).map((m) => (
               <button
@@ -289,39 +444,9 @@ function Controls({ c, joined }: { c: StageCall; joined: boolean }) {
           </div>
         </>
       )}
-
+      <span className="flex-1" />
       {c.role !== "observer" && <SoundToggle />}
-
-      {/* the text path (LANG-7): same translation, for noisy rooms. Live calls get it with the room-messages backend */}
-      {c.role !== "observer" && (
-        <form
-          className={`flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full bg-white/[0.05] pl-4 pr-1 focus-within:bg-white/[0.08] ${c.sendText ? "" : "opacity-60"}`}
-          title={c.sendText ? undefined : "Typed messages in live calls need room messages on the backend (messages.send) and a worker that voices text"}
-          onSubmit={(ev) => {
-            ev.preventDefault();
-            c.sendText?.(text);
-            setText("");
-          }}
-        >
-          <input
-            value={text}
-            disabled={!c.sendText}
-            onChange={(ev) => setText(ev.target.value)}
-            onKeyDown={(ev) => ev.stopPropagation()}
-            placeholder={c.sendText ? "Or type a message, the room translates it" : "Typing in live calls is coming: speak for now"}
-            className="min-w-0 flex-1 bg-transparent text-[13.5px] text-white outline-none placeholder:text-neutral-600"
-          />
-          <button className="grid h-8 w-8 place-items-center rounded-full bg-white text-black disabled:opacity-30" disabled={!c.sendText || !text.trim()} aria-label="Send">
-            <Send size={13} />
-          </button>
-        </form>
-      )}
-
-      {c.soundBlocked && (
-        <button className="btn h-10 gap-1.5 px-3 text-[13px] text-amber" data-testid="call-sound" onClick={() => void c.enableSound()}>
-          <Volume2 size={14} /> Enable sound
-        </button>
-      )}
+      {sound}
       {c.devices.mics.length > 0 && c.role === "operator" && (
         <Select
           size="md"
@@ -348,16 +473,7 @@ function Controls({ c, joined }: { c: StageCall; joined: boolean }) {
           maxTriggerWidth={190}
         />
       )}
-      <button
-        className="btn h-10 gap-1.5 px-3.5 text-[13px] text-neutral-300 hover:text-red"
-        data-testid="call-leave"
-        onClick={() => {
-          sfx.close();
-          void c.leave();
-        }}
-      >
-        <LogOut size={14} /> Leave
-      </button>
+      {leave}
     </div>
   );
 }

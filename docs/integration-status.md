@@ -25,6 +25,9 @@ The [assigned-fleet user flow](user-flow.md) is the starting point. The [specifi
 | Queue source (Oct 25) | My Incidents lists only events from our own fleet scan (`scans.startMine`, which calls the orbital service's `POST /screen`). Before the first scan the queue is empty and asks for Run Scan. SOCRATES pairs are never the queue |
 | Reference check (Oct 25) | Every scan event is checked against the SOCRATES reference list: "Matched in SOCRATES", "Data differs" or "Not in SOCRATES", with their TCA, miss and probability side by side with ours. Provenance, not a confidence score. Validation (`GET /validation`) uses the full eligible list, not a top-N subset |
 | Run Scan access (Oct 25) | Shown on Orbit and Conjunctions. Signed out or without assignments: visible, not runnable, and it says why. Only provisioned accounts start paid work |
+| Navigation (Oct 25) | Four tabs: Orbit, Decision Center, Policy, Inbox. Conjunctions and Rooms merge into Orbit (scan, cases, agents) and Decision Center (case, plan cards, call). Audit log becomes Inbox. See user-flow "App navigation" |
+| Decision turns (Oct 25) | Side A, then B, then other parties. Only the party whose turn it is has active Approve, Veto, voice and text during the decision; everyone can discuss before it |
+| Voice in decisions (Oct 25) | Voice can select a card ("option B"); approval and veto stay explicit clicks |
 | Probability display (Oct 25) | "1 in N" is the main reading (`1 in 770`), because people grasp it at once. The exact value sits next to it, smaller: two significant digits as a decimal from 0.0001 up (`0.0013`), scientific below (`1.3 × 10⁻⁷`). SOCRATES values keep the `max_prob` label |
 | TCA | Time of Closest Approach; display "Time until closest approach" / "До ближайшего сближения" |
 | Proposals | Up to four computed candidates. Show fewer if fewer exist |

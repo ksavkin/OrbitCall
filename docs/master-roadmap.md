@@ -56,6 +56,8 @@ The deliverable is a complete hackathon demonstration. No registration product, 
 | Laptop 2 | Russian dispatcher | Their assigned fleet, incident notification, Russian discussion, and their own approvals |
 | Laptop 3 | Chinese dispatcher | Their assigned fleet, incident notification, Mandarin discussion, and their own approvals |
 
+Inside the app the dispatcher works in four tabs: Orbit (globe, My Fleet, Run Scan, agent progress), Decision Center (the case, plan cards and the call), Policy and Inbox (decision of October 25; see [user flow](user-flow.md), "App navigation").
+
 Use headsets for the three laptops. Keep the large monitor muted. Country is a demo profile attribute, not a claim about ownership or account authorization.
 
 ### Main story
@@ -63,7 +65,7 @@ Use headsets for the three laptops. Keep the large monitor muted. Country is a d
 1. The large monitor rotates the globe while the judge sits at the US laptop.
 2. The judge sees their four assigned spacecraft and presses Run Scan.
 3. The backend identifies two linked demo incidents, US/Russia and US/China.
-4. The judge presses Start workflow. The other operators are joined to the same coordination room automatically, see a notice in their inbox, and open it when they want to talk.
+4. The judge runs the agents on the case, which starts its workflow. The other operators are joined to the case's coordination channel automatically, receive a notice in their Inbox, and join the same case in the Decision Center.
 5. Agents present evidence and up to four calculated options per incident. The selected maneuver has a checked schedule preview before approval.
 6. The operators speak in three languages and see original and translated text.
 7. A meaningful counter changes one proposal. Its required approvals visibly reset.

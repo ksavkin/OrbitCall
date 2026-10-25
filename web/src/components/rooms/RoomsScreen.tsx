@@ -9,7 +9,7 @@ import type { ConjunctionEvent } from "@/lib/ops/types";
 import { sfx } from "@/lib/sound";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { STATUS_META } from "@/components/ops/meta";
-import { CallStage, type FlagOf } from "./CallStage";
+import { CallStage, type FlagOf, type StageMode } from "./CallStage";
 import { useSimCall } from "./simCall";
 import { SAMPLE_ID, sampleCards, sampleEvent, sampleMessages } from "./sampleRoom";
 import { roomCards } from "@/components/roomChat/model";
@@ -80,8 +80,9 @@ export function RoomsScreen() {
 /** One room's call. Keyed by room: switching rooms leaves the call, as the real hook does. */
 function RoomCall({ e }: { e: ConjunctionEvent }) {
   const isSample = e.id === SAMPLE_ID;
+  const [mode, setMode] = useState<StageMode>("voice");
   const [seed] = useState(() => (isSample ? sampleMessages(e) : undefined));
-  const call = useSimCall(e, { seed, joined: isSample });
+  const call = useSimCall(e, { seed, joined: isSample, spaceToTalk: mode === "voice" });
   const replies = useOps((s) => s.replies);
   const cards = useMemo(() => (isSample ? sampleCards(e) : roomCards(e, replies)), [e, replies, isSample]);
   const flagOf: FlagOf = (p) => {
@@ -92,6 +93,8 @@ function RoomCall({ e }: { e: ConjunctionEvent }) {
   return (
     <CallStage
       call={call}
+      mode={mode}
+      onMode={setMode}
       cards={cards}
       flagOf={flagOf}
       title={`Coordination room · ${e.id}`}
