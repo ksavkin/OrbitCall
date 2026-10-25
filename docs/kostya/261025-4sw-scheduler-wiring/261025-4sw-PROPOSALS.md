@@ -1,10 +1,10 @@
 # Proposed changes for the scheduler wiring
 
-Status: proposed; the doc edits below are not applied yet. The issue #6 text and the notes for the triggers change, the trajectory-plans branch and the deploy are still for the team to act on.
+Status: the doc edits below are applied on `kostya/r4-scheduler-wiring`. The issue #6 text and the notes for the triggers change, the trajectory-plans branch and the deploy are still for the team to act on.
 
 The backend for this is on `kostya/r4-scheduler-wiring` (summary: `261025-4sw-SUMMARY.md`).
 
-## Proposed for docs/specification.md
+## Applied in docs/specification.md
 
 1. **§4.1, Maneuver Scheduler, new first bullet.** After a selection, the scheduler asks Factory to `/prepare` the selected maneuver and records the checked diff and its hash on the revision before any approval. An approval counts only if given after the revision's first recorded preview. A reset that only advances the selection generation keeps the revision's preview: the new generation's approvals count, and scheduling re-prepares the byte-identical diff before re-screening.
 2. **§4.1, maneuver bullet.** Adds after "Droid commits the prepared diff; maneuver `committed`, event `scheduled`.": "The commit reads the completed `/prepare` job back from the worker and checks its content hash, diff and file path against the approved preview."
