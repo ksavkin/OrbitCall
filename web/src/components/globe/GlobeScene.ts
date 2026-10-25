@@ -572,10 +572,22 @@ export class GlobeScene {
     this.satMesh = makeInstanced(satelliteGeometry(), this.satIdx);
     this.debMesh = makeInstanced(debrisGeometry(), this.debIdx);
 
+    // Indices do not survive a catalog swap: drop the selection, the hover and any path in flight.
+    if (this.selected !== null) this.select(null);
+    this.setHovered(null);
+    this.selPath = null;
+    this.selPathSpan = 0;
+    this.selOrbit.userData = {};
+    this.hovOrbit.userData = {};
+
     this.worker?.terminate();
-    this.worker = new Worker(new URL("../../lib/orbit/propagate.worker.ts", import.meta.url), { type: "module" });
-    this.worker.onmessage = this.onWorkerMessage;
-    this.worker.onerror = (e) => console.error("[orbit worker]", e.message);
+    const worker = new Worker(new URL("../../lib/orbit/propagate.worker.ts", import.meta.url), { type: "module" });
+    this.worker = worker;
+    // A terminated worker can still have replies queued on the main thread; ignore them.
+    worker.onmessage = (e) => {
+      if (worker === this.worker) this.onWorkerMessage(e);
+    };
+    worker.onerror = (e) => console.error("[orbit worker]", e.message);
     this.pendingElements = objs.map((o) => o.elements);
   }
 
