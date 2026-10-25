@@ -1,4 +1,4 @@
-import { internalMutation, internalQuery, query, mutation } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, query, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v, ConvexError } from "convex/values";
 import { side } from "./lib/policyValidators";
@@ -8,6 +8,12 @@ import { advocateKey, companyOf, currentAssessment, currentEvidenceKey, latestAd
 import { checkRecommendation, evaluateCandidates, shareEvaluations } from "./lib/advocate";
 import { requireParty } from "./lib/operatorAccess";
 import { runFlags, stageOf, supersede } from "./lib/runs";
+import { getCandidates, orbitConfigured } from "./lib/orbitClient";
+import {
+  cardsFor, evidenceVersionOf, geometryMatches, publishFailure, wholeSecondUtc,
+  type PublishInput, type PublishOutcome, type SkipReason,
+} from "./lib/publishCandidates";
+import type { Side } from "./lib/policies";
 
 export const begin = internalMutation({
   args: { eventId: v.id("events"), side },
@@ -101,6 +107,71 @@ export const openingSide = internalQuery({
   handler: async (ctx, { eventId }) => {
     const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     return set ? requiredSides(set)[0] ?? null : null;
+  },
+});
+
+// Same workflow rules as candidates.publish, checked before the orbit call so an unpublishable event costs nothing.
+export const publishInput = internalQuery({
+  args: { eventId: v.id("events"), nowMs: v.number() },
+  handler: async (ctx, { eventId, nowMs }): Promise<{ skipped: SkipReason } | { input: PublishInput }> => {
+    const event = await ctx.db.get(eventId);
+    if (!event) return { skipped: "NOT_FOUND" };
+    if (!event.active || event.tcaMs <= nowMs) return { skipped: "EVENT_INACTIVE" };
+    const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
+    if (set && set.state !== "open") return { skipped: "SET_NOT_OPEN" };
+    const facts = await loadFacts(ctx, event);
+    const objectIds = [facts.objectA.objectId, facts.objectB.objectId];
+    const [companyAId, companyBId] = await Promise.all(objectIds.map(async objectId =>
+      (await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", objectId)).unique())?.companyId ?? null));
+    let activeSide: Side = "A", counterpartSide: Side | null = "B";
+    if (event.workflow === "unilateral_debris") {
+      const active = companyAId && !companyBId ? "A" : companyBId && !companyAId ? "B" : null;
+      if (!active || (event.requiredApprovalSides && event.requiredApprovalSides.join() !== active)) return { skipped: "WORKFLOW_UNSUPPORTED" };
+      activeSide = active; counterpartSide = null;
+    } else if (event.workflow === "internal_review" || !companyAId || !companyBId || companyAId === companyBId) {
+      // A missing active counterpart stays bilateral and is never treated as debris (spec §1).
+      return { skipped: "WORKFLOW_UNSUPPORTED" };
+    }
+    const snapshot = await ctx.db.get(event.snapshotId);
+    if (!snapshot) return { skipped: "NOT_FOUND" };
+    // Every stored revision, not only the current set's, so a returning card gets a new revision instead of a rollback.
+    const previous = await ctx.db.query("candidateRevisions").withIndex("by_event_candidate_revision", q => q.eq("eventId", eventId)).collect();
+    return { input: {
+      facts, snapshotId: snapshot.snapshotId, evidenceVersion: evidenceVersionOf(facts), activeSide, counterpartSide,
+      allowedMovingObjectIds: counterpartSide ? objectIds : [activeSide === "A" ? objectIds[0] : objectIds[1]],
+      baseVersion: set?.version ?? null, previous,
+    } };
+  },
+});
+
+// Orbit /candidates, then the card mapper, then candidates.publish on the set version read before the call. Any
+// failure (orbit, geometry, a concurrent publication) returns a sanitized outcome and leaves the previous set and
+// runs as they were. A spacecraft that also moves in another linked event of the same room is coordinated by its
+// trajectoryPlans row (the scheduler's task); this publishes only this event's own set and touches no other event.
+export const publishFromOrbit = internalAction({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, { eventId }): Promise<PublishOutcome> => {
+    if (!orbitConfigured()) return { status: "skipped", reason: "ORBIT_NOT_CONFIGURED" };
+    const nowMs = Date.now();
+    const loaded = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs });
+    if ("skipped" in loaded) return { status: "skipped", reason: loaded.skipped };
+    const { input } = loaded;
+    try {
+      const response = await getCandidates({
+        snapshotId: input.snapshotId, evidenceVersion: input.evidenceVersion,
+        objectA: input.facts.objectA.objectId, objectB: input.facts.objectB.objectId,
+        tcaUtc: wholeSecondUtc(Date.parse(input.facts.tcaUtc)), allowedMovingObjectIds: input.allowedMovingObjectIds,
+        notBeforeUtc: wholeSecondUtc(nowMs, Math.ceil),
+      });
+      if (!geometryMatches(response, input.facts)) {
+        return { status: "failed", code: "GEOMETRY_MISMATCH", message: "The orbit service computed a different encounter than the stored event." };
+      }
+      const candidates = cardsFor(response, input, eventId, nowMs);
+      const { version, changed } = await ctx.runMutation(internal.candidates.publish, { eventId, baseVersion: input.baseVersion, candidates });
+      return { status: "published", version, changed, cards: candidates.length };
+    } catch (error) {
+      return publishFailure(error);
+    }
   },
 });
 
