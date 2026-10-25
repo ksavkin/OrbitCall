@@ -56,3 +56,10 @@ it("does not mutate the reset manifest when a late upstream error arrives",async
  await t.mutation(ref<"mutation">("demoLaunch:failed"),{demoRunId:ticket.demoRunId,key:ticket.key});
  expect(await t.run(ctx=>ctx.db.get(ticket.demoRunId))).toEqual(before);
 });
+it("persists the service's refined closest-approach time instead of assuming the requested time",async()=>{
+ const {t,as}=await setup();const original=vi.mocked(simulate).getMockImplementation()!;
+ const refined=new Date(Date.parse(args.tcaUtc)+2000).toISOString().replace(".000Z","Z");
+ vi.mocked(simulate).mockImplementation(async r=>{const value=await original(r);value.event.tcaUtc=refined;return value;});
+ const result=await as().action(launch,args);
+ expect(await t.run(ctx=>ctx.db.get(result.eventId))).toMatchObject({tcaMs:Date.parse(refined)});
+});

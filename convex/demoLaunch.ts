@@ -69,11 +69,12 @@ export const publish=internalMutation({args:{...ticket,result:v.any()},handler:a
  }
  if(await ctx.db.query("satelliteOwners").withIndex("by_object",q=>q.eq("objectId",r.objectId)).unique())fail("CONFLICT","This reserved satellite already has an owner.");
  const result=raw as SimulateResult;
- if(result.objectId!==r.objectId||result.event.objectA!==r.input.targetObjectId||result.event.objectB!==r.objectId||!result.simulated||!result.event.simulated||result.event.tcaUtc!==r.input.tcaUtc)fail("INVALID_RESPONSE","The simulated result does not match the launch.");
+ if(result.objectId!==r.objectId||result.event.objectA!==r.input.targetObjectId||result.event.objectB!==r.objectId||!result.simulated||!result.event.simulated||!Number.isFinite(Date.parse(result.event.tcaUtc))||Math.abs(Date.parse(result.event.tcaUtc)-Date.parse(r.input.tcaUtc))>600000||Date.parse(result.event.tcaUtc)<=Date.now())fail("INVALID_RESPONSE","The simulated result does not match the launch.");
  const source=await ctx.db.get(r.snapshotId);if(!source)fail("NOT_READY","Snapshot provenance is unavailable.");
- const snapshotId=await ctx.db.insert("snapshots",{snapshotId:`demo:${demoRunId}:${r.objectId}`,ommUrl:source.ommUrl,sources:[...source.sources.filter(s=>s.name!=="simulated"),{name:"simulated",url:null,epochUtc:r.input.tcaUtc,fetchedAt:isoUtc(Date.now())}]});
+ // /simulate refines closest approach within the requested time ±10 min; persist that measured time.
+ const snapshotId=await ctx.db.insert("snapshots",{snapshotId:`demo:${demoRunId}:${r.objectId}`,ommUrl:source.ommUrl,sources:[...source.sources.filter(s=>s.name!=="simulated"),{name:"simulated",url:null,epochUtc:result.event.tcaUtc,fetchedAt:isoUtc(Date.now())}]});
  const target=await findObject(ctx,r.input.targetObjectId);if(!target)fail("NOT_FOUND","The target is no longer registered.");
- const {eventId}=await ingestEncounter(ctx,{snapshotId,objectA:{objectId:target.objectId,name:target.name,country:target.country,launchDate:target.launchDate},objectB:{objectId:r.objectId,name:r.input.name,country:r.input.ownerCountry,launchDate:null},tcaUtc:r.input.tcaUtc,missKm:result.event.missKm,relSpeedKmS:result.event.relSpeedKmS,pcValue:r.input.scenarioPc,simulated:true});
+ const {eventId}=await ingestEncounter(ctx,{snapshotId,objectA:{objectId:target.objectId,name:target.name,country:target.country,launchDate:target.launchDate},objectB:{objectId:r.objectId,name:r.input.name,country:r.input.ownerCountry,launchDate:null},tcaUtc:result.event.tcaUtc,missKm:result.event.missKm,relSpeedKmS:result.event.relSpeedKmS,pcValue:r.input.scenarioPc,simulated:true});
  await ctx.db.patch(eventId,{demoRunId,status:"new"}); // workflow is classified by candidate publication, never guessed from a missing owner.
  await ctx.db.insert("satelliteOwners",{objectId:r.objectId,companyId:r.companyId});
  const ids=assignments.filter(a=>a.active&&a.objectId!==r.input.replaceObjectId).map(a=>a.objectId);
