@@ -11,6 +11,7 @@ import { Flag } from "@/components/ui/OwnerBadge";
 import { STATUS_META } from "@/components/ops/meta";
 import { CallStage, type FlagOf } from "./CallStage";
 import { useSimCall } from "./simCall";
+import { roomCards } from "@/components/roomChat/model";
 import { LiveRoom, useLiveTarget, type LiveTarget } from "./LiveRoom";
 
 // Rooms: one coordination room per incident, with the live call in the middle and the case beside it.
@@ -75,6 +76,8 @@ export function RoomsScreen() {
 /** One room's call. Keyed by room: switching rooms leaves the call, as the real hook does. */
 function RoomCall({ e }: { e: ConjunctionEvent }) {
   const call = useSimCall(e);
+  const replies = useOps((s) => s.replies);
+  const cards = useMemo(() => roomCards(e, replies), [e, replies]);
   const flagOf: FlagOf = (p) => {
     if (p.isTranslator) return null;
     const id = p.identity.replace(/^user-/, "");
@@ -83,6 +86,7 @@ function RoomCall({ e }: { e: ConjunctionEvent }) {
   return (
     <CallStage
       call={call}
+      cards={cards}
       flagOf={flagOf}
       title={`Coordination room · ${e.id}`}
       subtitle={
