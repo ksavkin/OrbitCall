@@ -117,6 +117,16 @@ describe("membership and identity [ACC-2]", () => {
 describe("call.join token (spec §5)", () => {
   const decode = (part: string) => JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
 
+  it("reseeding an existing demo room adds the voice gender to members that have none and hands out no new tokens", async () => {
+    const r = await room();
+    await r.t.run((ctx) => ctx.db.patch(r.ru._id, { voice: undefined })); // a room seeded before the gender existed
+    expect((await r.t.run((ctx) => ctx.db.get(r.ru._id)))!.voice).toBeUndefined();
+    expect(await r.t.mutation(api.call.demo.seed, { roomId: r.roomId })).toEqual({ roomId: r.roomId, tokens: null });
+    const after = await r.t.run((ctx) => ctx.db.query("call_members").collect());
+    expect(after.map((m: any) => m.voice).sort()).toEqual([undefined, "female", "female", "male"].sort());
+    expect(after.find((m: any) => m._id === r.ru._id)).toMatchObject({ voice: "male", devToken: r.ru.devToken });
+  });
+
   it("a 2-hour HS256 LiveKit token for coordination-<roomId> with lang, company and the speaker's voice as signed attributes", async () => {
     const r = await room();
     expect([r.en.voice, r.ru.voice, r.zh.voice, r.observer.voice]).toEqual(["female", "male", "female", undefined]); // seeded genders

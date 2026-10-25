@@ -53,8 +53,8 @@ or voice ids in the answer. The Docker image runs as the unprivileged user `work
 | `STT_KEYTERMS` | glossary terms | comma list, up to 100 |
 | `ANTHROPIC_API_KEY`, `TRANSLATION_MODEL` | `claude-sonnet-5-5` | |
 | `CARTESIA_API_KEY`, `CARTESIA_MODEL_ID` | `sonic-3.6-2026-08-27` | |
-| `CARTESIA_VOICE_EN_MALE`, `CARTESIA_VOICE_EN_FEMALE`, `CARTESIA_VOICE_ZH_MALE`, `CARTESIA_VOICE_ZH_FEMALE` | | Cartesia voice id per gender for en/zh; missing id → that language and gender text-only |
-| `XAI_TTS_VOICE_RU_MALE`, `XAI_TTS_VOICE_RU_FEMALE` | | Grok voice id per gender for ru; missing id → that language and gender text-only |
+| `CARTESIA_VOICE_EN_MALE`, `CARTESIA_VOICE_EN_FEMALE`, `CARTESIA_VOICE_ZH_MALE`, `CARTESIA_VOICE_ZH_FEMALE` | | Cartesia voice id per gender for en/zh; missing id → that gender falls back to the legacy id of its language, else text-only |
+| `XAI_TTS_VOICE_RU_MALE`, `XAI_TTS_VOICE_RU_FEMALE` | | Grok voice id per gender for ru; missing id → that gender falls back to the legacy id, else text-only |
 | `CARTESIA_VOICE_EN`, `CARTESIA_VOICE_ZH`, `XAI_TTS_VOICE_ID` | | legacy ids: fallback for both genders of the language |
 | `TTS_DEFAULT_VOICE` | `female` | voice for a speaker with no `voice` attribute (`male` or `female`) |
 | `CONVEX_SITE_URL`, `CALL_SERVICE_TOKEN` | | phrase ingest |

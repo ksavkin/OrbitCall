@@ -26,8 +26,16 @@ export const seed = internalMutation({
   args: { roomId: v.optional(v.string()) },
   handler: async (ctx, { roomId: given }) => {
     const roomId = given ?? `demo-${randomHex(6)}`;
-    const existing = await ctx.db.query("call_members").withIndex("by_room", (q) => q.eq("roomId", roomId)).first();
-    if (existing) return { roomId, tokens: null }; // tokens are handed out once, when the room's members are created
+    const existing = await ctx.db.query("call_members").withIndex("by_room", (q) => q.eq("roomId", roomId)).collect();
+    if (existing.length) {
+      // Tokens are handed out once, when the room's members are created. A room seeded before the voice gender existed
+      // still gets it here, so reseeding is enough: no new room, no new tokens.
+      for (const m of DEMO_MEMBERS) {
+        const row = existing.find((e) => e.companyId === m.companyId && e.role === m.role);
+        if (m.voice && row && row.voice === undefined) await ctx.db.patch(row._id, { voice: m.voice });
+      }
+      return { roomId, tokens: null };
+    }
     const tokens: Record<string, string> = {};
     for (const m of DEMO_MEMBERS) {
       tokens[m.key] = randomHex(32);

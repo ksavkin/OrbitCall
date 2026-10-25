@@ -82,6 +82,7 @@ receives just the names listed for it, so the voice worker never sees the orbit 
 | `CARTESIA_VOICE_ZH_FEMALE` | `voice` | No | Female Mandarin voice ID (Cartesia). Missing: that gender falls back to the legacy id, else text-only |
 | `XAI_TTS_VOICE_RU_MALE` | `voice` | No | Male Russian voice ID (Grok). Missing: that gender falls back to the legacy id, else text-only |
 | `XAI_TTS_VOICE_RU_FEMALE` | `voice` | No | Female Russian voice ID (Grok). Missing: that gender falls back to the legacy id, else text-only |
+| `TTS_DEFAULT_VOICE` | `voice` | No | `male` or `female`: the voice gender for a speaker whose member row has no `voice` (the Compose default is `female`) |
 | `CONVEX_SITE_URL` | `voice` | No | The shared Convex deployment's `.convex.site` URL (HTTP actions) |
 | `CALL_SERVICE_TOKEN` | `voice` | Yes | Sent as `x-call-service-token` to Convex `POST /call/phrase`; Convex's `CALL_SERVICE_TOKEN` holds the same value |
 

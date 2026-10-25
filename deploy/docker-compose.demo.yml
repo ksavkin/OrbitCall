@@ -68,6 +68,7 @@ services:
       CARTESIA_VOICE_ZH_FEMALE: ${CARTESIA_VOICE_ZH_FEMALE}
       XAI_TTS_VOICE_RU_MALE: ${XAI_TTS_VOICE_RU_MALE}
       XAI_TTS_VOICE_RU_FEMALE: ${XAI_TTS_VOICE_RU_FEMALE}
+      TTS_DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-female}
       CONVEX_SITE_URL: ${CONVEX_SITE_URL}
       CALL_SERVICE_TOKEN: ${CALL_SERVICE_TOKEN:?set CALL_SERVICE_TOKEN}
     # 200 only when the providers, Convex settings and LiveKit registration are ready; 503 while degraded.

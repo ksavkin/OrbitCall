@@ -1,7 +1,10 @@
 """Segments, script guard, zh numeral normalization, config, long-text split."""
 
+from types import SimpleNamespace
+
 import pytest
 
+from orbit_voice.agent import speaker_voice
 from orbit_voice.config import Config
 from orbit_voice.normalize import normalize
 from orbit_voice.pipeline import MAX_TEXT, split_long
@@ -83,6 +86,17 @@ def test_tts_default_voice_reads_env(monkeypatch):
     assert Config().tts_default_voice == "male"
     monkeypatch.setenv("TTS_DEFAULT_VOICE", "Robot")
     assert Config().tts_default_voice == "female"
+
+
+def test_speaker_voice_reads_the_signed_attribute():
+    """The gender comes from the participant attribute `voice` (set by Convex in the join token); anything else is the
+    configured default, never a guess from the name or the language."""
+    participant = lambda attrs: SimpleNamespace(attributes=attrs, identity="user-x", name="Dispatcher RU")  # noqa: E731
+    assert speaker_voice(participant({"voice": "male", "lang": "ru"}), "female") == "male"
+    assert speaker_voice(participant({"lang": "ru"}), "female") == "female"
+    assert speaker_voice(participant({"lang": "ru"}), "male") == "male"
+    assert speaker_voice(participant({"voice": "x"}), "female") == "female"
+    assert speaker_voice(participant({"gender": "male"}), "female") == "female"  # the wrong key is not the attribute
 
 
 def test_health_readiness_needs_every_provider_a_voice_uses(tmp_path, monkeypatch):
