@@ -5,7 +5,7 @@ Source of truth for current scope and stack: [master roadmap v1.1](master-roadma
 > Current product decisions: [assigned-fleet workflow](user-flow.md) and [integration handoff](integration-status.md). Dev on is TLE/simulation; Dev off requires OMM and has no TLE fallback. The old Phase 1 fallback/global-queue descriptions below are implementation history, not the latest real-mode contract. Fleet scope, new sorting, selection/approval and unilateral debris are accepted follow-up requirements.
 
 
-This implements Andrew's five required tasks from [roadmap issue #1](https://github.com/ksavkin/OrbitCall/issues/1). The initial scaffold commit contains an empty `agents.analyst.start({ eventId })`; the following implementation retains that entry point. Operator policies and the Operator Advocate are excluded, as requested. The issue's assignments and feature-branch/PR workflow supersede the original staffing and single-main-branch plan in `plan-v1.md`.
+This covers Andrew's five required tasks from [roadmap issue #1](https://github.com/ksavkin/OrbitCall/issues/1). The initial scaffold commit contains an empty `agents.analyst.start({ eventId })`; the following implementation retains that entry point. The subsequently requested policies and Operator Advocate stretch implementation is documented in [Operator Advocate v1](operator-advocate-v1.md). The issue's assignments and feature-branch/PR workflow supersede the original staffing and single-main-branch plan in `plan-v1.md`.
 
 ## What is implemented
 
@@ -17,7 +17,7 @@ This implements Andrew's five required tasks from [roadmap issue #1](https://git
 | Every number matches the evidence | Field-bound templates, authoritative value substitution, validation repeated inside the publishing transaction |
 | Test event and candidates | `fixtures/events.ts`, `fixtures/candidates.ts` |
 
-The schema is split as requested: `convex/schema/data.ts` holds Kostya's normalized tables (`snapshots`, `spaceObjects`, `events`); `convex/schema/agents.ts` holds Andrew's `agentRuns`; `convex/schema.ts` combines them. Tables store only what a query cannot derive, and only what Phase 1 uses; `convex/lib/events.ts` assembles the analyst's `EventFacts` from them. There are no identity tables until sign-in in Phase 2. The public event response will also need computed fields such as `mySide` and later room/proposal state from the full specification.
+The schema is split as requested: `convex/schema/data.ts` holds Kostya's normalized tables (`snapshots`, `spaceObjects`, `events`); `convex/schema/agents.ts` holds Andrew's run and coordination tables; `convex/schema.ts` combines them. `convex/lib/events.ts` assembles the analyst's `EventFacts` from the catalog tables. The stretch work adds trusted identity/assignment records for protected policy and Advocate endpoints; browser sign-in still belongs to the later integration. The public event response will also need computed fields such as `mySide` and later room/proposal state from the full specification.
 
 The frontend is still its existing implementation. This change supplies a backend query for Adil to connect; it does not replace the frontend's mock engine or implement catalog ingestion. Completion of the whole Phase 1 still requires Kostya's real catalog and event data, frontend wiring, a successful live Claude run and merging the reviewed changes into `main`.
 
@@ -126,7 +126,7 @@ The five lines cover:
 
 The model receives only a projection of public evidence and a small set of allowed wording templates. It selects one exact template per line. Code fills the placeholders from the captured input. The validator rejects added prose, changed placeholders, invented values, swapped fields, changed units, wrong ordering and the wrong number of lines. Publication repeats the validation in the database transaction, and succeeds only for the current attempt and current evidence. This first version intentionally constrains the model's prose rather than accepting arbitrary explanations with a loose numeric-token scan.
 
-Each accepted attempt makes one Claude Messages request, with a 90-second timeout and SDK automatic retries disabled. The runtime records model ID, token usage, progress times, attempt number and a sanitized failure. Failed attempts can be retried explicitly; an identical running or completed attempt is not duplicated. Phase 1 implements only the Incident Analyst call. No private policy is included in its model context.
+Each accepted attempt makes one Claude Messages request, with a 90-second timeout and SDK automatic retries disabled. The runtime records model ID, token usage, progress times, attempt number and a sanitized failure. Failed attempts can be retried explicitly; an identical running or completed attempt is not duplicated. The stretch adds separate Operator Advocate calls using the same progress/failure machinery. No private policy is included in the Analyst's model context.
 
 ## Validation recorded for this change
 
