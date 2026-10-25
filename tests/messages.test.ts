@@ -9,6 +9,7 @@ import { backend, catalogObject, pair, registerSnapshot, type Backend } from "./
 // messages.ts and rooms.ts are new function files and convex/_generated is regenerated on main only (#6), so the
 // tests reference them by path.
 const send = makeFunctionReference<"mutation">("messages:send");
+const hostDebounce = makeFunctionReference<"mutation">("messages:hostDebounce");
 const list = makeFunctionReference<"query">("messages:list");
 const startWorkflow = makeFunctionReference<"mutation">("rooms:startWorkflow");
 const closeIfResolved = makeFunctionReference<"mutation">("rooms:closeIfResolved");
@@ -59,8 +60,11 @@ async function seed() {
   return { t, roomId, crossId: cross.eventId as Id<"events">, eastId: east.eventId as Id<"events"> };
 }
 const texts = async (t: Backend, args: Record<string, unknown>) => ((await as(t, "bo").query(list, args)) as View[]).map(m => m.text);
-const hostRequests = (t: Backend) =>
-  t.run(async ctx => (await ctx.db.system.query("_scheduled_functions").collect()).filter(j => j.name === "hostTriggers:request"));
+const scheduledNamed = (t: Backend, name: string) =>
+  t.run(async ctx => (await ctx.db.system.query("_scheduled_functions").collect()).filter(j => j.name === name));
+const hostRequests = (t: Backend) => scheduledNamed(t, "hostTriggers:request");
+const hostDebounces = (t: Backend) => scheduledNamed(t, "messages:hostDebounce");
+const drain = (t: Backend) => t.finishAllScheduledFunctions(vi.runAllTimers);
 const proposalFor = (t: Backend, eventId: Id<"events">) =>
   t.run(ctx => currentProposal(ctx, eventId));
 
@@ -133,7 +137,7 @@ describe("messages", () => {
     expect(await code(as(t, "bo").query(list, { roomId, before: "yesterday" }))).toBe("VALIDATION");
   });
 
-  it("writes one messages row and queues one host request, with no caption, agent run or approval", async () => {
+  it("writes one messages row and queues one host debounce, with no caption, agent run or approval", async () => {
     const { t, roomId } = await seed();
     const counts = () => t.run(async ctx => ({
       call_phrases: (await ctx.db.query("call_phrases").collect()).length,
@@ -149,24 +153,56 @@ describe("messages", () => {
     expect(await counts()).toEqual({ ...before, messages: before.messages + 1, scheduled: before.scheduled + 1 });
   });
 
-  it("schedules exactly one final_message host request per human line, which starts one host run", async () => {
-    const { t, roomId, crossId } = await seed();
+  it("collapses lines at 0, 2, 4, 7 and 10 seconds into one host request and one host run", async () => {
+    const { t, roomId } = await seed();
     const before = (await hostRequests(t)).length;
-    await as(t, "ana").mutation(send, { roomId, text: "We can move 0.2 m/s" });
+    for (const [i, text] of ["zero", "two", "four", "seven", "ten"].entries()) {
+      vi.setSystemTime(FIXTURE_NOW + [0, 2, 4, 7, 10][i] * 1000);
+      await as(t, "ana").mutation(send, { roomId, text });
+    }
+    expect(await hostDebounces(t)).toHaveLength(5);
+    expect(await hostRequests(t)).toHaveLength(before);
+    await drain(t);
     const queued = (await hostRequests(t)).slice(before);
     expect(queued.map(j => j.args)).toEqual([[{ roomId, trigger: "final_message" }]]);
-    await as(t, "bo").mutation(send, { roomId, eventId: crossId, text: "Понял" });
-    expect((await hostRequests(t)).length).toBe(before + 2);
-    // The queued request is the host contract's own entry point; it records one running final_message run.
-    const hostRunId = await t.mutation(internal.hostTriggers.request, queued[0].args[0] as { roomId: Id<"rooms">; trigger: "final_message" });
+    expect(await t.run(ctx => ctx.db.query("hostRuns").collect())).toHaveLength(1);
+  });
+
+  it("requests the host once for one isolated line", async () => {
+    const { t, roomId } = await seed();
+    await as(t, "ana").mutation(send, { roomId, text: "We can move 0.2 m/s" });
+    expect(await hostRequests(t)).toHaveLength(0);
+    await drain(t);
+    expect((await hostRequests(t)).map(j => j.args)).toEqual([[{ roomId, trigger: "final_message" }]]);
+    expect(await t.run(ctx => ctx.db.query("hostRuns").collect())).toHaveLength(1);
+  });
+
+  it("debounces each room separately", async () => {
+    const { t, roomId, eastId } = await seed();
+    const { roomId: eastRoom } = await as(t, "cy").mutation(startWorkflow, { eventId: eastId }) as { roomId: Id<"rooms"> };
+    await as(t, "ana").mutation(send, { roomId, text: "north" });
+    await as(t, "cy").mutation(send, { roomId: eastRoom, text: "east" });
+    await drain(t);
+    const args = (await hostRequests(t)).map(j => j.args[0] as { roomId: Id<"rooms">; trigger: string });
+    expect(args.map(a => a.roomId).sort()).toEqual([roomId, eastRoom].sort());
+    expect(args.every(a => a.trigger === "final_message")).toBe(true);
     const runs = await t.run(ctx => ctx.db.query("hostRuns").collect());
-    expect(runs.map(r => ({ id: r._id, roomId: r.roomId, trigger: r.trigger, status: r.status })))
-      .toEqual([{ id: hostRunId, roomId, trigger: "final_message", status: "running" }]);
+    expect(runs.map(r => r.roomId).sort()).toEqual([roomId, eastRoom].sort());
+  });
+
+  it("starts no host run when the room closes during the debounce", async () => {
+    const { t, roomId, crossId } = await seed();
+    await as(t, "ana").mutation(send, { roomId, text: "agreed" });
+    await t.run(ctx => ctx.db.patch(crossId, { status: "approved" }));
+    await t.mutation(closeIfResolved, { eventId: crossId });
+    await drain(t);
+    expect(await t.run(ctx => ctx.db.query("hostRuns").collect())).toHaveLength(0);
   });
 
   it("does not start a second host run for the host's own agent lines", async () => {
     const { t, roomId } = await seed();
-    await as(t, "ana").mutation(send, { roomId, text: "We can move 0.2 m/s" });
+    const { messageId } = await as(t, "ana").mutation(send, { roomId, text: "We can move 0.2 m/s" });
+    await t.mutation(hostDebounce, { roomId, messageId });
     const [job] = await hostRequests(t);
     const args = job.args[0] as { roomId: Id<"rooms">; trigger: "final_message" };
     const hostRunId = await t.mutation(internal.hostTriggers.request, args);
@@ -187,7 +223,8 @@ describe("messages", () => {
 
   it("turns a request queued before the room closed into a no-op", async () => {
     const { t, roomId, crossId } = await seed();
-    await as(t, "ana").mutation(send, { roomId, text: "agreed" });
+    const { messageId } = await as(t, "ana").mutation(send, { roomId, text: "agreed" });
+    await t.mutation(hostDebounce, { roomId, messageId });
     const [job] = await hostRequests(t);
     await t.run(ctx => ctx.db.patch(crossId, { status: "approved" }));
     await t.mutation(closeIfResolved, { eventId: crossId });
@@ -195,21 +232,29 @@ describe("messages", () => {
     expect(await t.run(async ctx => (await ctx.db.query("hostRuns").collect()).length)).toBe(0);
   });
 
-  it("schedules no host request for a rejected send or a system line", async () => {
+  it("schedules nothing for a rejected send or an agent or system line", async () => {
     const { t, roomId, crossId, eastId } = await seed();
-    const before = (await hostRequests(t)).length;
+    const beforeRequests = (await hostRequests(t)).length;
+    const beforeDebounces = (await hostDebounces(t)).length;
     expect(await code(as(t, "ana").mutation(send, { roomId, text: "   " }))).toBe("VALIDATION");
     expect(await code(as(t, "ana").mutation(send, { roomId, eventId: eastId, text: "elsewhere" }))).toBe("VALIDATION");
     expect(await code(as(t, "cy").mutation(send, { roomId, text: "hi" }))).toBe("FORBIDDEN");
     expect(await code(as(t, "hoa").mutation(send, { roomId, text: "hi" }))).toBe("FORBIDDEN");
-    expect(await hostRequests(t)).toHaveLength(before);
+    await t.run(ctx => ctx.db.insert("messages", {
+      roomId, eventId: null, author: { kind: "agent", role: "coordination_host", companyId: null }, kind: "text",
+      originalText: "host line", originalLang: "en", translations: {}, translationStatus: {}, values: [], refs: {},
+      form: null, demoRunId: null, simulated: false, createdAt: Date.now(),
+    }));
+    expect(await hostRequests(t)).toHaveLength(beforeRequests);
+    expect(await hostDebounces(t)).toHaveLength(beforeDebounces);
     // Closing the room writes a system line; it never queues the host, and later human lines are refused.
     await t.run(ctx => ctx.db.patch(crossId, { status: "approved" }));
     await t.mutation(closeIfResolved, { eventId: crossId });
     const lines = await t.run(ctx => ctx.db.query("messages").collect());
-    expect(lines.map(m => m.author.kind)).toEqual(["system"]);
+    expect(lines.map(m => m.author.kind)).toEqual(["agent", "system"]);
     expect(await code(as(t, "ana").mutation(send, { roomId, text: "late" }))).toBe("INVALID_STATE");
-    expect(await hostRequests(t)).toHaveLength(before);
+    expect(await hostRequests(t)).toHaveLength(beforeRequests);
+    expect(await hostDebounces(t)).toHaveLength(beforeDebounces);
   });
 
   it("lets everyone discuss until a decision opens, then only the side in turn", async () => {
