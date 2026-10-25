@@ -289,14 +289,59 @@ describe("publication freshness and authorization", () => {
 
   it("allows a responsible operator without room presence while enforcing current decision turns", async () => {
     const s = await setup();
+    const automatic = await s.t.run(ctx => ctx.db.query("log").collect());
+    expect(automatic.filter(l => l.after?.kind === "revision_queued")).toEqual([expect.objectContaining({
+      eventId: s.eventId, action: "negotiation", after: expect.objectContaining({ hostRunId: s.hostRunId, origin: "automatic" }),
+    })]);
     await s.t.run(async ctx => { for (const member of await ctx.db.query("roomMembers").collect()) await ctx.db.patch(member._id, { inRoom: false, inCall: false }); });
     expect(await as(s.t, "a").mutation(api.revisions.request, { eventId: s.eventId, hostRunId: s.hostRunId })).toEqual({ accepted: true, alreadyApplied: false });
     await as(s.t, "a").mutation(api.revisions.request, { eventId: s.eventId, hostRunId: s.hostRunId });
     const queued = await s.t.run(ctx => ctx.db.system.query("_scheduled_functions").collect());
     expect(queued.filter(j => j.name === "revisions:fromHost")).toHaveLength(1);
+    expect((await s.t.run(ctx => ctx.db.query("log").collect())).filter(l => l.action === "agents_rerun")).toEqual([]);
     await pick(s.t, "a", s.eventId, "P1");
     expect(await code(as(s.t, "b").mutation(api.revisions.request, { eventId: s.eventId, hostRunId: s.hostRunId }))).toBe("INVALID_STATE");
     expect(await code(s.t.mutation(api.revisions.request, { eventId: s.eventId, hostRunId: s.hostRunId }))).toBe("UNAUTHENTICATED");
+  });
+
+  it("allows three counted manual retries after automatic failure without duplicating pending work", async () => {
+    const s = await setup(), before = await cards(s);
+    await s.t.run(async ctx => {
+      for (const job of await ctx.db.system.query("_scheduled_functions").collect()) {
+        if (job.state.kind === "pending" && job.name !== "revisions:fromHost") await ctx.scheduler.cancel(job._id);
+      }
+    });
+    const fetch = vi.fn(async () => Response.json({ error: "Unavailable in this test" }, { status: 503 }));
+    vi.stubGlobal("fetch", fetch);
+    await s.t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const automatic = (await s.t.run(ctx => ctx.db.query("log").collect())).find(l => l.after?.kind === "revision_queued")!;
+    expect((await s.t.run(ctx => ctx.db.system.get(automatic.after!.scheduledId as Id<"_scheduled_functions">)))?.state.kind).toBe("success");
+    expect((await s.t.run(ctx => ctx.db.query("log").collect())).some(l => l.after?.revisionError)).toBe(true);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await as(s.t, "a").mutation(api.revisions.request, { eventId: s.eventId, hostRunId: s.hostRunId });
+      await as(s.t, "a").mutation(api.revisions.request, { eventId: s.eventId, hostRunId: s.hostRunId });
+      const jobs = await s.t.run(ctx => ctx.db.system.query("_scheduled_functions").collect());
+      expect(jobs.filter(j => j.name === "revisions:fromHost" && j.state.kind === "pending")).toHaveLength(1);
+      const logs = (await s.t.run(ctx => ctx.db.query("log").collect())).filter(l => l.action === "agents_rerun");
+      expect(logs.map(l => l.after?.attempt)).toEqual(Array.from({ length: attempt }, (_, i) => i + 1));
+      await s.t.finishAllScheduledFunctions(vi.runAllTimers);
+    }
+    expect(await code(as(s.t, "a").mutation(api.revisions.request, { eventId: s.eventId, hostRunId: s.hostRunId }))).toBe("RETRY_LIMIT");
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(await cards(s)).toEqual(before);
+  });
+
+  it("records automatic queue ownership without parsing unsupported source text inside Host publication", async () => {
+    const s = await setup({ text: "We cannot move while the payload is busy." });
+    expect((await s.t.run(ctx => ctx.db.get(s.hostRunId)))?.status).toBe("succeeded");
+    expect((await s.t.run(ctx => ctx.db.query("understood").collect()))[0]).toMatchObject({ status: "active", hard: true });
+    const logs = await s.t.run(ctx => ctx.db.query("log").collect());
+    expect(logs.filter(l => l.after?.kind === "revision_queued")).toHaveLength(1);
+    const fetch = orbit();
+    expect(await run(s)).toEqual([expect.objectContaining({ status: "failed", code: "CLARIFICATION_REQUIRED" })]);
+    expect(fetch).not.toHaveBeenCalled();
+    expect((await s.t.run(ctx => ctx.db.get(s.hostRunId)))?.status).toBe("succeeded");
   });
 
   it("refuses an earlier checked request once a newer Host discussion has succeeded", async () => {
