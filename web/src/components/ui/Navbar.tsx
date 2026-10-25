@@ -5,6 +5,7 @@ import { Search, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fmtUtc } from "@/lib/format";
 import { sfx } from "@/lib/sound";
+import { AccountMenu } from "@/components/auth/AccountMenu";
 import { useOrbit } from "@/lib/store";
 import { useOps, type Tab } from "@/lib/ops/store";
 import { LogoMark } from "./Logo";
@@ -91,6 +92,7 @@ export function Navbar() {
         <SourcePill source={source} />
         <UtcClock />
         <div className="mx-0.5 h-4 w-px bg-white/10" />
+        <AccountMenu />
         <Tooltip label={soundOn ? "Mute sounds" : "Enable sounds"} hint="M">
           <button
             className="icon-btn"

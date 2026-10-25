@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowRight, Loader2, Play, Radar, ShieldAlert, X } from "lucide-react";
+import { ArrowRight, Loader2, Lock, Play, Radar, ShieldAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtChance, fmtCountdown, fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { runIncident, runScan } from "@/lib/ops/scenarios";
@@ -14,6 +14,7 @@ import { useNow } from "@/lib/useNow";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { RESOLVED } from "./meta";
+import { useMe } from "@/components/auth/session";
 import { PcChart } from "./PcChart";
 
 /** Stable fallback: a new {} per render would loop the store subscription. */
@@ -38,6 +39,8 @@ export function ScanButton() {
   const dev = useOps((s) => s.dev);
   const phase = useOps((s) => s.scan.phase);
   const ready = useOrbit((s) => !!s.catalog);
+  const me = useMe();
+  const allowed = me?.access === "granted";
   const scanning = phase === "scanning";
   // one case at a time: scanning again would pull the dispatcher away from it
   const busy = useOps((s) => {
@@ -47,16 +50,19 @@ export function ScanButton() {
   const btn = (
     <button
       className="btn btn-primary h-8 w-full gap-1.5 text-[12px]"
-      disabled={!dev || !ready || scanning || !!busy}
+      disabled={!dev || !ready || scanning || !!busy || !allowed}
       onClick={() => {
         sfx.ping();
         runScan();
       }}
     >
-      {scanning || busy ? <Loader2 size={13} className="animate-spin" /> : <Radar size={13} />}
+      {scanning || busy ? <Loader2 size={13} className="animate-spin" /> : allowed ? <Radar size={13} /> : <Lock size={12} />}
       {scanning ? "Scanning 18k objects…" : busy ? `Case in progress · ${busy}` : "Run scan"}
     </button>
   );
+  // the server refuses scans for accounts without a provisioned fleet; the button says so before anyone clicks
+  if (!me) return <Tooltip label="Sign in to scan your fleet">{btn}</Tooltip>;
+  if (!allowed) return <Tooltip label="Your account has no scan access yet. Request it in your profile.">{btn}</Tooltip>;
   if (!dev) return <Tooltip label="Triggers the Risk Monitor once the backend is connected">{btn}</Tooltip>;
   if (busy) return <Tooltip label="Finish or close the current case before scanning again">{btn}</Tooltip>;
   return btn;
