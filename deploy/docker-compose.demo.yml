@@ -22,21 +22,19 @@ services:
       context: ../services/orbit
     restart: unless-stopped
     expose:
-      - "8000"
+      - "3610"
     environment:
       ORBIT_SERVICE_TOKEN: ${ORBIT_SERVICE_TOKEN:?set ORBIT_SERVICE_TOKEN}
       ORBIT_SNAPSHOT_ID: ${ORBIT_SNAPSHOT_ID:-gp-20261024T2134Z}
-      ORBIT_SNAPSHOT_DIR: /data/snapshots
-      ORBIT_RESULTS_DIR: /data/results
+    # One writable data folder (ORBIT_DATA, the image default): pinned snapshots in, jobs/ sim/ validation/ out.
     volumes:
-      - orbit_snapshots:/data/snapshots:ro
-      - orbit_results:/data/results
+      - orbit_data:/service/data
     healthcheck:
       test:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3610/health', timeout=4)"
       interval: 15s
       timeout: 5s
       retries: 5
@@ -84,7 +82,6 @@ services:
     logging: *logging
 
 volumes:
-  orbit_snapshots:
-  orbit_results:
+  orbit_data:
   caddy_data:
   caddy_config:
