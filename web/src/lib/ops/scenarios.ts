@@ -1,7 +1,7 @@
 "use client";
 
 import { Cancelled, engine, makeEvent, partyOf, pickObject, screeningPass, type Decision, type Engine } from "./engine";
-import { fmtMiss, fmtPc, fmtWhen } from "./format";
+import { fmtMiss, fmtOdds, fmtPc, fmtWhen } from "./format";
 import { useOps } from "./store";
 import type { ConjunctionEvent, DecisionOption, Proposal } from "./types";
 
@@ -175,7 +175,7 @@ async function analyze(eng: Engine, gen: number, e: ConjunctionEvent, crossDeg: 
   // short sentences; names are turned into object links by the UI, numbers set in mono
   const summary = [
     `${e.a.name} and ${e.b.name} pass ${fmtMiss(e.missM)} apart on ${fmtWhen(e.tca)}.`,
-    `Pc ${fmtPc(e.pc)} (${e.pcSource}), rising for 24 h. They cross at ${crossDeg}° and ${e.relVelKms.toFixed(1)} km/s.`,
+    `Chance of collision ${fmtOdds(e.pc)} (${e.pcSource}), rising for 24 h. They cross at ${crossDeg}° and ${e.relVelKms.toFixed(1)} km/s.`,
     `US orbit data says ${fmtMiss(e.missM)}, the operator's says ${fmtMiss(e.missM + e.uncertaintyM)}. Uncertainty ±${fmtMiss(e.uncertaintyM)}.`,
     `${Math.abs(Math.round(e.where.lat))}°${e.where.lat >= 0 ? "N" : "S"} ${Math.abs(Math.round(e.where.lon))}°${e.where.lon >= 0 ? "E" : "W"}, ${Math.round(e.where.altKm)} km up.`,
     e.b.kind === "debris" ? `${e.a.name} raises, lowers, or waits for the next CDM. Debris can't move.` : `${e.a.name} raises, ${e.b.name} lowers, or both wait for the next CDM.`,
@@ -191,7 +191,7 @@ async function analyze(eng: Engine, gen: number, e: ConjunctionEvent, crossDeg: 
       tokensIn: 11_420,
       tokensOut: 742,
       cacheRead: 8_960,
-      reasoning: `Both element sets are fresh (A's epoch is under a day old). The GP and SupGP solutions disagree by ${fmtMiss(e.uncertaintyM)}${e.uncertaintyM >= e.missM ? ", more than the miss itself, so the two objects may be closer than either solution says" : `, about ${Math.round((e.uncertaintyM / e.missM) * 100)}% of the miss, so the encounter can't be ruled out on data quality`}. Pc ${fmtPc(e.pc)} is above the 1e-4 action line. The geometry is a ${crossDeg}° crossing, so an along-track phasing burn is efficient: a small Δv ahead of time shifts the arrival time and opens the miss perpendicular to the relative velocity. I'll give three options in the fixed set (raise, lower, wait) and leave the choice to the advocates.`,
+      reasoning: `Both element sets are fresh (A's epoch is under a day old). The GP and SupGP solutions disagree by ${fmtMiss(e.uncertaintyM)}${e.uncertaintyM >= e.missM ? ", more than the miss itself, so the two objects may be closer than either solution says" : `, about ${Math.round((e.uncertaintyM / e.missM) * 100)}% of the miss, so the encounter can't be ruled out on data quality`}. The chance of collision, ${fmtOdds(e.pc)}, is above the 1 in 10,000 action line. The geometry is a ${crossDeg}° crossing, so an along-track phasing burn is efficient: a small Δv ahead of time shifts the arrival time and opens the miss perpendicular to the relative velocity. I'll give three options in the fixed set (raise, lower, wait) and leave the choice to the advocates.`,
       output: { summary, options: e.b.kind === "debris" ? ["A raise", "A lower", "wait"] : ["A raise", "B lower", "wait"] },
     },
     3400,
@@ -381,7 +381,7 @@ function optionsFor(e: ConjunctionEvent, pr: Proposal): DecisionOption[] {
     const g = (p.fuelKg * 1000).toFixed(1);
     const why =
       sh.action === "wait"
-        ? `No burn. Pc stays ${fmtPc(e.pc)} until the next CDM.`
+        ? `No burn. The chance stays ${fmtOdds(e.pc)} until the next CDM.`
         : sh.mover === "b"
           ? `Uses B's chemical thruster: ${g} g, B has ${CRAFT_B.fuelReservePct}% fuel left.`
           : sh.leadH < 6
@@ -401,6 +401,9 @@ function optionsFor(e: ConjunctionEvent, pr: Proposal): DecisionOption[] {
 
 async function openRoom(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal) {
   const id = e.id;
+  eng.update(id, (ev) => ({
+    proposals: [...(ev.proposals ?? []).filter((x) => x.version !== pr.version), pr],
+  }));
   eng.update(id, {
     proposal: pr,
     options: optionsFor(e, pr),
@@ -435,14 +438,26 @@ async function askHumans(eng: Engine, gen: number, e: ConjunctionEvent, pr: Prop
   return { a, b: b ?? { decision: "approved" as const } };
 }
 
+/** Hard "no" a side has stated in the room: the simulated operator keeps it in every later round. */
+const hardNo = new Map<string, { side: "a" | "b"; note: string; original?: string; lang?: string }>();
+
+const partyName = (e: ConjunctionEvent, side: "a" | "b") =>
+  (e.parties?.find((p) => p.role === side)?.operator ?? `Operator ${side.toUpperCase()}`).replace(/\s*\(synthetic\)/i, "");
+
+const planWords = (e: ConjunctionEvent, p: Pick<Proposal, "mover" | "action" | "dvMs">) =>
+  p.action === "wait" ? "wait for the next CDM" : `${p.mover === "a" ? e.a.name : e.b.name} ${p.action}s ${p.dvMs} m/s`;
+
 /** Ask both sides until they approve; a veto or counter sends the agents back (AGT-4, ROOM-11). */
-async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Proposal, autoA: Decision, autoB: Decision, initial?: { a: Decision; b: Decision }) {
+async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Proposal, autoA: Decision, autoB: Decision, initial?: { a: Decision; b: Decision }): Promise<Proposal | null> {
   let pr = first;
   for (let round = 0; round < 4; round++) {
-    const r =
-      round === 0 && initial
-        ? initial
-        : await askHumans(eng, gen, eng.event(e.id)!, pr, round === 0 ? autoA : { decision: "approved" }, round === 0 ? autoB : { decision: "approved" });
+    // a simulated side that said "no" to moving keeps saying it when a plan moves it again
+    const auto = (side: "a" | "b", first: Decision): Decision => {
+      const hn = hardNo.get(e.id);
+      if (hn && hn.side === side && pr.mover === side) return { decision: "vetoed", note: hn.note, original: hn.original, lang: hn.lang };
+      return round === 0 ? first : { decision: "approved" };
+    };
+    const r = round === 0 && initial ? initial : await askHumans(eng, gen, eng.event(e.id)!, pr, auto("a", autoA), auto("b", autoB));
     const no = r.a.decision !== "approved" ? { side: "A", d: r.a } : r.b.decision !== "approved" ? { side: "B", d: r.b } : null;
     if (!no) return pr;
     eng.update(e.id, { status: "agents", agentsWorking: true, approvals: { a: "pending", b: "pending" } });
@@ -463,8 +478,8 @@ async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Propo
           dvMs: pref.action === "wait" ? 0 : pr.dvMs || 0.05,
           leadH: pref.action === "wait" ? 0 : pref.mover === "b" ? 8 : 6,
           crossDeg: crossOf(e),
-          rationale: `Operator ${no.side} chose this option${no.d.note ? `: “${no.d.note}”` : ""}. Recomputed with SGP4.`,
-          reason: `Operator ${no.side} chose another option`,
+          rationale: `${partyName(e, no.side === "A" ? "a" : "b")} picked “${planWords(e, { mover: pref.mover, action: pref.action, dvMs: pref.action === "wait" ? 0 : pr.dvMs || 0.05 })}” instead of the agents' “${planWords(e, pr)}”${no.d.note ? ` and said: “${no.d.note}”` : ""}. SGP4 recomputed the new plan before it went back to both sides.`,
+          reason: `${partyName(e, no.side === "A" ? "a" : "b")} picked a different plan`,
         })
       : proposal(eng.event(e.id)!, {
       version: pr.version + 1,
@@ -474,9 +489,9 @@ async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Propo
       leadH: later ? Math.max(((pr.burnAt ? e.tca - pr.burnAt : 6 * 3600_000) / 3600_000) - 2, 2) : 6,
       crossDeg: crossOf(e),
       rationale: later
-        ? `Burn moved 2 h later as Operator ${no.side} asked; Δv raised to keep the miss.`
-        : `Operator ${no.side} rejected moving; the other side moves instead.`,
-      reason: `Operator ${no.side} ${no.d.decision}${no.d.note ? `: “${no.d.note}”` : ""}`,
+        ? `${partyName(e, no.side === "A" ? "a" : "b")} asked for a later burn${no.d.note ? ` (“${no.d.note}”)` : ""}. The burn moves 2 h later and Δv goes up to keep the same miss.`
+        : `${partyName(e, no.side === "A" ? "a" : "b")} rejected “${planWords(e, pr)}”${no.d.note ? ` because “${no.d.note}”` : ""}. The other satellite moves instead.`,
+      reason: `${partyName(e, no.side === "A" ? "a" : "b")} ${no.d.decision === "vetoed" ? "rejected" : "countered"} v${pr.version}${no.d.note ? `: “${no.d.note}”` : ""}`,
         });
     await eng.span(
       {
@@ -497,7 +512,10 @@ async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Propo
     await openRoom(eng, gen, eng.event(e.id)!, next);
     pr = next;
   }
-  return pr;
+  // four rounds without agreement: hand it to the people, never schedule a rejected plan (AGT-10)
+  eng.update(e.id, { status: "needs_decision", agentsWorking: false });
+  eng.log("analyst", `${e.id} no plan both sides accept after 4 rounds · needs operator decision`, "warn", { eventId: e.id });
+  return null;
 }
 
 type Affected = { operator: string; owner: string; satellite: string };
@@ -519,7 +537,7 @@ async function scheduleAndVerify(eng: Engine, gen: number, e: ConjunctionEvent, 
     // both sides agreed to wait: nothing to schedule, keep watching (ROOM-2)
     eng.update(id, { status: "monitoring", agentsWorking: false });
     eng.log("host", `${id} both sides agreed to wait · monitoring until the next CDM`, "info", { eventId: id });
-    checkDone(eng, id, "Both sides agreed to wait", `No burn. Pc ${fmtPc(e.pc)} stays under watch`);
+    checkDone(eng, id, "Both sides agreed to wait", `No burn. A ${fmtOdds(e.pc)} chance stays under watch`);
     resolve(eng, id, [`Risk Monitor re-checks ${id} with every new CDM until ${fmtWhen(e.tca)}`, "Either side can reopen the room from the inbox", "Decision and both answers are in the audit log"]);
     return true;
   }
@@ -652,15 +670,16 @@ export const SCENARIOS: Scenario[] = [
       const day = fmtWhen(v1.burnAt!).split(" ")[0];
       const ru = `У меня съёмка ${RU_DAY[day] ?? day}, двигаться не могу`;
       const r1 = await askHumans(eng, gen, e, v1, { decision: "approved" }, { decision: "vetoed", note: `imaging pass on ${day}, I can't move`, original: ru, lang: "Russian" });
+      if (r1.b.decision !== "approved") hardNo.set(e.id, { side: "b", note: `imaging pass on ${day}, I can't move`, original: ru, lang: "Russian" });
       if (r1.a.decision !== "approved") {
         // the dispatcher chose differently: the generic revision path takes over
         const fin = await agree(eng, gen, e, v1, { decision: "approved" }, { decision: "approved" }, r1);
-        await scheduleAndVerify(eng, gen, e, fin);
+        if (fin) await scheduleAndVerify(eng, gen, e, fin);
       } else if (r1.b.decision !== "approved") {
         eng.log("host", `Translated from Russian: “${ru}” → “imaging pass on ${day}, I can't move”`, "info", { eventId: e.id });
         eng.update(e.id, { status: "agents", agentsWorking: true, approvals: { a: "pending", b: "pending" } });
         await eng.span({ agent: "host", target: "advocateB", kind: "handoff", name: "New hard constraint from B", eventId: e.id, input: { constraint: `no burn on ${day} (imaging)`, source: "room message, voice" } }, 300, gen);
-        const v2 = proposal(e, { version: 2, mover: "a", action: "raise", dvMs: 0.05, leadH: 6, crossDeg: cross, rationale: `A raises: B has a hard no-move window on ${day}; A has ${CRAFT_A.fuelReservePct}% fuel and an electric thruster.`, reason: "Operator B veto: imaging pass" });
+        const v2 = proposal(e, { version: 2, mover: "a", action: "raise", dvMs: 0.05, leadH: 6, crossDeg: cross, rationale: `${partyName(e, "b")} can't move ${e.b.name}: an imaging pass on ${day} is a hard no-move window. ${e.a.name} has ${CRAFT_A.fuelReservePct}% fuel and an electric thruster, so it moves instead.`, reason: `${partyName(e, "b")} rejected v1: imaging pass on ${day}` });
         await negotiate(eng, gen, e, {
           first: v2,
           constraintB: `${day} imaging pass`,
@@ -673,7 +692,7 @@ export const SCENARIOS: Scenario[] = [
         await check(eng, gen, e, v2);
         await openRoom(eng, gen, e, v2);
         const fin = await agree(eng, gen, e, v2, { decision: "approved" }, { decision: "approved" });
-        await scheduleAndVerify(eng, gen, e, fin, false, { operator: "Hoshi Imaging (synthetic)", owner: "JPN", satellite: "HOSHI-3 (SYN)" });
+        if (fin) await scheduleAndVerify(eng, gen, e, fin, false, { operator: "Hoshi Imaging (synthetic)", owner: "JPN", satellite: "HOSHI-3 (SYN)" });
       } else {
         await scheduleAndVerify(eng, gen, e, v1);
       }
@@ -699,7 +718,7 @@ export const SCENARIOS: Scenario[] = [
       await check(eng, gen, e, v1);
       await openRoom(eng, gen, e, v1);
       const fin = await agree(eng, gen, e, v1, { decision: "approved" }, { decision: "approved" });
-      await scheduleAndVerify(eng, gen, e, fin);
+      if (fin) await scheduleAndVerify(eng, gen, e, fin);
     },
   },
   {
@@ -716,7 +735,7 @@ export const SCENARIOS: Scenario[] = [
       await check(eng, gen, e, v1);
       await openRoom(eng, gen, e, v1);
       const fin1 = await agree(eng, gen, e, v1, { decision: "approved" }, { decision: "approved" });
-      const ok = await scheduleAndVerify(eng, gen, e, fin1, true);
+      const ok = fin1 ? await scheduleAndVerify(eng, gen, e, fin1, true) : true;
       if (!ok) {
         eng.log("scheduler", "Refused: the burn creates a 410 m conjunction in 19 h. Back to the agents with that as a constraint.", "error", { eventId: e.id });
         eng.update(e.id, { status: "agents", agentsWorking: true, approvals: { a: "pending", b: "pending" } });
@@ -726,7 +745,7 @@ export const SCENARIOS: Scenario[] = [
         await check(eng, gen, e, v2);
         await openRoom(eng, gen, e, v2);
         const fin = await agree(eng, gen, e, v2, { decision: "approved" }, { decision: "approved" });
-        await scheduleAndVerify(eng, gen, e, fin, false, { operator: "Hoshi Imaging (synthetic)", owner: "JPN", satellite: "HOSHI-3 (SYN)" });
+        if (fin) await scheduleAndVerify(eng, gen, e, fin, false, { operator: "Hoshi Imaging (synthetic)", owner: "JPN", satellite: "HOSHI-3 (SYN)" });
       }
     },
   },
@@ -744,7 +763,7 @@ export const SCENARIOS: Scenario[] = [
       await check(eng, gen, e, v1, true);
       await openRoom(eng, gen, e, v1);
       const fin = await agree(eng, gen, e, v1, { decision: "approved" }, { decision: "approved" });
-      await scheduleAndVerify(eng, gen, e, fin);
+      if (fin) await scheduleAndVerify(eng, gen, e, fin);
     },
   },
   {
@@ -771,7 +790,7 @@ export const SCENARIOS: Scenario[] = [
       await check(eng, gen, e, v1);
       await openRoom(eng, gen, e, v1);
       const fin = await agree(eng, gen, e, v1, { decision: "approved" }, { decision: "approved" });
-      await scheduleAndVerify(eng, gen, e, fin);
+      if (fin) await scheduleAndVerify(eng, gen, e, fin);
     },
   },
   {

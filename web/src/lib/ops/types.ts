@@ -120,6 +120,8 @@ export interface ConjunctionEvent {
   /** Where the encounter happens, for the globe and the summary. */
   where: { lat: number; lon: number; altKm: number };
   proposal: Proposal | null;
+  /** Every plan version shown to the dispatchers, oldest first (ROOM-11, LOG-6). */
+  proposals?: Proposal[];
   approvals: { a: Approval; b: Approval };
   /** Five-line Incident Analyst summary (AGT-2). */
   summary: string[] | null;
