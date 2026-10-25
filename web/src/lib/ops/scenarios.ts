@@ -416,7 +416,7 @@ async function openRoom(eng: Engine, gen: number, e: ConjunctionEvent, pr: Propo
   const label = `P${options.indexOf(selected) + 1}`;
   const revision = (prev?.proposals ?? []).filter((x) => x.mover === pr.mover && x.action === pr.action && x.version !== pr.version).length + 1;
   eng.update(id, (ev) => ({
-    proposals: [...(ev.proposals ?? []).filter((x) => x.version !== pr.version), pr],
+    proposals: [...(ev.proposals ?? []).filter((x) => x.version !== pr.version), { ...pr, publishedAt: Date.now(), label, revision, by }],
   }));
   eng.update(id, (ev) => ({
     proposal: pr,

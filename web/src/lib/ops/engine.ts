@@ -277,6 +277,13 @@ export class Engine {
     this.humanWaits.delete(key);
     const version = useOps.getState().humans.find((h) => h.eventId === eventId && h.side === side)?.proposalVersion;
     useOps.setState((s) => ({ humans: s.humans.filter((h) => !(h.eventId === eventId && h.side === side)) }));
+    // an answer without a label (autopilot) is about the shared selection at that moment
+    if (!d.label && d.via !== "message") {
+      const ev = this.event(eventId);
+      const i = ev?.options?.findIndex((o) => o.id === ev.selection?.optionId) ?? -1;
+      if (i >= 0) d = { ...d, label: `P${i + 1}` };
+    }
+    if (!d.via) d = { ...d, via: d.decision === "approved" ? "approve" : d.decision === "vetoed" ? "veto" : d.preferred ? "select" : "message" };
     this.update(eventId, (e) => ({ approvals: { ...e.approvals, [side]: d.decision } }));
     useOps.setState((s) => ({
       replies: [...s.replies.slice(-30), { eventId, side, decision: d.decision, via: d.via, label: d.label, version, note: d.note, original: d.original, lang: d.lang, t: Date.now() }],

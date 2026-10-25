@@ -67,6 +67,11 @@ export interface Proposal {
   rationale: string;
   /** Message or rule that caused this revision. */
   reason?: string;
+  /** When the room got this revision, its card label and revision ("P2", 1) and who put it there. */
+  publishedAt?: number;
+  label?: string;
+  revision?: number;
+  by?: "a" | "b" | "agents";
 }
 
 export type Approval = "pending" | "approved" | "vetoed" | "countered";
