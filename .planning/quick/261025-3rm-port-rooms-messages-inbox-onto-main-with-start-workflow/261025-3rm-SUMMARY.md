@@ -61,7 +61,7 @@ Rooms are an optional communication channel that connects automatically.
 
 - **Approvals is not on main yet.** It should call `closeRoomIfResolved` in the mutation that records the last required approval, after setting the event status. Until then, `rooms:closeIfResolved` is internal only.
 - **Two presence stores exist.** `roomMembers` is written by rooms and read by the inbox. The voice module's `call_presence` is written by `call.presence`. The web should call `rooms.join/leave/setInCall`.
-- **The call identity needs a session identity.** `call_members.subject` is derived from `users.tokenIdentifier` ("<issuer>|<subject>"). The demo browser sends no Convex identity (`CONVEX_AUTH = false`), so `call.join` for a real room needs Auth0 sign-in, or devTokens issued for these rows.
+- **The call identity comes from sign-in.** `call_members.subject` is derived from `users.tokenIdentifier` ("<issuer>|<subject>"), which matches the Auth0 identity that `ConvexProviderWithAuth0` sends when `CONVEX_AUTH` is on (Auth0 env set). Without Auth0 config, `call.join` for a real room has no identity.
 - **demo.reset is not built.** A room carries `demoRunId`, and `isOpenRoom` treats a closed demo run as closing its room.
 
 ## Verification

@@ -1,4 +1,6 @@
-# Proposed changes for the Start workflow user flow (not applied)
+# Proposed changes for the Start workflow user flow
+
+Status: the doc edits below are applied on `claude/r2-rooms-on-main`. The issue #6 text and the prompt for Andrew are still for the team to post.
 
 The accepted flow (Adil, October 25):
 - **Rooms are an optional communication channel that connects automatically.** On the conjunction, an operator presses **Start workflow**.
@@ -7,7 +9,7 @@ The accepted flow (Adil, October 25):
 - **Head of ops** only reads.
 - **Closing.** The room closes on resolution, when the required operators have all approved the same plan.
 
-The backend for this is on `claude/r2-rooms-on-main` (summary: `261025-3rm-SUMMARY.md`). Nothing below has been edited yet.
+The backend for this is on `claude/r2-rooms-on-main` (summary: `261025-3rm-SUMMARY.md`).
 
 ## docs/specification.md
 
@@ -55,7 +57,7 @@ The backend for this is on `claude/r2-rooms-on-main` (summary: `261025-3rm-SUMMA
    - a Start workflow button on the conjunction;
    - the renamed Rooms nav;
    - the room screen calls `rooms.join/leave/setInCall`, not `call.presence.*`;
-   - `call.join` for a real room needs a Convex identity (Auth0, `CONVEX_AUTH`), or devTokens issued for the auto-joined `call_members` rows.
+   - `call.join` for a real room uses the Auth0 sign-in identity, so the Auth0 env must be set on the deployed web app.
 
 ## Prompt for Andrew's agent
 
