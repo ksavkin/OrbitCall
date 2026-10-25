@@ -18,7 +18,7 @@ function fail(code: string, message: string): never { throw new ConvexError({ co
 async function validScope(ctx: QueryCtx, r: Doc<"scanRuns">) {
  const user = await ctx.db.get(r.requestedBy);
  if (!user || user.role !== "operator" || (user.assignmentVersion ?? 1) !== r.assignmentVersion) return false;
- if (r.demoRunId) { const d = await ctx.db.get(r.demoRunId); if (!d || d.state !== "open") return false; }
+ if (r.demoRunId) { const d = await ctx.db.get(r.demoRunId); if (!d || d.state !== "open" || d.closedAt !== null) return false; }
  for (const id of r.primaryObjectIds) {
   const a = await ctx.db.query("fleetAssignments").withIndex("by_user_object", q=>q.eq("userId",user._id).eq("objectId",id)).unique();
   const o = await ctx.db.query("satelliteOwners").withIndex("by_object",q=>q.eq("objectId",id)).unique();
@@ -27,7 +27,7 @@ async function validScope(ctx: QueryCtx, r: Doc<"scanRuns">) {
  return true;
 }
 async function failStored(ctx: MutationCtx, r: Doc<"scanRuns">, code: string, message: string) {
- await ctx.db.patch(r._id,{status:"failed",phase:"failed",error:{code,message},finishedAt:Date.now(),updatedAt:Date.now()});
+ await ctx.db.patch(r._id,{status:"failed",phase:"failed",error:{code,message},finishedAt:Date.now(),updatedAt:Math.max(Date.now(),r.updatedAt)});
 }
 export const startMine = mutation({
  args:{requestId:v.string()}, handler:async(ctx,{requestId})=>{
@@ -42,7 +42,7 @@ export const startMine = mutation({
   if (existing) {
    if (!await validScope(ctx,existing)) fail("STALE_ASSIGNMENT","Responsibility changed; start a new scan.");
    if (existing.status==="failed") {
-    await ctx.db.patch(existing._id,{status:"queued",phase:"queued",error:null,finishedAt:null,updatedAt:Date.now()});
+    await ctx.db.patch(existing._id,{status:"queued",phase:"queued",error:null,finishedAt:null,updatedAt:Math.max(Date.now(),existing.updatedAt)});
     await ctx.scheduler.runAfter(0,runRef,{scanId:existing._id});
    }
    return {scanId:existing._id,reused:true};
@@ -54,7 +54,7 @@ export const startMine = mutation({
   }
   if(recent[0] && Date.now()-recent[0]._creationTime<30_000) fail("RATE_LIMITED","Wait briefly before starting another scan.");
   const snapshots=await ctx.db.query("snapshots").order("desc").take(100);
-  const snapshot=snapshots.find(s=>!s.snapshotId.startsWith("fixture:") && ommSnapshotId(s));
+  const snapshot=snapshots.find(s=>!s.snapshotId.startsWith("fixture:") && !s.sources.some(source=>source.name==="simulated") && ommSnapshotId(s));
   if(!snapshot) fail("NOT_READY","No pinned OMM catalog is available.");
   const fromMs=Math.floor(Date.now()/1000)*1000;
   const scanId=await ctx.db.insert("scanRuns",{requestedBy:scope.user._id,requestId,assignmentVersion:scope.user.assignmentVersion??1,
@@ -81,32 +81,35 @@ export const claim=internalMutation({args:runArgs,handler:async(ctx,{scanId,reco
  if(!await validScope(ctx,r)) {await failStored(ctx,r,"STALE_ASSIGNMENT","Responsibility changed; this scan was stopped.");return null;}
  if(Date.now()-r._creationTime>30*60000) {await failStored(ctx,r,"TIMED_OUT","The scan exceeded its polling deadline.");return null;}
  if(r.phase==="loading" && Date.now()-r.updatedAt<30_000) return null;
- await ctx.db.patch(scanId,{status:"running",phase:"loading",startedAt:r.startedAt??Date.now(),updatedAt:Date.now()});
+ const leaseAt=Math.max(Date.now(),r.updatedAt+1);
+ await ctx.db.patch(scanId,{status:"running",phase:"loading",startedAt:r.startedAt??Date.now(),updatedAt:leaseAt});
  // Watchdog recovers a lost action; all calls keep the same service job ID.
  await ctx.scheduler.runAfter(30_001,runRef,{scanId,recovery:true});
- return r;
+ return {run:r,leaseAt};
 }});
-export const failRun=internalMutation({args:{...scanArgs,code:v.string(),message:v.string()},handler:async(ctx,{scanId,code,message})=>{
- const r=await ctx.db.get(scanId); if(r && pending(r)) await failStored(ctx,r,code,message);
+export const failRun=internalMutation({args:{...scanArgs,leaseAt:v.number(),code:v.string(),message:v.string()},handler:async(ctx,{scanId,leaseAt,code,message})=>{
+ const r=await ctx.db.get(scanId); if(r && pending(r) && r.phase==="loading" && r.updatedAt===leaseAt) await failStored(ctx,r,code,message);
 }});
-export const save=internalMutation({args:{...scanArgs,job:v.any()},handler:async(ctx,{scanId,job:raw})=>{
+export const save=internalMutation({args:{...scanArgs,leaseAt:v.number(),job:v.any()},handler:async(ctx,{scanId,leaseAt,job:raw})=>{
  // Internal only: the action passes an orbitClient-validated response.
  const job=raw as OrbitJob<ScreenResult>, r=await ctx.db.get(scanId);
- if(!r || !pending(r)) return;
+ if(!r || !pending(r) || r.phase!=="loading" || r.updatedAt!==leaseAt) return;
  if(!await validScope(ctx,r)) {await failStored(ctx,r,"STALE_ASSIGNMENT","Responsibility changed before publication.");return;}
  if(job.jobId!==`screen-${scanId}`) fail("INVALID_RESPONSE","Unexpected scan job.");
  if(job.status==="failed") {await failStored(ctx,r,job.error?.code??"ERROR",job.error?.message??"Screening failed.");return;}
  const result=job.result;
  if(result && result.events.length>1000) fail("LIMIT_EXCEEDED","This scan exceeds the current publication limit; no partial events were published.");
  if(job.status==="completed" && result) {
+  if(result.counts.primaryObjects!==r.primaryObjectIds.length || result.missingPrimaryIds.some(id=>!r.primaryObjectIds.includes(id))) fail("INVALID_RESPONSE","Scan coverage does not match the requested fleet.");
   if(result.scanId!==String(scanId)||result.snapshotId!==r.snapshotId||result.fromUtc!==isoUtc(r.fromMs)||result.toUtc!==isoUtc(r.toMs)) fail("INVALID_RESPONSE","Scan inputs changed.");
   const snapshots=await ctx.db.query("snapshots").order("desc").take(100);
-  const source=snapshots.find(s=>ommSnapshotId(s)===r.snapshotId);
+  const source=snapshots.find(s=>!s.sources.some(source=>source.name==="simulated") && ommSnapshotId(s)===r.snapshotId);
   if(!source) fail("NOT_READY","The pinned catalog provenance is unavailable.");
   // Keep source reference encounters intact. The frozen schema has no separate numerical/reference measurements;
   // matching existing records is preferable to overwriting supplied probability with a nonexistent computed Pc.
   for(const e of result.events) {
-   if(!e.primaries.some(id=>r.primaryObjectIds.includes(id))) fail("INVALID_RESPONSE","Event is outside the scanned fleet.");
+   if(!e.primaries.some(id=>r.primaryObjectIds.includes(id) && [e.objectA,e.objectB].includes(id)) ||
+    Date.parse(e.tcaUtc)<r.fromMs || Date.parse(e.tcaUtc)>r.toMs) fail("INVALID_RESPONSE","Event is outside the scanned fleet or window.");
    const a=await findObject(ctx,e.objectA), b=await findObject(ctx,e.objectB);
    const prior=a&&b&&(await findEncounter(ctx,a._id,b._id,Date.parse(e.tcaUtc))??await findEncounter(ctx,b._id,a._id,Date.parse(e.tcaUtc)));
    if(prior) continue;
@@ -116,18 +119,19 @@ export const save=internalMutation({args:{...scanArgs,job:v.any()},handler:async
   }
   await ctx.db.patch(scanId,{status:"completed",phase:"done",progress:1,jobId:job.jobId,counts:result.counts,
    coverage:{complete:result.coverage.complete,catalogScope:result.coverage.catalogScope,excludedObjects:result.coverage.excludedObjects,
-    reasons:result.coverage.reasons,missingPrimaryIds:result.missingPrimaryIds},finishedAt:Date.now(),updatedAt:Date.now()});
+    reasons:result.coverage.reasons,missingPrimaryIds:result.missingPrimaryIds},finishedAt:Date.now(),updatedAt:Math.max(Date.now(),r.updatedAt)});
  } else {
   const counts={...r.counts}; for(const k of Object.keys(counts) as (keyof typeof counts)[]) if(Number.isFinite(job.counters[k])) counts[k]=job.counters[k];
-  await ctx.db.patch(scanId,{status:"running",phase:job.phase,progress:job.progress,jobId:job.jobId,counts,updatedAt:Date.now()});
+  await ctx.db.patch(scanId,{status:"running",phase:job.phase,progress:job.progress,jobId:job.jobId,counts,updatedAt:Math.max(Date.now(),r.updatedAt)});
   await ctx.scheduler.runAfter(5000,runRef,{scanId});
  }
 }});
 export const run=internalAction({args:runArgs,handler:async(ctx,{scanId,recovery})=>{
- const r=await ctx.runMutation(claimRef,{scanId,...(recovery ? {recovery} : {})}) as Doc<"scanRuns">|null; if(!r) return;
+ const claimed=await ctx.runMutation(claimRef,{scanId,...(recovery ? {recovery} : {})}) as {run:Doc<"scanRuns">;leaseAt:number}|null; if(!claimed) return;
+ const {run:r,leaseAt}=claimed;
  try {
   if(!r.jobId) await startScreen({scanId:String(scanId),snapshotId:r.snapshotId,primaryObjectIds:r.primaryObjectIds,fromUtc:isoUtc(r.fromMs),toUtc:isoUtc(r.toMs)});
   const job=await getScreenJob(`screen-${scanId}`,{scanId:String(scanId),snapshotId:r.snapshotId});
-  await ctx.runMutation(saveRef,{scanId,job});
- } catch(error) {await ctx.runMutation(failRef,{scanId,...orbitFailure(error)});}
+  await ctx.runMutation(saveRef,{scanId,leaseAt,job});
+ } catch(error) {await ctx.runMutation(failRef,{scanId,leaseAt,...orbitFailure(error)});}
 }});

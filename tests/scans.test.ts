@@ -76,3 +76,37 @@ it("does not overwrite supplied reference probabilities with absent computed Pc"
  await as().mutation(start,{requestId:"reference"});await t.finishAllScheduledFunctions(vi.runAllTimers);
  expect(await t.run(ctx=>ctx.db.get(eventId))).toMatchObject({missKm:0.7,pcValue:0.00002});
 });
+
+it("fences late results and failures after another action recovers the lease",async()=>{
+ const {t,as}=await setup(); const {scanId}=await as().mutation(start,{requestId:"lease"});
+ const claim=ref<"mutation">("scans:claim"), save=ref<"mutation">("scans:save"), failed=ref<"mutation">("scans:failRun");
+ const first=await t.mutation(claim,{scanId});
+ expect(await t.mutation(claim,{scanId})).toBeNull();
+ vi.setSystemTime(FIXTURE_NOW+31000);
+ const second=await t.mutation(claim,{scanId,recovery:true});
+ expect(second.leaseAt).toBeGreaterThan(first.leaseAt);
+ await t.mutation(failed,{scanId,leaseAt:first.leaseAt,code:"OLD_FAILURE",message:"Old action failed"});
+ await t.mutation(save,{scanId,leaseAt:first.leaseAt,job:{jobId:`screen-${scanId}`,status:"failed",error:{code:"OLD_FAILURE",message:"Old result"}}});
+ expect(await as().query(get,{scanId})).toMatchObject({status:"running",phase:"loading",error:null});
+ await t.mutation(failed,{scanId,leaseAt:second.leaseAt,code:"CURRENT_FAILURE",message:"Current action failed"});
+ expect(await as().query(get,{scanId})).toMatchObject({status:"failed",error:{code:"CURRENT_FAILURE"}});
+});
+it.each(["wrong_pair","wrong_window","wrong_coverage"])("rejects %s instead of publishing a misleading fleet result",async kind=>{
+ const {t,as}=await setup(); answers(); const original=vi.mocked(getScreenJob).getMockImplementation()!;
+ vi.mocked(getScreenJob).mockImplementation(async(...args)=>{
+  const job=await original(...args);
+  if(kind==="wrong_pair")job.result!.events[0].objectA="300";
+  if(kind==="wrong_window")job.result!.events[0].tcaUtc=new Date(FIXTURE_NOW-3600000).toISOString();
+  if(kind==="wrong_coverage")job.result!.counts.primaryObjects=2;
+  return job;
+ });
+ await as().mutation(start,{requestId:kind});await t.finishAllScheduledFunctions(vi.runAllTimers);
+ expect(await as().query(get,{})).toMatchObject({status:"failed"});
+ expect(await t.run(ctx=>ctx.db.query("events").collect())).toHaveLength(0);
+});
+it("does not use simulated snapshot provenance for a real fleet scan",async()=>{
+ const {t,as}=await setup();answers();
+ await t.run(ctx=>ctx.db.insert("snapshots",{snapshotId:"demo:latest",ommUrl:"/snapshots/gp-20261025T1000Z/catalog.json",sources:[{name:"simulated",url:null,epochUtc:null,fetchedAt:"2026-10-25T10:00:00Z"}]}));
+ await as().mutation(start,{requestId:"catalog"});await t.finishAllScheduledFunctions(vi.runAllTimers);
+ expect(vi.mocked(startScreen).mock.calls[0][0].snapshotId).toBe("gp-20261024T2134Z");
+});
