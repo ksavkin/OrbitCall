@@ -3,9 +3,10 @@ import { internalAction, internalMutation, internalQuery, query, type ActionCtx,
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { hostTrigger } from "./schema/rooms";
-import { agentSpanValidator, hostOutputValidator, spanFailure, type AgentSpan, type HostContext, type HostOutput } from "./lib/host";
+import { agentSpanValidator, checkHostOutput, hostOutputValidator, spanFailure, type AgentSpan, type HostContext, type HostOutput } from "./lib/host";
 import { checkResultValidator, type CheckResult } from "./lib/checker";
 import { buildHostContext } from "./lib/hostContext";
+import { publishHostOutput } from "./lib/hostPublish";
 import { requireFleetScope } from "./fleetQuery";
 
 // Coordination Host runs (roadmap §6 Gemini Host contract). A caller asks explicitly; nothing here watches messages.
@@ -27,14 +28,15 @@ async function isOpen(ctx: QueryCtx, room: Doc<"rooms">): Promise<boolean> {
   return demo !== null && demo.state === "open" && demo.closedAt === null;
 }
 
-async function currentInputs(ctx: MutationCtx, run: Doc<"hostRuns">): Promise<boolean> {
+async function currentInputs(ctx: MutationCtx, run: Doc<"hostRuns">): Promise<HostContext | null> {
   const room = await ctx.db.get(run.roomId);
-  if (!room || room.demoRunId !== run.demoRunId || !await isOpen(ctx, room)) return false;
+  if (!room || room.demoRunId !== run.demoRunId || !await isOpen(ctx, room)) return null;
   try {
-    return (await buildHostContext(ctx, room, run.trigger)).inputVersion === run.inputVersion;
+    const context = await buildHostContext(ctx, room, run.trigger);
+    return context.inputVersion === run.inputVersion ? context : null;
   } catch {
     // Inputs that can no longer be read are not the inputs the host answered.
-    return false;
+    return null;
   }
 }
 
@@ -176,7 +178,8 @@ export const run = internalAction({
 
 /**
  * Stores a run's result after rechecking its inputs. Stale results are superseded with their spans for the trace
- * and no output. Requested revisions are stored only; they never change proposals.
+ * and no publication. Checked conversation output and its audit are posted atomically with success.
+ * Requested revisions remain stored suggestions; they never change proposals or approvals here.
  */
 export const finish = internalMutation({
   args: {
@@ -188,16 +191,21 @@ export const finish = internalMutation({
     const run = await ctx.db.get(hostRunId);
     if (!run || run.status !== "running") return null;
     const finishedAt = Date.now();
-    if (!await currentInputs(ctx, run)) {
+    const context = await currentInputs(ctx, run);
+    if (!context) {
       await ctx.db.patch(hostRunId, { status: "superseded", span, output: null, check, finishedAt });
       return null;
     }
-    // A checked host result and a successful independent disagreement are distinct results. Round 3 can
-    // publish the disagreement alongside the summary; it never authorizes anything. An unavailable or invalid
-    // checker result still fails the run, preserving the checked host output for the trace.
-    const hostOutput = span?.status === "succeeded" ? output : null;
+    // Recheck the output at the publication boundary. A successful disagreement is visible data; an unavailable
+    // checker still fails the run. Any thrown publication validation rolls back the entire mutation.
+    if (span?.status === "succeeded" && (span.role !== "coordination_host" || span.provider !== "google" ||
+      span.inputVersion !== run.inputVersion || span.attempt !== run.attempt)) throw new ConvexError({ code: "INVALID_OUTPUT", message: "Host span does not match this attempt." });
+    if (check?.span.status === "succeeded" && (check.span.role !== "rationale_check" || check.span.provider !== "xai" ||
+      check.span.inputVersion !== run.inputVersion || check.span.attempt !== run.attempt)) throw new ConvexError({ code: "INVALID_OUTPUT", message: "Checker span does not match this attempt." });
+    const hostOutput = span?.status === "succeeded" && output ? checkHostOutput(JSON.stringify(output), context) : null;
     const checked = hostOutput !== null &&
       (hostOutput.summaries.length === 0 || (check?.span.status === "succeeded" && check.result !== null));
+    if (checked && hostOutput) await publishHostOutput(ctx, run, context, hostOutput, check?.span.status === "succeeded" ? check.result : null);
     await ctx.db.patch(hostRunId, { status: checked ? "succeeded" : "failed", span, output: hostOutput, check, finishedAt });
     return null;
   },
