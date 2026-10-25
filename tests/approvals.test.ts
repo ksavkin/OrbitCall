@@ -169,6 +169,28 @@ describe("approval resets", () => {
     expect(await code(as(t, "a").mutation(fn.approve, await tick(t, eventId)))).toBe("STALE_REVISION");
     expect(await rows(t, eventId)).toHaveLength(1);
   });
+
+  it("resets approvals when the same cards are recomputed on new evidence", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    await t.run(ctx => ctx.db.patch(eventId, { pcValue: 3e-4 }));
+    expect(await t.mutation(internal.candidates.publish, { eventId, baseVersion: 1, start: false, candidates: advocateCandidates }))
+      .toMatchObject({ version: 2, changed: true });
+    expect(await read(t, "b", eventId)).toMatchObject({ turn: "A", selected: { revision: 1, generation: 2 },
+      approvals: { A: { status: "pending" } }, lastReset: { reason: "evidence_changed" } });
+  });
+
+  it("flags an agreed plan for review instead of undoing it on a policy edit or revocation", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    await as(t, "b").mutation(fn.approve, await tick(t, eventId));
+    await as(t, "a").mutation(api.policies.update, { satellites: [{ ...policyA, minFuelReserveKg: 7.5 }] });
+    await t.mutation(internal.operators.provision, companyA([]));
+    expect(await read(t, "eye", eventId)).toMatchObject({ selectionGeneration: 1, lastReset: null, approvals: { B: { status: "approved" } } });
+    expect((await rows(t, eventId)).map(r => r.current)).toEqual([true, true]);
+    expect(await t.run(async ctx => (await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique())!.reviewRequired))
+      .toBe(true);
+  });
 });
 
 describe("approval workflows", () => {
