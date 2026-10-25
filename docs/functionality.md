@@ -303,7 +303,7 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 - **ROOM-9** Sees the maneuver diff (what will change in the schedule) before approving.
 - **ROOM-10** Sees a chart of historical supplied Pc or miss distance with source timestamps. It contains observations only, without a forecast curve or predicted trend.
 - **ROOM-12** Sees the facts, hard constraints and preferences the agents understood from shared discussion, plus shareable policy outcomes/categories under POL-2, and an explanation of each proposal revision. Can correct those interpretations in the conversation; private policy values are not added to the shared view.
-- **ROOM-13** When a call ends, or when someone asks, the Coordination Host posts a room summary and can read it aloud. Room members receive a notification. Each linked incident shows its own selected candidate revision and approval form. Only its required operators can approve it (ROOM-7, ROOM-14). An accepted edit publishes a checked new revision and resets that incident's affected approvals (ROOM-11). A summary never approves a plan.
+- **ROOM-13** When the last operator leaves the call, or when someone asks, the Coordination Host posts a room summary and can read it aloud. Room members receive a notification. Each linked incident shows its own selected candidate revision and approval form. Only its required operators can approve it (ROOM-7, ROOM-14). An accepted edit publishes a checked new revision and resets that incident's affected approvals (ROOM-11). A summary never approves a plan.
 
 ---
 
@@ -316,7 +316,7 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 - **LANG-3** Delivers each phrase to the listener as voice and text in their language; the speaker sees their original in the transcript.
 - **LANG-4** Feeds transcribed voice and posted text messages into the agents' conversation context, retaining the speaker, original wording and translations. Relevant facts, hard constraints, preferences and corrections can trigger a revised proposal (AGT-11..AGT-13).
 - **LANG-5** Writes both language versions of every phrase to the log.
-- **LANG-6** Gives the Coordination Host a voice, including reading the end-of-call summary (ROOM-13). Speech, translation or a casual acknowledgement never creates an approval; only the checkmark does (ROOM-7).
+- **LANG-6** Gives the Coordination Host a voice, including reading the end-of-call summary (ROOM-13). Speech, translation or a casual acknowledgement never creates an approval; only the checkmark does (ROOM-7). The host speaks its checked English text in each listener's language, with the same value protection as human phrases, and is not held by decision turns.
 - **LANG-7** Works in text only when voice is unavailable, with the same translation.
 
 **User**

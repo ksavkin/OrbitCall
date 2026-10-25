@@ -128,10 +128,21 @@ describe("Coordination Host output check", () => {
     ["a missing key", raw({ inputVersion: output.inputVersion, clarifications: [], summaries: [] })],
     ["a wrong type", raw({ ...output, clarifications: "none" })],
     ["too many clarifications", raw({ ...output, clarifications: Array(7).fill(output.clarifications[0]) })],
+    ["too many requested revisions", raw({ ...output, requestedRevisions: Array(7).fill(output.requestedRevisions[0]) })],
+    ["too many summaries", raw({ ...output, summaries: Array(25).fill(output.summaries[0]) })],
     ["an oversized summary", raw({ ...output, summaries: [{ ...output.summaries[0], text: "co-a is checking. ".repeat(100) }] })],
     ["an empty question", raw({ ...output, clarifications: [{ ...output.clarifications[0], question: "  " }] })],
   ])("rejects %s as INVALID_OUTPUT", (_, text) => {
     expect(codeOf(() => checkHostOutput(text, hostContext))).toBe("INVALID_OUTPUT");
+  });
+
+  it.each(["clarifications", "requestedRevisions", "summaries"] as const)("enforces citation bounds in %s independently of Gemini's schema", field => {
+    const context = { ...hostContext, messages: [...hostContext.messages, ...Array.from({ length: 10 }, (_, i) => ({
+      ...hostContext.messages[0], messageId: `msg-${i + 4}`,
+    }))] };
+    const cited = (count: number) => ({ ...output, [field]: [{ ...output[field][0], messageIds: context.messages.slice(0, count).map(m => m.messageId) }] });
+    expect(codeOf(() => checkHostOutput(raw(cited(12)), context))).toBe("NO_ERROR");
+    expect(codeOf(() => checkHostOutput(raw(cited(13)), context))).toBe("INVALID_OUTPUT");
   });
 
   it.each([
@@ -290,6 +301,8 @@ describe("Gemini transport", () => {
     expect(body.systemInstruction.parts).toEqual([{ text: "Instructions" }]);
     expect(body.contents).toEqual([{ role: "user", parts: [{ text: "Evidence" }] }]);
     expect(body.generationConfig).toMatchObject({ responseMimeType: "application/json", responseJsonSchema: hostResponseSchema });
+    // Nested finite array limits caused a real Gemini 400 before model execution.
+    expect(JSON.stringify(body.generationConfig.responseJsonSchema)).not.toContain('"maxItems"');
     expect(result).toEqual({ raw: raw(), model: "test-gemini", usage: { inputTokens: 812, outputTokens: 200 } });
   });
 
@@ -391,5 +404,46 @@ describe("Coordination Host action", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(checked).toBeNull();
     expect(span).toMatchObject({ status: "failed", errorCode: "INVALID_INPUT", attempt });
+  });
+});
+
+describe("Host understood extraction", () => {
+  const source = { ...hostContext.messages[0], text: "We prefer Thursday. We cannot maneuver Wednesday." };
+  const context = { ...hostContext, messages: [source] };
+  const item = { eventId: "evt-1", kind: "constraint", hard: true, text: "We cannot maneuver Wednesday.", sourceMessageId: source.messageId, correctsId: null };
+  const result = (understood: unknown) => ({ inputVersion: context.inputVersion, clarifications: [], requestedRevisions: [], summaries: [], understood });
+  it("accepts optional original-language excerpts and preserves legacy output", () => {
+    expect(checkHostOutput(raw(result([item])), context).understood).toEqual([item]);
+    const chinese = { ...source, language: "zh" as const, text: "我们不能在星期三机动。" };
+    expect(checkHostOutput(raw(result([{ ...item, text: chinese.text }])), { ...context, messages: [chinese] }).understood![0].text).toBe(chinese.text);
+    expect(checkHostOutput(raw(), hostContext)).toEqual(output);
+  });
+  it("enforces the understood list limit independently of Gemini's schema", () => {
+    expect(checkHostOutput(raw(result(Array(6).fill(item))), context).understood).toHaveLength(6);
+    expect(codeOf(() => checkHostOutput(raw(result(Array(7).fill(item))), context))).toBe("INVALID_OUTPUT");
+  });
+  it.each([
+    { ...item, kind: "preference" },
+    { ...item, text: "The maneuver is forbidden on Thursday." },
+    { ...item, sourceMessageId: "missing" },
+    { ...item, kind: "correction" },
+    { ...item, kind: "correction", correctsId: "unknown" },
+  ])("rejects an ungrounded understanding %#", bad => {
+    expect(codeOf(() => checkHostOutput(raw(result([bad])), context))).toBe("CONSTRAINT_CHECK_FAILED");
+  });
+  it("grounds corrections to one active understanding of the same event", () => {
+    const prior = { understoodId: "understood-1", eventId: "evt-1", kind: "constraint" as const, hard: true,
+      text: item.text, sourceMessageId: "old-message", side: "A" as const };
+    const correction = { ...item, kind: "correction", hard: false, text: "We prefer Thursday.", correctsId: prior.understoodId };
+    const c = { ...context, understood: [prior] };
+    expect(checkHostOutput(raw(result([correction])), c).understood).toEqual([correction]);
+    expect(codeOf(() => checkHostOutput(raw(result([correction, correction])), c))).toBe("CONSTRAINT_CHECK_FAILED");
+    expect(codeOf(() => checkHostOutput(raw(result([{ ...correction, eventId: "evt-2" }])), c))).toBe("CONSTRAINT_CHECK_FAILED");
+    expect(JSON.parse(hostPrompt(c).user).understood).toEqual([prior]);
+  });
+  it("never turns quoted assent into an approval", () => {
+    const approval = { ...source, text: "I approve this maneuver." };
+    expect(codeOf(() => checkHostOutput(raw(result([{ ...item, text: approval.text }])), { ...context, messages: [approval] })))
+      .toBe("CONSTRAINT_CHECK_FAILED");
   });
 });

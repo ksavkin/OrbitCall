@@ -3,6 +3,11 @@ import { AnalystError } from "./analyst";
 
 export type HostTrigger = "final_message" | "candidates_changed" | "summary_requested" | "call_ended";
 export type Language = "en" | "ru" | "zh";
+export type UnderstoodKind = "fact" | "constraint" | "preference" | "correction" | "hypothetical";
+export interface HostUnderstanding {
+  eventId: string | null; kind: UnderstoodKind; hard: boolean; text: string;
+  sourceMessageId: string; correctsId: string | null;
+}
 
 export interface AgentSpan {
   role: "coordination_host" | "rationale_check";
@@ -39,6 +44,8 @@ export interface HostContext {
     approvals: { companyId: string; candidateId: string; revision: number }[];
   }[];
   messages: { messageId: string; companyId: string; language: Language; text: string; createdAt: string }[];
+  understood?: { understoodId: string; eventId: string | null; kind: UnderstoodKind; hard: boolean; text: string;
+    sourceMessageId: string; side: "A" | "B" | null }[];
 }
 
 export interface HostOutput {
@@ -46,6 +53,7 @@ export interface HostOutput {
   clarifications: { question: string; eventId: string | null; messageIds: string[] }[];
   requestedRevisions: { eventId: string; candidateId: string; reason: string; messageIds: string[] }[];
   summaries: { eventId: string; text: string; messageIds: string[] }[];
+  understood?: HostUnderstanding[];
 }
 
 export type HostCandidate = HostContext["events"][number]["candidates"][number];
@@ -54,6 +62,7 @@ export type HostCandidate = HostContext["events"][number]["candidates"][number];
 export const MAX_EVENTS = 24;
 export const MAX_MESSAGES = 100;
 export const MAX_MESSAGE_TEXT = 2000;
+export const MAX_UNDERSTOOD = 64;
 const MAX_ITEMS = 6;
 const MAX_CITED = 12;
 const MAX_ID = 200;
@@ -62,6 +71,8 @@ const MAX_SUMMARY = 1500;
 
 const nullable = <T extends Validator<any, "required", any>>(validator: T) => v.union(validator, v.null());
 const language = v.union(v.literal("en"), v.literal("ru"), v.literal("zh"));
+const understoodKind = v.union(v.literal("fact"), v.literal("constraint"), v.literal("preference"), v.literal("correction"), v.literal("hypothetical"));
+const understoodKinds: UnderstoodKind[] = ["fact", "constraint", "preference", "correction", "hypothetical"];
 
 export const hostCandidateValidator = v.object({
   candidateId: v.string(), revision: v.number(), label: v.string(),
@@ -87,6 +98,8 @@ export const hostContextValidator = v.object({
     approvals: v.array(v.object({ companyId: v.string(), candidateId: v.string(), revision: v.number() })),
   })),
   messages: v.array(v.object({ messageId: v.string(), companyId: v.string(), language, text: v.string(), createdAt: v.string() })),
+  understood: v.optional(v.array(v.object({ understoodId: v.string(), eventId: nullable(v.string()), kind: understoodKind,
+    hard: v.boolean(), text: v.string(), sourceMessageId: v.string(), side: nullable(v.union(v.literal("A"), v.literal("B"))) }))),
 });
 
 export const hostOutputValidator = v.object({
@@ -94,6 +107,8 @@ export const hostOutputValidator = v.object({
   clarifications: v.array(v.object({ question: v.string(), eventId: nullable(v.string()), messageIds: v.array(v.string()) })),
   requestedRevisions: v.array(v.object({ eventId: v.string(), candidateId: v.string(), reason: v.string(), messageIds: v.array(v.string()) })),
   summaries: v.array(v.object({ eventId: v.string(), text: v.string(), messageIds: v.array(v.string()) })),
+  understood: v.optional(v.array(v.object({ eventId: nullable(v.string()), kind: understoodKind, hard: v.boolean(),
+    text: v.string(), sourceMessageId: v.string(), correctsId: nullable(v.string()) }))),
 });
 
 export const agentSpanValidator = v.object({
@@ -106,13 +121,21 @@ export const agentSpanValidator = v.object({
   errorCode: nullable(v.string()), errorMessage: nullable(v.string()),
 });
 
-const citations = { type: "array", items: { type: "string" }, maxItems: MAX_CITED };
+// Gemini rejects the combined nested maxItems grammar with HTTP 400. Keep list limits
+// in checkHostOutput, not the provider schema: https://ai.google.dev/gemini-api/docs/structured-output#limitations
+const citations = { type: "array", items: { type: "string" } };
 export const hostResponseSchema: object = {
   type: "object", additionalProperties: false,
   required: ["inputVersion", "clarifications", "requestedRevisions", "summaries"],
   properties: {
     inputVersion: { type: "string", description: "The context inputVersion, copied exactly." },
-    clarifications: { type: "array", maxItems: MAX_ITEMS, items: {
+    understood: { type: "array", items: {
+      type: "object", additionalProperties: false, required: ["eventId", "kind", "hard", "text", "sourceMessageId", "correctsId"],
+      properties: { eventId: { anyOf: [{ type: "string" }, { type: "null" }] }, kind: { type: "string", enum: understoodKinds },
+        hard: { type: "boolean" }, text: { type: "string", maxLength: MAX_SUMMARY }, sourceMessageId: { type: "string" },
+        correctsId: { anyOf: [{ type: "string" }, { type: "null" }] } },
+    } },
+    clarifications: { type: "array", items: {
       type: "object", additionalProperties: false, required: ["question", "eventId", "messageIds"],
       properties: {
         question: { type: "string", maxLength: MAX_QUESTION },
@@ -120,14 +143,14 @@ export const hostResponseSchema: object = {
         messageIds: citations,
       },
     } },
-    requestedRevisions: { type: "array", maxItems: MAX_ITEMS, items: {
+    requestedRevisions: { type: "array", items: {
       type: "object", additionalProperties: false, required: ["eventId", "candidateId", "reason", "messageIds"],
       properties: {
         eventId: { type: "string" }, candidateId: { type: "string" },
         reason: { type: "string", maxLength: MAX_QUESTION }, messageIds: citations,
       },
     } },
-    summaries: { type: "array", maxItems: MAX_EVENTS, items: {
+    summaries: { type: "array", items: {
       type: "object", additionalProperties: false, required: ["eventId", "text", "messageIds"],
       properties: { eventId: { type: "string" }, text: { type: "string", maxLength: MAX_SUMMARY }, messageIds: citations },
     } },
@@ -145,6 +168,12 @@ export function validateHostContext(context: HostContext): void {
     !unique(context.messages.map(m => m.messageId))) reject("Event, candidate, and message IDs must be unique.");
   if (context.messages.some(m => !members.has(m.companyId))) reject("Every message must come from a room member.");
   if (context.messages.some(m => m.text.length > MAX_MESSAGE_TEXT)) reject("A room message is too long for the host.");
+  if ((context.understood?.length ?? 0) > MAX_UNDERSTOOD || !unique((context.understood ?? []).map(u => u.understoodId))) {
+    reject("The active understood context is too large or contains duplicate IDs.");
+  }
+  if (context.understood?.some(u => u.eventId !== null && !context.events.some(e => e.eventId === u.eventId))) {
+    reject("An understood row belongs to an event outside this room.");
+  }
 }
 
 export const candidateFacts = (c: HostCandidate): HostCandidate => ({
@@ -166,6 +195,10 @@ function allowlist(context: HostContext): HostContext {
       })),
       approvals: e.approvals.map(a => ({ companyId: a.companyId, candidateId: a.candidateId, revision: a.revision })),
     })),
+    ...(context.understood === undefined ? {} : { understood: context.understood.map(u => ({
+      understoodId: u.understoodId, eventId: u.eventId, kind: u.kind, hard: u.hard, text: u.text,
+      sourceMessageId: u.sourceMessageId, side: u.side,
+    })) }),
     messages: context.messages.map(m => ({
       messageId: m.messageId, companyId: m.companyId, language: m.language, text: m.text, createdAt: m.createdAt,
     })),
@@ -182,10 +215,12 @@ export function hostPrompt(context: HostContext): { system: string; user: string
       "clarifications: questions the room still needs to answer, each with the eventId it concerns (or null) and the messageIds that prompted it.",
       "requestedRevisions: an existing candidateId from the same eventId that participants asked to reconsider, with the reason and the messageIds that asked for it. These are suggestions for the calculation flow, not decisions.",
       "summaries: at most one per eventId, citing the messageIds it relies on.",
-      "Cite only eventId, candidateId, and messageIds values that appear in the context.",
+      "understood is optional: extract facts, constraints, preferences, corrections or hypothetical statements. Each text must be an exact excerpt copied from sourceMessageId in its original language. Never translate, invent or paraphrase these excerpts.",
+      "Set hard only for an explicit binding constraint or its correction, never for a preference or hypothetical. A correction needs kind correction and correctsId naming an active understoodId in the same event; other entries have correctsId null. Never turn a statement into an approval.",
+      "Cite only eventId, candidateId, messageIds, sourceMessageId and understoodId values that appear in the context.",
       "Do not write any number that is not copied verbatim from the context's event, candidate, or message values; do not compute new values, counts, durations, or times.",
       "Do not use the words approve, approved, authorize, or grant. Describe approval state only as an approval that is pending or recorded.",
-      "Write short, plain English sentences; translation happens later.",
+      "Write short, plain English summaries and questions; understood excerpts retain their original language. Translation happens later.",
     ].join(" "),
     user: JSON.stringify(allowlist(context)),
   };
@@ -366,7 +401,9 @@ function gatherEvidence(context: HostContext): Evidence {
 }
 
 export function checkHostOutput(raw: string, context: HostContext): HostOutput {
-  const top = exact(parseJson(raw), ["inputVersion", "clarifications", "requestedRevisions", "summaries"]);
+  const parsed = parseJson(raw);
+  const hasUnderstood = parsed !== null && typeof parsed === "object" && Object.hasOwn(parsed, "understood");
+  const top = exact(parsed, ["inputVersion", "clarifications", "requestedRevisions", "summaries", ...(hasUnderstood ? ["understood"] : [])]);
   const output: HostOutput = {
     inputVersion: text(top.inputVersion, MAX_ID),
     clarifications: list(top.clarifications, MAX_ITEMS).map(item => {
@@ -383,6 +420,12 @@ export function checkHostOutput(raw: string, context: HostContext): HostOutput {
     }),
   };
 
+  if (hasUnderstood) output.understood = list(top.understood, MAX_ITEMS).map(item => {
+    const r = exact(item, ["eventId", "kind", "hard", "text", "sourceMessageId", "correctsId"]);
+    if (!understoodKinds.includes(r.kind as UnderstoodKind) || typeof r.hard !== "boolean") throw invalid("Invalid understood kind or hard flag.");
+    return { eventId: r.eventId === null ? null : text(r.eventId, MAX_ID), kind: r.kind as UnderstoodKind, hard: r.hard,
+      text: text(r.text, MAX_SUMMARY), sourceMessageId: text(r.sourceMessageId, MAX_ID), correctsId: r.correctsId === null ? null : text(r.correctsId, MAX_ID) };
+  });
   if (output.inputVersion !== context.inputVersion) throw violation("The host answered a different input version.");
   const events = new Map(context.events.map(e => [e.eventId, e]));
   const messages = new Set(context.messages.map(m => m.messageId));
@@ -429,6 +472,20 @@ export function checkHostOutput(raw: string, context: HostContext): HostOutput {
     if (summarized.has(s.eventId)) throw violation("The host wrote two summaries for one event.");
     summarized.add(s.eventId);
     cited(s.messageIds); prose(s.text, summarizedEvent.approvals.length > 0);
+  }
+  const corrected = new Set<string>();
+  for (const u of output.understood ?? []) {
+    if (u.eventId !== null) event(u.eventId);
+    const source = context.messages.find(m => m.messageId === u.sourceMessageId);
+    if (!source || !source.text.includes(u.text)) throw violation("An understood entry must quote its cited source exactly in the original language.");
+    if (u.hard && u.kind !== "constraint" && u.kind !== "correction") throw violation("Only explicit constraints or corrections can be hard.");
+    if ((u.kind === "correction") !== (u.correctsId !== null)) throw violation("A correction must name the active entry it replaces.");
+    if (u.correctsId) {
+      const prior = context.understood?.find(old => old.understoodId === u.correctsId);
+      if (!prior || prior.eventId !== u.eventId || corrected.has(u.correctsId)) throw violation("A correction must replace one active entry of the same event once.");
+      corrected.add(u.correctsId);
+    }
+    prose(u.text, false);
   }
   return output;
 }
