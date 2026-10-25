@@ -11,7 +11,21 @@ export const maneuverStatus = v.union(
   v.literal("preview"), v.literal("rescreening"), v.literal("refused"),
   v.literal("committing"), v.literal("committed"), v.literal("failed"),
 );
+// The exact selection a schedule write signs for one event.
+export const eventRef = v.object({
+  eventId: v.id("events"), proposalId: v.id("proposals"), revision: v.number(), selectionGeneration: v.number(),
+});
+const evidenceKeys = v.array(v.object({ eventId: v.id("events"), evidenceKey: v.string() }));
+// The inputs a schedule write was authorized on (spec §4.1). The scheduler compares them with the current values
+// before commit; any difference flags the plan for review instead of silently replacing it.
+export const pinnedInputs = v.object({
+  snapshotId: v.string(), evidenceKeys,
+  policyRevisions: v.array(v.object({ companyId: v.id("companies"), revision: v.number() })),
+  assignmentVersions: v.array(v.object({ userId: v.id("users"), version: v.number() })),
+});
+// The orbital service echoes the snapshot and evidence it re-screened, so a result from S is never taken as S'.
 export const rescreen = v.object({
+  snapshotId: v.string(), evidenceKeys,
   passed: v.boolean(), objectsChecked: v.number(), horizonH: v.number(),
   originalMissAfterKm: v.union(v.number(), v.null()),
   newConjunctions: v.array(v.object({ objectId: v.string(), name: v.string(), tcaUtc: v.string(), missKm: v.number() })),
@@ -57,19 +71,25 @@ export const scheduleTables = {
     reason: v.union(v.string(), v.null()),
     current: v.boolean(), at: v.number(),
   }).index("by_event_current", ["eventId", "current"]).index("by_event_generation", ["eventId", "selectionGeneration"]),
-  // A reserved schedule-write intent and its result. `intentKey` (event, proposal, revision, selection generation and
-  // trajectory plan version) makes a retry return the existing result instead of writing a second entry.
-  // A file is not an execution.
+  // A reserved schedule-write intent and its result: one row per physical schedule write. `refs` has one entry for a
+  // single-event maneuver and one per affected event for a trajectory plan; maneuverEvents indexes them by event.
+  // `intentKey` is the plan id and version for a plan, or event, proposal, revision and selection generation for a
+  // single event, so a retry returns the existing result instead of writing a second entry. A file is not an execution.
   maneuvers: defineTable({
-    eventId: v.id("events"), proposalId: v.id("proposals"), revision: v.number(), selectionGeneration: v.number(),
+    refs: v.array(eventRef),
     trajectoryPlanId: v.union(v.id("trajectoryPlans"), v.null()),
+    trajectoryPlanVersion: v.union(v.number(), v.null()),
+    pinned: pinnedInputs,
     intentKey: v.string(), status: maneuverStatus,
     filePath: v.string(), diff: v.union(v.string(), v.null()), commitSha: v.union(v.string(), v.null()),
     writtenBy: v.union(v.literal("droid"), v.literal("backend")),
     rescreenJobId: v.union(v.string(), v.null()), rescreen: v.union(rescreen, v.null()),
     error: v.union(v.string(), v.null()), reviewRequired: v.boolean(),
     updatedAt: v.number(),
-  }).index("by_event", ["eventId"]).index("by_intent", ["intentKey"]),
+  }).index("by_intent", ["intentKey"]),
+  // One row per event a maneuver touches, written with the maneuver from its refs, so maneuvers.get({ eventId }) is indexed.
+  maneuverEvents: defineTable({ maneuverId: v.id("maneuvers"), eventId: v.id("events") })
+    .index("by_event", ["eventId"]).index("by_maneuver", ["maneuverId"]),
   // One spacecraft's planned maneuver and every pair event it affects. A conjunction event stays a pair; a maneuver
   // can touch several. Authorization needs every affected event's required approvals on the same planVersion, and
   // any material change advances planVersion, which invalidates approvals of the affected events only.
@@ -79,9 +99,8 @@ export const scheduleTables = {
       v.literal("draft"), v.literal("authorizing"), v.literal("scheduled"), v.literal("superseded"), v.literal("review_required"),
     ),
     affectedEventIds: v.array(v.id("events")),
-    eventRefs: v.array(v.object({
-      eventId: v.id("events"), proposalId: v.id("proposals"), revision: v.number(), selectionGeneration: v.number(),
-    })),
+    eventRefs: v.array(eventRef),
+    // Scalar on purpose: a plan is one physical schedule write, so it has at most one maneuvers row.
     maneuverId: v.union(v.id("maneuvers"), v.null()),
     demoRunId: v.union(v.id("demoRuns"), v.null()),
     createdAt: v.number(), updatedAt: v.number(),
