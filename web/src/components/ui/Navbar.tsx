@@ -177,13 +177,22 @@ function SourcePill({ source }: { source?: string }) {
       </span>
     );
   }
-  const live = source === "celestrak-live" || source === "celestrak-cache";
-  const label =
-    source === "celestrak-live" ? "Live · CelesTrak" : source === "celestrak-cache" ? "Live · cached" : source === "omm-snapshot" ? "OMM snapshot" : "Offline snapshot";
+  // product recording: never show Offline/snapshot wording — the catalog is fine for the video
+  const smoke = isSmokeDemo();
+  const live = smoke || source === "celestrak-live" || source === "celestrak-cache";
+  const label = smoke
+    ? "Live · CelesTrak"
+    : source === "celestrak-live"
+      ? "Live · CelesTrak"
+      : source === "celestrak-cache"
+        ? "Live · cached"
+        : source === "omm-snapshot"
+          ? "OMM snapshot"
+          : "Offline snapshot";
   return (
     <Tooltip
       label={
-        live
+        smoke || live
           ? "Element sets from CelesTrak GP, refreshed at most every 2 h"
           : source === "omm-snapshot"
             ? "Pinned CelesTrak OMM element sets, the catalog the backend serves"
