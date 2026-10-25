@@ -330,7 +330,7 @@ The working queue ranks conjunctions for the user's assigned fleet. Company-wide
 **System** (§5, §6)
 
 - **EXE-1** After the workflow-required operators (ROOM-14) approve the same selection generation, proposal ID and revision and its re-screen passes, writes that exact maneuver to the operator's schedule file, `operators/<operator>/schedule.json`, through Factory Droid in a run-isolated workspace. Before approval, Droid prepares the change and the room shows its checked diff (EXE-4, ROOM-9). A Convex transaction rechecks approvals and inputs and reserves an immutable write intent. The worker writes exactly that change with access limited to the schedule workspace. Convex keeps the maneuver record, artifact reference and diff. Factory failure stays visible and retries the same intent, without an automatic substitute writer. Retries cannot create duplicate schedule entries. See the master roadmap for the external-write and trajectory-version contract.
-- **EXE-2** Re-screens the moved satellite against the whole catalog, not only against its partner.
+- **EXE-2** Re-screens the moved satellite against the whole catalog, not only against its partner. For a shared maneuver, every affected partner encounter is re-screened.
 - **EXE-3** If the re-screen finds a new conjunction, refuses and returns to negotiation with that as a constraint.
 - **EXE-4** Before approval, Droid prepares the diff of what will change, for the room (ROOM-9).
 
