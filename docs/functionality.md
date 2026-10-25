@@ -187,7 +187,7 @@ Inbox access does not depend on reaching agreement. Reading an entry or receivin
 
 ---
 
-- **ROOM-15** Groups related pair events into a room with 2-4 operators. Membership grants only shared room projections. Event authority remains assignment-scoped; changes to shared trajectory inputs invalidate affected event approvals.
+- **ROOM-15** Groups related pair events into a room with 2-4 operators. Membership grants only shared room projections. Event authority remains assignment-scoped; changes to shared trajectory inputs invalidate affected event approvals. A spacecraft whose maneuver affects several linked events has one trajectory plan: each event's required approvals sign the same plan version, one event's approvals never authorize another, and a change in any affected event advances the version and resets the approvals of all of them.
 - **OBS-1** Provides a read-only authenticated large-display projection of the demo: globe, scan, public agent progress, shared proposals, and results, with no policy, private memory, or approval capability.
 
 ## 6. Conjunction queue

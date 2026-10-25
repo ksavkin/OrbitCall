@@ -103,11 +103,10 @@ function Marker({ e, bind }: { e: ConjunctionEvent; bind: (k: "tca" | "b" | "a" 
           </span>
         )}
         {focused && (
-          // the drawn orbits are each object's path on the day of TCA; the dots are where they are now, so
-          // a real satellite can sit off its line until then (Earth's bulge turns its orbit a few degrees a day)
+          // the drawn orbits follow the clock: each dot flies on its own line, and the lines cross at this ring
           <span className="absolute left-[26px] top-[10px] flex items-center gap-1.5 whitespace-nowrap text-[10px] text-muted [text-shadow:0_1px_2px_rgba(0,0,0,0.8)]">
             <span>
-              Orbits at TCA · now <span ref={(el) => bind("range", el)} className="mono tnum" />
+              They meet here · now <span ref={(el) => bind("range", el)} className="mono tnum" />
             </span>
             <button
               className="pointer-events-auto flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-px text-fg-2 backdrop-blur-sm transition-colors hover:bg-white/15 hover:text-white"

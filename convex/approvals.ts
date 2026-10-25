@@ -8,8 +8,9 @@ import { isResolved } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
 import { workflow } from "./lib/validators";
-import { closeRoomIfResolved, notify } from "./rooms";
+import { closeRoomIfResolved, notify, roomOfEvent } from "./rooms";
 import { scheduleConfig } from "./lib/scheduleClient";
+import { planFor, syncPlans } from "./trajectoryPlans";
 
 // Explicit human approval and veto of the selected proposal revision, per event (spec §3.4, §4.1; ROOM-7, ROOM-11,
 // ROOM-14; user-flow "App navigation and the decision flow"). Nothing moves without a human: a row is written only
@@ -33,7 +34,12 @@ async function requirePreview(ctx: MutationCtx, args: Args) {
   const stored = await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
     q.eq("proposalId", args.proposalId).eq("revision", args.revision)).unique();
   const card = stored && await ctx.db.get(stored.candidateRevisionId);
-  if (card?.kind === "maneuver" && stored!.schedulePreviewHash === null) {
+  // A wait card inside a shared plan signs the plan's burn, so it waits for the same diff (recorded on every part).
+  const inPlan = async () => {
+    const event = await ctx.db.get(args.eventId), selection = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", args.eventId)).unique();
+    return !!event && !!selection && !!await planFor(ctx, event, selection);
+  };
+  if (stored && stored.schedulePreviewHash === null && (card?.kind === "maneuver" || (card?.kind === "wait" && await inPlan()))) {
     throw error("INVALID_STATE", "Factory is still preparing this plan's schedule diff; approve once it is shown.");
   }
 }
@@ -114,6 +120,22 @@ export async function noteActor(ctx: MutationCtx, event: Doc<"events">, actor: I
   await ctx.db.patch(existing._id, { lastUpdateSummary: summary, lastUpdateAt: Date.now(), unread: false });
 }
 
+type Values = Record<string, number | string | null>;
+
+/**
+ * One shared audit row for a human decision on a card revision (LOG-2, LOG-3): who, for which side, when, and the
+ * numbers before and after. Selection, approval and veto write it in their own transaction, before any reset the
+ * decision causes. Like a notice it names the card, its revision and side only: never a veto reason (LOG-1, POL-2).
+ */
+export async function logDecision(ctx: MutationCtx, event: Doc<"events">, user: Doc<"users">, side: Side,
+  action: "selected" | "approved" | "vetoed", target: { proposalId: Id<"proposals">; revision: number }, summary: string,
+  before: Values, after: Values) {
+  await ctx.db.insert("log", { eventId: event._id,
+    actor: { kind: "human", userId: user._id, companyId: user.companyId, name: user.name ?? "Operator", side },
+    action, summary, texts: null, before, after, proposalId: target.proposalId, revision: target.revision,
+    roomId: (await roomOfEvent(ctx, event))?._id ?? null, demoRunId: event.demoRunId ?? null, simulated: event.simulated, at: Date.now() });
+}
+
 const planName = async (ctx: MutationCtx, proposalId: Id<"proposals">, revision: number) =>
   `${(await ctx.db.get(proposalId))?.label ?? "The plan"} revision ${revision}`;
 
@@ -124,6 +146,11 @@ export const approve = mutation({
   returns: approveResult,
   handler: async (ctx, args) => {
     const d = await checkDecision(ctx, args);
+    // Selection writes keep shared plans current; this catches a change that bypassed them (a room link). If it had
+    // to reset this event, the click is not recorded: the reset and its message stand, and throwing would undo them.
+    if (await syncPlans(ctx, d.event)) return { allRequiredApproved: false, requiredApprovalSides: d.event.requiredApprovalSides! };
+    // A shared mover's approval also signs the plan version every affected event must approve (spec §4.1).
+    const plan = await planFor(ctx, d.event, d.selection);
     let counted = await countingApprovals(ctx, d.event, d.selection);
     // Approving the same tick again is idempotent, even after the turn has moved on; it leaves no notice either.
     const inserted = !counted.has(d.side);
@@ -133,12 +160,21 @@ export const approve = mutation({
       await ctx.db.insert("approvals", {
         eventId: d.event._id, side: d.side, status: "approved", userId: d.user._id, companyId: d.user.companyId,
         proposalId: args.proposalId, revision: args.revision, selectionGeneration: args.selectionGeneration,
-        approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null,
-        demoRunId: d.event.demoRunId ?? null, current: true, at: Date.now(), assignmentVersion: assignmentVersionOf(d.user),
+        approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanId: plan?._id ?? null, trajectoryPlanVersion: plan?.planVersion ?? null,
+        reason: null, demoRunId: d.event.demoRunId ?? null, current: true, at: Date.now(), assignmentVersion: assignmentVersionOf(d.user),
       });
+      if (plan?.state === "draft") await ctx.db.patch(plan._id, { state: "authorizing", updatedAt: Date.now() });
       counted = await countingApprovals(ctx, d.event, d.selection);
     }
     const all = allApproved(d.event, counted);
+    // Logged before consensus closes the room, so the row still names it.
+    if (inserted) {
+      const status = d.event.status ?? "new";
+      await logDecision(ctx, d.event, d.user, d.side, "approved", args,
+        `Side ${d.side} approved ${await planName(ctx, args.proposalId, args.revision)}.${all ? " The plan is agreed." : ""}`,
+        { status }, { status: all ? "approved" : status, selectionGeneration: args.selectionGeneration,
+          approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanVersion: plan?.planVersion ?? null });
+    }
     if (all) {
       // spec §4.1 step 5; the room closes on consensus in the same mutation (rooms.closeRoomIfResolved).
       await ctx.db.patch(d.event._id, { status: "approved", situation: undefined });
@@ -178,17 +214,21 @@ export const veto = mutation({
     if (text && text.length > MAX_REASON) throw error("VALIDATION", `A veto reason is at most ${MAX_REASON} characters.`);
     const d = await checkDecision(ctx, args);
     await requireTurn(ctx, d);
+    // The version this veto rejects; the selection advance below supersedes it and resets the other affected events.
+    const vetoed = await planFor(ctx, d.event, d.selection);
+    // The reason stays in the approval row: it is free text and may echo private policy.
+    const plan = await planName(ctx, args.proposalId, args.revision);
+    await logDecision(ctx, d.event, d.user, d.side, "vetoed", args, `Side ${d.side} vetoed ${plan}.`,
+      { status: d.event.status ?? "new", generation: args.selectionGeneration }, { status: "agents", generation: args.selectionGeneration + 1 });
     await advanceSelection(ctx, d.event, { proposalId: args.proposalId, revision: args.revision }, { kind: "human", userId: d.user._id }, "vetoed");
     // History only: a veto never counts as an approval state of the new generation.
     await ctx.db.insert("approvals", {
       eventId: d.event._id, side: d.side, status: "vetoed", userId: d.user._id, companyId: d.user.companyId,
       proposalId: args.proposalId, revision: args.revision, selectionGeneration: args.selectionGeneration,
-      approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: text,
+      approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanId: vetoed?._id ?? null, trajectoryPlanVersion: vetoed?.planVersion ?? null, reason: text,
       demoRunId: d.event.demoRunId ?? null, current: false, at: Date.now(),
     });
     await ctx.db.patch(d.event._id, { status: "agents", situation: undefined });
-    // The reason stays in the approval row: it is free text and may echo private policy.
-    const plan = await planName(ctx, args.proposalId, args.revision);
     const summary = `Side ${d.side} vetoed ${plan}. Approvals were reset and the incident is back with the agents.`;
     await notifySides(ctx, d.event, d.event.requiredApprovalSides!, d.user._id, summary);
     await noteActor(ctx, d.event, d.user._id, summary);

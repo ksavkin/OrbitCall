@@ -535,9 +535,15 @@ function CenterColumn({ e, now, room, real }: { e: ConjunctionEvent; now: number
         </AnimatePresence>
       </div>
 
-      {/* the coordination channel, docked: the sphere is the talk button */}
+      {/* the coordination channel, docked: the sphere is the talk button. The room closes when the case resolves. */}
       <div className="shrink-0 border-t border-white/[0.07] bg-black/25">
-        <RoomCall e={e} compact />
+        {e.outcome?.resolvedAt ? (
+          <div className="mx-auto max-w-[908px] px-6 py-4 text-[12.5px] text-neutral-500" data-testid="room-closed">
+            The room closed when the case resolved. This is the record.
+          </div>
+        ) : (
+          <RoomCall e={e} compact />
+        )}
       </div>
     </div>
   );

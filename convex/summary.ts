@@ -12,6 +12,7 @@ import { validateCandidates, type Candidate, type Side } from "./lib/policies";
 import { evidenceVersionOf, ommSnapshotId, wholeSecondUtc } from "./lib/publishCandidates";
 import { getRescreenJob, orbitFailure, startRescreen, type RescreenRequest } from "./lib/orbitClient";
 import { isOpenRoom } from "./rooms";
+import { SHARED_BURN, sameBurn, sharedBurn } from "./revisions";
 import { summaryForm } from "./schema/rooms";
 import { rescreen } from "./schema/schedule";
 
@@ -110,7 +111,7 @@ export const get = query({
     if (current && user.role === "operator") {
       try {
         await editContext(ctx, user._id, { eventId, proposalId: current.form.proposalId, baseRevision: current.form.revision, changes: {} });
-        await singleTrajectory(ctx, event, current.input.card); canEdit = true;
+        await singleTrajectory(ctx, event, current.input.card, current.input.card); canEdit = true;
       }
       catch { /* The current selected facts stay readable when an artifact or another input blocks editing. */ }
     }
@@ -146,22 +147,11 @@ export const request = mutation({
   },
 });
 
-async function singleTrajectory(ctx: QueryCtx, event: Doc<"events">, card: Candidate) {
-  if (card.kind === "wait") return;
-  const movingId = card.movingSide === "A" ? event.objectAId : event.objectBId;
-  const lower = Date.parse(card.burnTimeUtc!), upper = lower + HORIZON_H * 3_600_000;
-  const rows = [
-    ...await ctx.db.query("events").withIndex("by_pair_tca", q => q.eq("objectAId", movingId)).collect(),
-    ...await ctx.db.query("events").withIndex("by_object_b_tca", q => q.eq("objectBId", movingId).gte("tcaMs", lower).lte("tcaMs", upper)).collect(),
-  ];
-  const duplicate = (other: Doc<"events">) => Math.abs(other.tcaMs - event.tcaMs) <= 60_000 &&
-    ((other.objectAId === event.objectAId && other.objectBId === event.objectBId) || (other.objectAId === event.objectBId && other.objectBId === event.objectAId));
-  const plans = await ctx.db.query("trajectoryPlans").withIndex("by_object_state", q => q.eq("objectId", card.movingObjectId!)).collect();
-  if (rows.some(other => other._id !== event._id && other.active && other.tcaMs >= lower && other.tcaMs <= upper &&
-    (other.demoRunId ?? null) === (event.demoRunId ?? null) && !duplicate(other)) ||
-    plans.some(plan => plan.demoRunId === (event.demoRunId ?? null) && plan.state !== "superseded" && plan.affectedEventIds.length > 1)) {
-    fail("SHARED_TRAJECTORY_REQUIRED", "This edit needs the shared trajectory-plan publication contract before it can change a proposal.");
-  }
+/** An edit may change the text of a card whose burn is shared with other incidents (revisions.ts sharedBurn), never
+ * that burn: it changes only together in every affected incident. The same card twice checks only that it resolves. */
+async function singleTrajectory(ctx: QueryCtx, event: Doc<"events">, before: Candidate, after: Candidate) {
+  const code = "SHARED_TRAJECTORY_REQUIRED";
+  if ((await sharedBurn(ctx, event, before, code) || await sharedBurn(ctx, event, after, code)) && !sameBurn(before, after)) fail(code, SHARED_BURN);
 }
 
 async function editContext(ctx: QueryCtx, userId: Id<"users">, args: Args) {
@@ -269,8 +259,7 @@ export const edit = mutation({
     const candidate = editedCandidate(current.input.card, normalized.changes, note, current.facts);
     if (Object.entries(normalized.changes).every(([key, value]) => current.form[key as keyof typeof current.form] === value)) fail("VALIDATION", "The summary fields are unchanged.");
     if (candidate.movingSide && !event.requiredApprovalSides?.includes(candidate.movingSide)) fail("INVALID_STATE", "Only an active operator's spacecraft can maneuver.");
-    await singleTrajectory(ctx, event, current.input.card);
-    await singleTrajectory(ctx, event, candidate);
+    await singleTrajectory(ctx, event, current.input.card, candidate);
     const job: Job = { args: normalized, userId: user._id, inputHash: current.inputHash, baseVersion: current.input.set.version,
       generation: current.selection.generation, evidenceKey: inputKey(current.facts), eventSnapshotId: current.snapshot.snapshotId,
       ommSnapshotId: current.ommId, demoRunId: event.demoRunId ?? null, candidate, note };
@@ -296,8 +285,7 @@ async function loadJob(ctx: QueryCtx, jobId: Id<"log">) {
   if (job.candidate.kind === "maneuver" && Date.parse(job.candidate.burnTimeUtc!) <= Date.now()) {
     fail("BURN_TIME_EXPIRED", "The edited burn time passed while its numerical result was being checked.");
   }
-  await singleTrajectory(ctx, current.event, current.input.card);
-  await singleTrajectory(ctx, current.event, job.candidate);
+  await singleTrajectory(ctx, current.event, current.input.card, job.candidate);
   const card = job.candidate;
   const request: RescreenRequest | null = card.kind === "wait" ? null : {
     jobId: `summary-${jobId}`, snapshotId: job.ommSnapshotId, evidenceVersion: evidenceVersionOf(current.facts),

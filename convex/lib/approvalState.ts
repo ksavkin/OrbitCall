@@ -4,10 +4,12 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { inputKey } from "./analyst";
 import { loadFacts } from "./events";
 import { LEGACY_ASSIGNMENT_VERSION } from "./accounts";
+import { syncPlans } from "../trajectoryPlans";
 
 type Side = "A" | "B";
 export type ResetReason = "selection_changed" | "revision_changed" | "proposal_withdrawn" | "vetoed" |
-  "event_expired" | "policy_changed" | "assignment_revoked" | "evidence_changed" | "assignment_changed" | "authorization_changed" | "candidate_set_changed";
+  "event_expired" | "policy_changed" | "assignment_revoked" | "evidence_changed" | "assignment_changed" | "authorization_changed" | "candidate_set_changed" |
+  "trajectory_changed" | "trajectory_refused";
 type Next = { proposalId: Id<"proposals">; revision: number } | null;
 
 // Every selection write passes through advanceSelection, so the schedule preview for a newly selected plan is requested
@@ -122,6 +124,9 @@ export async function advanceSelection(ctx: MutationCtx, event: Doc<"events">, n
       proposalId: row?.proposalId ?? null, revision: row?.revision ?? null, roomId: null,
       demoRunId: event.demoRunId ?? null, simulated: event.simulated, at: now });
   }
+  // Every selection change passes here, so a shared trajectory plan follows it in the same transaction (spec §4.1
+  // "Shared maneuvers"). Its own resets of the other affected events carry a trajectory_ reason and stop here.
+  if (!reason.startsWith("trajectory_")) await syncPlans(ctx, event, { trigger: true });
   return value.generation;
 }
 
@@ -145,7 +150,8 @@ export async function invalidateEventApprovals(ctx: MutationCtx, supplied: Doc<"
   const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
   const decided = reserved || set?.state === "scheduled" || RESOLVED_STATUSES.has(event.status ?? "new");
   if ((decided || reason === "evidence_changed") && set && !set.reviewRequired) await ctx.db.patch(set._id, { reviewRequired: true });
-  if (!selection?.proposalId && !current.length) return;
+  // Nothing to reset, but a plan may still list the event (affected without a selection): bring it up to date.
+  if (!selection?.proposalId && !current.length) { if (!reason.startsWith("trajectory_")) await syncPlans(ctx, event); return; }
   await advanceSelection(ctx, event, selection?.proposalId && selection.revision !== null ?
     { proposalId: selection.proposalId, revision: selection.revision } : null, { kind: "agents" }, reason);
   if (!decided && event.active) {
@@ -168,7 +174,8 @@ export async function expireUndecidedApprovals(ctx: MutationCtx, supplied: Doc<"
   }
   const selection = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
   const current = await ctx.db.query("approvals").withIndex("by_event_current", q => q.eq("eventId", event._id).eq("current", true)).collect();
-  if (!selection?.proposalId && !current.length) return;
+  // An expired event listed in a plan without a selection would otherwise keep the plan waiting for its ref.
+  if (!selection?.proposalId && !current.length) { await syncPlans(ctx, event); return; }
   await advanceSelection(ctx, event, selection?.proposalId && selection.revision !== null ?
     { proposalId: selection.proposalId, revision: selection.revision } : null, { kind: "agents" }, "event_expired");
 }

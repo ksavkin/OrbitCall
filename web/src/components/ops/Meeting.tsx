@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUpRight, Check, CheckCheck, CircleDot, Hourglass, Radar, RotateCcw, Sparkles, Wrench, X } from "lucide-react";
+import { ArrowUpRight, Check, CheckCheck, CircleDot, Radar, RotateCcw, Sparkles, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CallMessage } from "@/call/api";
 import { useRealMode } from "@/lib/backend/live";
@@ -13,7 +13,7 @@ import { useOps } from "@/lib/ops/store";
 import type { AgentId, ConjunctionEvent, Reply, Span } from "@/lib/ops/types";
 import { LiveMeeting } from "@/components/roomChat/LiveMeeting";
 import { Message } from "@/components/roomChat/RoomTimeline";
-import { ProposalPanel } from "@/components/proposals/ProposalPanel";
+import { PlanMessage } from "@/components/proposals/ProposalPanel";
 import { NodeGlyph } from "./Glyphs";
 import { ObjectChip, RichLine } from "./Entity";
 import type { useRoomState } from "./DecisionDock";
@@ -21,13 +21,15 @@ import { VerificationPanel } from "@/components/live/Verification";
 
 // The Decision Center as one shared meeting, oldest at the top: what people said (voice or typed, in each reader's
 // language), the agents' reasoning that matters (each note says which tools it used, so it reads as an agent at
-// work, not a bare model call), and quiet lines for every selection, approval and reset. The plans sit at the end
-// while a decision is open; the closing report ends the case. Every tool call stays in Agent run.
+// work, not a bare model call), and quiet lines for every selection, approval and reset. The newest set of plans is a
+// message from the agents where it was published: it stays in view while its round is open, then reads like any other
+// message. The closing report ends the case. Every tool call stays in Agent run.
 
 type Item =
   | { kind: "msg"; at: number; key: string; m: CallMessage }
   | { kind: "agent"; at: number; key: string; s: Span; tools: Span[] }
-  | { kind: "line"; at: number; key: string; tone: "ok" | "no" | "reset" | "info" | "select"; who?: string; text: string };
+  | { kind: "line"; at: number; key: string; tone: "ok" | "no" | "reset" | "info" | "select"; who?: string; text: string }
+  | { kind: "plans"; at: number; key: string };
 
 const clean = (s: string | undefined) => (s ?? "").replace(/\s*\(synthetic\)/i, "");
 
@@ -49,13 +51,18 @@ function itemsOf(e: ConjunctionEvent, spans: Span[], replies: Reply[], messages:
     out.push({ kind: "agent", at: s.t1 ?? s.t0, key: s.id, s, tools });
   }
 
-  for (const p of e.proposals ?? []) {
-    if (!p.publishedAt || !p.label) continue;
-    if (p.by && p.by !== "agents") continue; // a person's selection is its own line, from the reply
+  const published = (e.proposals ?? []).filter((p) => p.publishedAt && p.label && (!p.by || p.by === "agents"));
+  const newest = published.at(-1);
+  for (const p of published) {
+    // the newest set is the plans message itself; earlier sets stay as lines
+    if (p === newest && e.options?.length) {
+      out.push({ kind: "plans", at: p.publishedAt!, key: `plans-${p.version}` });
+      continue;
+    }
     const n = e.options?.length ?? 4;
     out.push({
       kind: "line",
-      at: p.publishedAt,
+      at: p.publishedAt!,
       key: `pub-${p.version}`,
       tone: p.version > 1 ? "reset" : "info",
       who: "The agents",
@@ -76,7 +83,7 @@ function itemsOf(e: ConjunctionEvent, spans: Span[], replies: Reply[], messages:
   return out.sort((a, b) => a.at - b.at);
 }
 
-export function Meeting({ e, now, room, onRun }: { e: ConjunctionEvent; now: number; room: ReturnType<typeof useRoomState>; onRun: (agent: AgentId) => void }) {
+export function Meeting({ e, room, onRun }: { e: ConjunctionEvent; now: number; room: ReturnType<typeof useRoomState>; onRun: (agent: AgentId) => void }) {
   const spans = useOps((s) => s.spans);
   const replies = useOps((s) => s.replies);
   const live = useOps((s) => (s.callLive?.eventId === e.id ? s.callLive : null));
@@ -107,7 +114,7 @@ export function Meeting({ e, now, room, onRun }: { e: ConjunctionEvent; now: num
       if (pinned.current) el.scrollTop = el.scrollHeight;
     };
     el.addEventListener("scroll", onScroll, { passive: true });
-    // the list grows, and the box grows when the pinned decision above it closes
+    // the list grows, and the box resizes with the column
     const ro = new ResizeObserver(follow);
     ro.observe(inner);
     ro.observe(el);
@@ -126,24 +133,7 @@ export function Meeting({ e, now, room, onRun }: { e: ConjunctionEvent; now: num
 
   return (
     <div className="absolute inset-0 flex flex-col" data-testid="meeting-wrap">
-      {/* the open decision stays pinned above the discussion, so people talk about it underneath */}
-      {open && (
-        <div className="thin-scroll max-h-[58%] shrink-0 overflow-y-auto px-6 pt-1 [scrollbar-gutter:stable]">
-          <motion.div
-            layout
-            className={`mx-auto max-w-[860px] rounded-[16px] ${due ? "bg-white/[0.02] shadow-[inset_0_0_0_1px_rgba(255,159,64,0.32)]" : "bg-white/[0.015] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)]"}`}
-            data-testid="meeting-decision"
-          >
-            <ProposalPanel e={e} viewer={room.viewer} now={now} embedded readOnly={!due} />
-            {!due && turnName && (
-              <div className="flex items-center gap-2 border-t border-white/[0.06] px-5 py-3 text-[12.5px] text-neutral-500">
-                <Hourglass size={12} className="text-[#9cc2ff]" /> {turnName} decides now. Your controls open on your turn.
-              </div>
-            )}
-          </motion.div>
-        </div>
-      )}
-      <div ref={box} className={`thin-scroll min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] ${open ? "mt-3 border-t border-white/[0.06]" : ""}`} data-testid="meeting">
+      <div ref={box} className="thin-scroll min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]" data-testid="meeting">
         <div ref={list} className="mx-auto flex max-w-[908px] flex-col gap-4 px-6 pb-6 pt-3">
           <div className="pb-1 text-center text-[11.5px] text-neutral-600">
             Shared with everyone on {e.id} · each person reads it in their own language · nothing here approves anything
@@ -154,6 +144,11 @@ export function Meeting({ e, now, room, onRun }: { e: ConjunctionEvent; now: num
                 <ol key={it.key} className="contents">
                   <Message m={it.m} myUserId={live?.me ?? null} />
                 </ol>
+              ) : it.kind === "plans" ? (
+                // sticky while its round is open, so it stays in view as the discussion grows under it
+                <div key={it.key} className={open ? "sticky top-0 z-10 -mx-6 bg-[rgba(12,12,14,0.94)] px-6 pb-3 pt-2 shadow-[0_14px_24px_-18px_rgba(0,0,0,0.9)] backdrop-blur-md" : ""}>
+                  <PlanMessage e={e} viewer={room.viewer} at={it.at} due={due} done={!open} waitingFor={turnName || undefined} />
+                </div>
               ) : it.kind === "agent" ? (
                 <AgentNote key={it.key} e={e} s={it.s} tools={it.tools} onRun={onRun} />
               ) : (

@@ -240,7 +240,7 @@ export const commit = internalMutation({
     const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", args.eventId)).unique();
     if (discussion.done) return { version: set!.version, changed: false };
     if (discussion.inputVersion !== args.inputVersion) return bad("STALE_REVISION", STALE);
-    await requireUnshared(ctx, args.eventId, args.candidates.flatMap(c => c.movingObjectId ? [c.movingObjectId] : []));
+    await requireUnshared(ctx, args.eventId, args.candidates);
     const existingRevisions = new Set<string>();
     for (const card of args.candidates) {
       const proposal = await ctx.db.query("proposals").withIndex("by_event_candidate", q => q.eq("eventId", args.eventId).eq("candidateId", card.candidateId)).unique();
@@ -299,41 +299,67 @@ export const commit = internalMutation({
   },
 });
 
-/** There is no landed trajectory publication API yet. Check actual current room/event links and existing plans
- * both before and at commit. A missing plan must never downgrade a shared maneuver into independent approvals. */
-async function requireUnshared(ctx: QueryCtx, eventId: Id<"events">, movingObjectIds: string[]) {
+/** The burn fields one trajectory plan shares across incidents (maneuvers.ts scope() compares the same burn). */
+export type Burn = { kind: "maneuver" | "wait"; movingSide: "A" | "B" | null; movingObjectId: string | null;
+  burnTimeUtc: string | null; deltaVMs: number | null; direction: "prograde" | "retrograde" | null };
+// trajectoryPlans.ts HORIZON_MS, DUPLICATE_MS and CLOSED. Its affectedBy is private there; keep both in step.
+const HORIZON_MS = 72 * 3_600_000, DUPLICATE_MS = 60_000, CLOSED = ["verified", "no_action_needed"];
+const UNDETERMINED = "The options could not be checked against shared trajectory plans.";
+export const SHARED_BURN = "This burn is shared with other incidents through one trajectory plan; it can only change together in every affected incident.";
+
+export const sameBurn = (a: Burn, b: Burn) => a.kind === b.kind && a.movingSide === b.movingSide && a.movingObjectId === b.movingObjectId &&
+  a.deltaVMs === b.deltaVMs && a.direction === b.direction &&
+  (a.burnTimeUtc === null ? b.burnTimeUtc === null : b.burnTimeUtc !== null && Date.parse(a.burnTimeUtc) === Date.parse(b.burnTimeUtc));
+
+/**
+ * True when this maneuver card's burn belongs to more than this incident: a non-superseded plan of its mover lists the
+ * event, or the mover is a party in another affected event of the same run under trajectoryPlans.ts affectedBy (TCA
+ * in [burn, burn + 72 h], not closed, pair duplicates within 60 s excluded; none when the event's own TCA lies outside).
+ * Rooms do not decide. Refuses with `code` when the card or event cannot be resolved.
+ */
+export async function sharedBurn(ctx: QueryCtx, event: Doc<"events">, card: Burn, code: string): Promise<boolean> {
+  if (card.kind === "wait") return false;
+  const lower = card.burnTimeUtc ? Date.parse(card.burnTimeUtc) : NaN, upper = lower + HORIZON_MS;
+  const moverId = card.movingSide === "A" ? event.objectAId : card.movingSide === "B" ? event.objectBId : null;
+  const mover = moverId && await ctx.db.get(moverId);
+  if (!mover || mover.objectId !== card.movingObjectId || !Number.isFinite(lower)) return bad(code, UNDETERMINED);
+  const run = event.demoRunId ?? null;
+  const plans = await ctx.db.query("trajectoryPlans").withIndex("by_object_version", q => q.eq("objectId", mover.objectId)).collect();
+  // Same plans as maneuvers.ts context() reads: a live plan of more than one incident that lists this one.
+  if (plans.some(p => p.demoRunId === run && p.state !== "superseded" && p.affectedEventIds.length > 1 && p.affectedEventIds.includes(event._id))) return true;
+  if (event.tcaMs < lower || event.tcaMs > upper) return false;
+  const others = [
+    ...await ctx.db.query("events").withIndex("by_pair_tca", q => q.eq("objectAId", mover._id)).collect(),
+    ...await ctx.db.query("events").withIndex("by_object_b_tca", q => q.eq("objectBId", mover._id).gte("tcaMs", lower).lte("tcaMs", upper)).collect(),
+  ];
+  const duplicate = (e: Doc<"events">) => Math.abs(e.tcaMs - event.tcaMs) <= DUPLICATE_MS &&
+    ((e.objectAId === event.objectAId && e.objectBId === event.objectBId) || (e.objectAId === event.objectBId && e.objectBId === event.objectAId));
+  return others.some(e => e._id !== event._id && e.active && !CLOSED.includes(e.status ?? "") && e.tcaMs >= lower && e.tcaMs <= upper &&
+    (e.demoRunId ?? null) === run && !duplicate(e));
+}
+
+/** Checked both before the numerical call and at commit. A revision may rewrite, add or drop any card except a shared
+ * burn: a maneuver whose new burn is shared must keep the current card's exact burn under its candidateId. Other
+ * changes advance the selection, and the plan machinery supersedes the version and resets affected events. */
+async function requireUnshared(ctx: QueryCtx, eventId: Id<"events">, candidates: (Burn & { candidateId: string })[]) {
   const event = await ctx.db.get(eventId);
-  const movers = new Set(movingObjectIds);
-  const current = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
-  for (const id of current?.candidateRevisionIds ?? []) {
-    const card = await ctx.db.get(id);
-    if (card?.movingObjectId) movers.add(card.movingObjectId);
-  }
-  const links = await ctx.db.query("roomEvents").withIndex("by_event", q => q.eq("eventId", eventId)).collect();
-  for (const link of links) {
-    const room = await ctx.db.get(link.roomId);
-    if (!room || room.state !== "open") continue;
-    const linked = await ctx.db.query("roomEvents").withIndex("by_room", q => q.eq("roomId", room._id)).collect();
-    for (const other of linked) {
-      if (other.eventId === eventId) continue;
-      const row = await ctx.db.get(other.eventId);
-      if (!row?.active || row.tcaMs <= Date.now()) continue;
-      for (const object of await Promise.all([ctx.db.get(row.objectAId), ctx.db.get(row.objectBId)])) {
-        if (object && movers.has(object.objectId)) return bad("TRAJECTORY_PLAN_REQUIRED", "This mover affects linked incidents. Revision requires the shared trajectory-plan publisher before any options can change.");
-      }
-    }
-  }
-  for (const objectId of movers) {
-    const plans = await ctx.db.query("trajectoryPlans").withIndex("by_object_version", q => q.eq("objectId", objectId)).collect();
-    if (plans.some(p => p.demoRunId === (event?.demoRunId ?? null) && p.state !== "superseded")) {
-      return bad("TRAJECTORY_PLAN_REQUIRED", "This maneuver already belongs to a trajectory plan; its version must be revised through that plan.");
+  const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
+  const current = await Promise.all((set?.candidateRevisionIds ?? []).map(id => ctx.db.get(id)));
+  // Without a set yet there is no current burn to keep: a shared card is refused below as a new burn.
+  if (!event) return bad("TRAJECTORY_PLAN_REQUIRED", UNDETERMINED);
+  for (const card of candidates) {
+    if (card.kind !== "maneuver") continue;
+    if (current.some(c => !c)) return bad("TRAJECTORY_PLAN_REQUIRED", UNDETERMINED);
+    const previous = current.find(c => c!.candidateId === card.candidateId) ?? null;
+    if (await sharedBurn(ctx, event, card, "TRAJECTORY_PLAN_REQUIRED") && (!previous || !sameBurn(previous, card))) {
+      return bad("TRAJECTORY_PLAN_REQUIRED", SHARED_BURN);
     }
   }
 }
 
 export const checkMovers = internalQuery({
-  args: { eventId: v.id("events"), objectIds: v.array(v.string()) },
-  handler: async (ctx, { eventId, objectIds }) => { await requireUnshared(ctx, eventId, objectIds); return null; },
+  args: { eventId: v.id("events"), candidates: v.array(candidate) },
+  handler: async (ctx, { eventId, candidates }) => { await requireUnshared(ctx, eventId, candidates); return null; },
 });
 
 export const eventsForHost = internalQuery({
@@ -388,7 +414,7 @@ export const fromHost = internalAction({
           allowedMovingObjectIds: input.allowedMovingObjectIds, notBeforeUtc: wholeSecondUtc(Date.now(), Math.ceil) });
         if (!geometryMatches(response, input.facts)) bad("GEOMETRY_MISMATCH", "The numerical result no longer matches this incident's evidence.");
         const candidates = discussionCards(response, input, id, Date.now(), discussion.constraints, discussion.targetCandidateId, discussion.ruleVersion);
-        await ctx.runQuery(internal.revisions.checkMovers, { eventId: id, objectIds: candidates.flatMap(c => c.movingObjectId ? [c.movingObjectId] : []) });
+        await ctx.runQuery(internal.revisions.checkMovers, { eventId: id, candidates });
         const result = await ctx.runMutation(internal.revisions.commit, { eventId: id, hostRunId, inputVersion: discussion.inputVersion,
           pins: { evidenceKey: input.evidenceKey, eventSnapshotId: input.eventSnapshotId, snapshotId: input.snapshotId, demoRunId: input.demoRunId, baseVersion: input.baseVersion }, candidates });
         results.push({ eventId: id, status: "published", ...result });
