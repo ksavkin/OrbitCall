@@ -133,6 +133,23 @@ describe("rooms.startWorkflow", () => {
     expect(inbox[0].lastUpdateSummary).toMatch(/^You were added to the coordination room for /);
   });
 
+  it("starts the Analyst and the candidate grid once for each newly linked incident", async () => {
+    const { t, ids } = await seed();
+    const started = () => t.run(async ctx => (await ctx.db.system.query("_scheduled_functions").collect())
+      .filter(f => ["agents/analyst:start", "advocates:publishFromOrbit"].includes(f.name))
+      .map(f => `${f.name} ${(f.args[0] as { eventId: string }).eventId}`).sort());
+    const before = await started();
+    await as(t, "ana").mutation(startWorkflow, { eventId: ids.cross });
+    const added = [...await started()];
+    for (const x of before) added.splice(added.indexOf(x), 1);
+    expect(added).toEqual([
+      `advocates:publishFromOrbit ${ids.cross}`, `advocates:publishFromOrbit ${ids.crossMirror}`,
+      `agents/analyst:start ${ids.cross}`, `agents/analyst:start ${ids.crossMirror}`,
+    ].sort());
+    await as(t, "bo").mutation(startWorkflow, { eventId: ids.crossMirror });
+    expect((await started()).length).toBe(before.length + 4);   // pressing again starts nothing new
+  });
+
   it("returns null from rooms.get before a workflow starts", async () => {
     const { t, ids } = await seed();
     expect(await as(t, "ana").query(get, { eventId: ids.cross })).toBeNull();

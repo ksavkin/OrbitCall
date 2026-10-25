@@ -1,16 +1,17 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { requireFleetScope, type FleetScope } from "./fleetQuery";
 import { isoUtc, TCA_MATCH_MS } from "./lib/events";
 import { color, eventStatus, workflow } from "./lib/validators";
 import { side } from "./lib/policyValidators";
 
 // Coordination rooms (spec §3.4) on the round 1.5 tables in schema/rooms.ts. A room is the optional, automatically
-// connected communication channel of one encounter: an operator presses "Start workflow" on the conjunction, the
-// room is created for every linked pair row (same unordered pair within TCA_MATCH_MS, both object orders), and every
-// operator currently assigned to a party object is joined to it. The other side gets an inbox notice; nobody is
-// moved to the room screen. The room closes when every linked incident is resolved (closeRoomIfResolved).
+// connected communication channel of one case (user-flow "App navigation and the decision flow"): an operator presses
+// "Run agents on this case" (startWorkflow), the room is created for every linked pair row (same unordered pair within
+// TCA_MATCH_MS, both object orders), the agents start for each of them, and every operator currently assigned to a
+// party object is joined to it. The other side gets an inbox notice; nobody else is moved to the Decision Center. The room closes when every linked incident is resolved (closeRoomIfResolved).
 // Membership is current responsibility for a linked event (an operator by assignment, a head of ops read-only by
 // company ownership); roomMembers rows carry presence. Company policy, advocate context and negotiation prose are
 // never read here (ROOM-3, ROOM-15).
@@ -233,7 +234,12 @@ export const startWorkflow = mutation({
       room = (await ctx.db.get(roomId))!;
     }
     for (const e of linked) {
-      if (!await openRoomLinkedTo(ctx, e._id)) await ctx.db.insert("roomEvents", { roomId: room._id, eventId: e._id, linkedAt: now });
+      if (await openRoomLinkedTo(ctx, e._id)) continue;
+      await ctx.db.insert("roomEvents", { roomId: room._id, eventId: e._id, linkedAt: now });
+      // "Run agents on this case": the Analyst and the candidate grid start for each newly linked incident. Both
+      // deduplicate on their own (agentRuns.begin claims one run per input; candidates.publish checks the version).
+      await ctx.scheduler.runAfter(0, internal.agents.analyst.start, { eventId: e._id });
+      await ctx.scheduler.runAfter(0, internal.advocates.publishFromOrbit, { eventId: e._id });
     }
     const pairs = await roomPairs(ctx, room._id);
     const joined = await autoJoin(ctx, room, pairs, scope.user._id);
