@@ -15,10 +15,25 @@ export const publish = internalMutation({
     // What the candidates were computed on; an event that moved on since then is refused rather than mislabeled.
     expectedEvidenceKey: v.optional(v.string()), expectedSnapshotId: v.optional(v.string()),
     expectedOmmSnapshotId: v.optional(v.string()),
+    expectedDemoRunId: v.optional(v.union(v.id("demoRuns"), v.null())),
   },
-  handler: async (ctx, { eventId, baseVersion, candidates, start = true, expectedEvidenceKey, expectedSnapshotId, expectedOmmSnapshotId }) => {
+  handler: async (ctx, { eventId, baseVersion, candidates, start = true, expectedEvidenceKey, expectedSnapshotId, expectedOmmSnapshotId, expectedDemoRunId }) => {
     const event = await ctx.db.get(eventId);
     if (!event) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
+    // A remote calculation can outlive its event or a burn. Recheck inside this transaction before any writes.
+    if (expectedEvidenceKey !== undefined && (!event.active || event.tcaMs <= Date.now() || event.workflow === "internal_review" ||
+      candidates.some(c => c.kind === "maneuver" && Date.parse(c.burnTimeUtc!) <= Date.now()))) {
+      throw new ConvexError({ code: "STALE_REVISION", message: "The event or an offered burn is no longer available; recompute candidates." });
+    }
+    if (expectedDemoRunId !== undefined && expectedDemoRunId !== (event.demoRunId ?? null)) {
+      throw new ConvexError({ code: "STALE_REVISION", message: "The event's demo run changed while candidates were computed." });
+    }
+    if (event.demoRunId) {
+      const run = await ctx.db.get(event.demoRunId);
+      if (!run || run.state !== "open" || run.closedAt !== null) {
+        throw new ConvexError({ code: "STALE_REVISION", message: "The demo run is no longer open for candidate publication." });
+      }
+    }
     const facts = await loadFacts(ctx, event);
     if (expectedEvidenceKey !== undefined && expectedEvidenceKey !== inputKey(facts)) {
       throw new ConvexError({ code: "STALE_REVISION", message: "The event's evidence changed while candidates were computed; recompute them." });

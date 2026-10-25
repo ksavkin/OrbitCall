@@ -95,6 +95,10 @@ const revisions = (t: Backend, eventId: Id<"events">) =>
 const pendingAdvocateStarts = (t: Backend) => t.run(async ctx =>
   (await ctx.db.system.query("_scheduled_functions").collect()).filter(f => f.name.startsWith("agents/advocate:") && f.state.kind === "pending"));
 
+const demoRun = (t: Backend) => t.run(ctx => ctx.db.insert("demoRuns", {
+  scenario: "candidate-publication-test", state: "open", startedBy: null, manifest: null, startedAt: FIXTURE_NOW, closedAt: null,
+}));
+
 async function operator(t: Backend, name: string, objectId: string) {
   await t.mutation(internal.operators.provision, {
     key: `fixture-${name}`, name: name.toUpperCase(), simulated: true, objectIds: [objectId],
@@ -495,6 +499,100 @@ describe("advocates.publishFromOrbit", () => {
       expect(await publish(t, eventId)).toEqual({ status: "skipped", reason });
       expect(fetch).not.toHaveBeenCalled();
     }
+  });
+
+  it.each(["inactive", "past", "internal_review"])("preserves existing cards when the event becomes %s during the orbit call", async change => {
+    const { t, eventId } = await pairSetup();
+    mockOrbit();
+    await publish(t, eventId); await finish(t);
+    const before = await candidateSet(t, eventId);
+    const beforeRevisions = await revisions(t, eventId);
+    const beforeRuns = await t.run(ctx => ctx.db.query("agentRuns").collect());
+    const fetch = mockOrbit({}, async () => {
+      if (change === "inactive") await t.run(ctx => ctx.db.patch(eventId, { active: false }));
+      else if (change === "internal_review") await t.run(ctx => ctx.db.patch(eventId, { workflow: "internal_review", requiredApprovalSides: [] }));
+      else vi.setSystemTime(TCA_MS + 1_000);
+    });
+    expect(await publish(t, eventId)).toMatchObject({ status: "failed", code: "STALE_REVISION" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(await candidateSet(t, eventId)).toEqual(before);
+    expect(await revisions(t, eventId)).toEqual(beforeRevisions);
+    expect(await t.run(ctx => ctx.db.query("agentRuns").collect())).toEqual(beforeRuns);
+    expect(await pendingAdvocateStarts(t)).toHaveLength(0);
+  });
+
+  it("drops burns that expire while the orbit service is calculating", async () => {
+    const { t, eventId } = await pairSetup();
+    const firstBurn = TCA_MS - 12 * 3_600_000;
+    vi.setSystemTime(firstBurn - 15_000);
+    mockOrbit({}, async () => { vi.setSystemTime(firstBurn + 15_000); });
+    expect(await publish(t, eventId)).toMatchObject({ status: "published", cards: 4 });
+    const cards = await currentCards(t, eventId);
+    expect(cards.filter(c => c.kind === "maneuver").every(c => Date.parse(c.burnTimeUtc!) > Date.now())).toBe(true);
+    expect(cards.some(c => c.burnTimeUtc === iso(firstBurn))).toBe(false);
+  });
+
+  it("keeps each moving side represented after its earliest option expires", async () => {
+    const { t, eventId } = await pairSetup();
+    const firstBurn = TCA_MS - 12 * 3_600_000;
+    vi.setSystemTime(firstBurn - 15_000);
+    const grid: GridPoint[] = [...GRID.slice(0, 4), { ...GRID[3], leadH: 3, dir: "prograde", missAfterKm: 2.3 }, GRID[4]];
+    mockOrbit({ grid }, async () => { vi.setSystemTime(firstBurn + 15_000); });
+    expect(await publish(t, eventId)).toMatchObject({ status: "published", cards: 4 });
+    expect((await currentCards(t, eventId)).filter(c => c.kind === "maneuver").map(c => c.movingSide)).toEqual(["A", "B", "A"]);
+  });
+
+  it("refuses pinned candidates that have expired at the final publication transaction", async () => {
+    const { t, eventId } = await pairSetup();
+    const evidenceKey = await t.run(async ctx => inputKey(await loadFacts(ctx, (await ctx.db.get(eventId))!)));
+    const firstBurn = Math.min(...advocateCandidates.filter(c => c.kind === "maneuver").map(c => Date.parse(c.burnTimeUtc!)));
+    vi.setSystemTime(firstBurn);
+    await expect(t.mutation(internal.candidates.publish, {
+      eventId, baseVersion: null, candidates: advocateCandidates, start: false, expectedEvidenceKey: evidenceKey,
+    })).rejects.toThrow("STALE_REVISION");
+    expect(await candidateSet(t, eventId)).toBeNull();
+    expect(await revisions(t, eventId)).toEqual([]);
+  });
+
+  it.each(["closed", "closedAt", "missing"])("skips a %s demo run without calling the orbit service", async change => {
+    const { t, eventId } = await pairSetup();
+    const runId = await demoRun(t);
+    await t.run(async ctx => {
+      await ctx.db.patch(eventId, { demoRunId: runId });
+      if (change === "closed") await ctx.db.patch(runId, { state: "closed" });
+      else if (change === "closedAt") await ctx.db.patch(runId, { closedAt: FIXTURE_NOW });
+      else await ctx.db.delete(runId);
+    });
+    const fetch = mockOrbit();
+    expect(await publish(t, eventId)).toEqual({ status: "skipped", reason: "DEMO_RUN_CLOSED" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await candidateSet(t, eventId)).toBeNull();
+  });
+
+  it.each(["closed", "closedAt", "missing", "changed", "removed"])("preserves candidates if their demo run is %s during calculation", async change => {
+    const { t, eventId } = await pairSetup();
+    const runId = await demoRun(t);
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: runId }));
+    mockOrbit();
+    await publish(t, eventId); await finish(t);
+    const before = await candidateSet(t, eventId);
+    const beforeRevisions = await revisions(t, eventId);
+    const beforeRuns = await t.run(ctx => ctx.db.query("agentRuns").collect());
+    const fetch = mockOrbit({}, async () => {
+      const nextRunId = change === "changed" ? await demoRun(t) : undefined;
+      await t.run(async ctx => {
+        if (change === "closed") await ctx.db.patch(runId, { state: "closed" });
+        else if (change === "closedAt") await ctx.db.patch(runId, { closedAt: FIXTURE_NOW });
+        else if (change === "missing") await ctx.db.delete(runId);
+        else await ctx.db.patch(eventId, { demoRunId: nextRunId });
+      });
+    });
+    expect(await publish(t, eventId)).toMatchObject({ status: "failed", code: "STALE_REVISION" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(await candidateSet(t, eventId)).toEqual(before);
+    expect(await revisions(t, eventId)).toEqual(beforeRevisions);
+    expect(await t.run(ctx => ctx.db.query("agentRuns").collect())).toEqual(beforeRuns);
+    expect(await pendingAdvocateStarts(t)).toHaveLength(0);
   });
 
   it("never treats a missing active counterpart as debris", async () => {

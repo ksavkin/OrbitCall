@@ -3,13 +3,14 @@ import { inputKey, type EventFacts } from "./analyst";
 import { mapCandidates, type CardContext, type OrbitCandidatesResponse, type StoredCandidate } from "./candidateCards";
 import { orbitFailure, OrbitServiceError, type CandidatesResponse, type ServiceCandidate } from "./orbitClient";
 import type { Candidate, Side } from "./policies";
+import type { Id } from "../_generated/dataModel";
 
 // Pure glue between the orbit service's real /candidates answer and the advocate tables. The card mapper keeps its
 // own guarantees (at most four cards, wait keeps its slot, debris side rule, revisions against stored history,
 // invalid geometry dropped); this file only adapts the service shape to it and names the publish outcomes.
 
 export type SkipReason =
-  | "ORBIT_NOT_CONFIGURED" | "NOT_FOUND" | "EVENT_INACTIVE" | "SET_NOT_OPEN" | "WORKFLOW_UNSUPPORTED" | "OMM_SNAPSHOT_UNKNOWN";
+  | "ORBIT_NOT_CONFIGURED" | "NOT_FOUND" | "EVENT_INACTIVE" | "SET_NOT_OPEN" | "WORKFLOW_UNSUPPORTED" | "OMM_SNAPSHOT_UNKNOWN" | "DEMO_RUN_CLOSED";
 export type PublishOutcome =
   | { status: "published"; version: number; changed: boolean; cards: number; sharedMoverEventIds: string[] }
   | { status: "skipped"; reason: SkipReason }
@@ -25,6 +26,7 @@ export interface PublishInput {
   eventSnapshotId: string;            // the event's stored snapshot, pinned into candidates.publish
   snapshotId: string;                 // the OMM snapshot the orbit service holds
   evidenceVersion: string;
+  demoRunId: Id<"demoRuns"> | null;
   activeSide: Side;
   counterpartSide: Side | null;
   allowedMovingObjectIds: string[];
@@ -89,9 +91,9 @@ export const geometryMatches = (response: CandidatesResponse, facts: EventFacts)
 // Policy-free choice from the ranked grid: maneuvers that clear the pair threshold and widen the miss, the cheapest
 // one per moving side first, then the rest in service rank order. The mapper keeps the first valid ones, so this
 // order decides which three maneuvers accompany the wait card. A grid with no such maneuver yields wait only.
-function chooseOrder(response: CandidatesResponse): ServiceCandidate[] {
+function chooseOrder(response: CandidatesResponse, nowMs: number): ServiceCandidate[] {
   const useful = response.candidates.filter(c => c.kind === "maneuver" && c.passesPairThreshold &&
-    c.missAfterKm !== null && c.missAfterKm > response.missBeforeKm);
+    c.missAfterKm !== null && c.missAfterKm > response.missBeforeKm && Date.parse(c.burnTimeUtc!) > nowMs);
   const firstPerSide = useful.filter((c, i) => useful.findIndex(p => p.movingSide === c.movingSide) === i);
   return [...firstPerSide, ...useful.filter(c => !firstPerSide.includes(c))];
 }
@@ -102,7 +104,7 @@ const sharedLine = (eventIds: string[]) =>
 /** Adapts the service's /candidates answer to the card mapper's input. The service echoes the pair, snapshot and
  *  evidence version (checked by the orbit client) but not the event, so the caller's event ID is the echo. Card
  *  assumptions are stable across calls, so an unchanged geometry keeps its revision. */
-export function toCardResponse(response: CandidatesResponse, eventId: string, sharedMovers: SharedMover[] = []): OrbitCandidatesResponse {
+export function toCardResponse(response: CandidatesResponse, eventId: string, nowMs: number, sharedMovers: SharedMover[] = []): OrbitCandidatesResponse {
   const base = response.assumptions.filter(text => !TIME_VARYING.some(pattern => pattern.test(text)));
   const fewer = response.failed.length > 0 || response.notMovable.length > 0 ? [FEWER_OPTIONS] : [];
   const assumptionsFor = (c: ServiceCandidate) => {
@@ -122,7 +124,7 @@ export function toCardResponse(response: CandidatesResponse, eventId: string, sh
   });
   return {
     eventId, evidenceVersion: response.evidenceVersion, snapshotId: response.snapshotId, simulated: response.simulated,
-    candidates: [...chooseOrder(response), response.wait].map(card),
+    candidates: [...chooseOrder(response, nowMs), response.wait].map(card),
   };
 }
 
@@ -131,7 +133,7 @@ export function cardsFor(response: CandidatesResponse, input: PublishInput, even
     facts: input.facts, activeSide: input.activeSide, counterpartSide: input.counterpartSide, previous: input.previous, nowMs,
     eventId, evidenceVersion: input.evidenceVersion, snapshotId: input.snapshotId,
   };
-  return mapCandidates(toCardResponse(response, eventId, input.sharedMovers), context);
+  return mapCandidates(toCardResponse(response, eventId, nowMs, input.sharedMovers), context);
 }
 
 /** The linked events whose mover appears on a published card, sorted. */

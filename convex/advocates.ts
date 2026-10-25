@@ -118,6 +118,10 @@ export const publishInput = internalQuery({
     const event = await ctx.db.get(eventId);
     if (!event) return { skipped: "NOT_FOUND" };
     if (!event.active || event.tcaMs <= nowMs) return { skipped: "EVENT_INACTIVE" };
+    if (event.demoRunId) {
+      const run = await ctx.db.get(event.demoRunId);
+      if (!run || run.state !== "open" || run.closedAt !== null) return { skipped: "DEMO_RUN_CLOSED" };
+    }
     const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     if (set && set.state !== "open") return { skipped: "SET_NOT_OPEN" };
     const facts = await loadFacts(ctx, event);
@@ -144,6 +148,7 @@ export const publishInput = internalQuery({
     return { input: {
       facts, evidenceKey: inputKey(facts), eventSnapshotId: snapshot.snapshotId, snapshotId: ommId,
       evidenceVersion: evidenceVersionOf(facts), activeSide, counterpartSide, allowedMovingObjectIds,
+      demoRunId: event.demoRunId ?? null,
       baseVersion: set?.version ?? null, previous, currentCards,
       sharedMovers: await linkedMovers(ctx, eventId, allowedMovingObjectIds, nowMs),
     } };
@@ -192,10 +197,11 @@ export const publishFromOrbit = internalAction({
         return { status: "failed", code: "GEOMETRY_MISMATCH", message: "The orbit service computed a different encounter than the stored event." };
       }
       const publish = async (current: PublishInput): Promise<PublishOutcome> => {
-        const candidates = cardsFor(response, current, eventId, nowMs);
+        const candidates = cardsFor(response, current, eventId, Date.now());
         const { version, changed } = await ctx.runMutation(internal.candidates.publish, {
           eventId, baseVersion: current.baseVersion, candidates,
           expectedEvidenceKey: input.evidenceKey, expectedSnapshotId: input.eventSnapshotId, expectedOmmSnapshotId: input.snapshotId,
+          expectedDemoRunId: input.demoRunId,
         });
         return { status: "published", version, changed, cards: candidates.length, sharedMoverEventIds: sharedMoverEventIds(candidates, current.sharedMovers) };
       };
@@ -204,10 +210,10 @@ export const publishFromOrbit = internalAction({
       } catch (error) {
         if (!isStale(error)) throw error;
         // One retry, only when a concurrent publication already wrote these same cards on the same evidence.
-        const fresh = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs });
+        const fresh = await ctx.runQuery(internal.advocates.publishInput, { eventId, nowMs: Date.now() });
         if ("skipped" in fresh || fresh.input.evidenceKey !== input.evidenceKey || fresh.input.eventSnapshotId !== input.eventSnapshotId ||
-          fresh.input.snapshotId !== input.snapshotId ||
-          !sameCards(cardsFor(response, fresh.input, eventId, nowMs), fresh.input.currentCards)) throw error;
+          fresh.input.snapshotId !== input.snapshotId || fresh.input.demoRunId !== input.demoRunId ||
+          !sameCards(cardsFor(response, fresh.input, eventId, Date.now()), fresh.input.currentCards)) throw error;
         return await publish(fresh.input);
       }
     } catch (error) {
