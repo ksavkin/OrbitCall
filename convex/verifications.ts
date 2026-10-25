@@ -24,7 +24,7 @@ async function latestManeuver(ctx:QueryCtx,e:Doc<"events">){
  const links=await ctx.db.query("maneuverEvents").withIndex("by_event",q=>q.eq("eventId",e._id)).take(101);
  if(links.length>100)fail("LIMIT_EXCEEDED","Too many schedule versions to verify automatically.");
  const rows=await Promise.all(links.map(l=>ctx.db.get(l.maneuverId)));
- return rows.filter((m):m is Doc<"maneuvers">=>!!m&&m.status==="committed"&&m.demoRunId===(e.demoRunId??null)&&m.refs.some(r=>r.eventId===e._id)).sort((a,b)=>b.updatedAt-a.updatedAt||b._creationTime-a._creationTime)[0]??null;
+ return rows.filter((m):m is Doc<"maneuvers">=>!!m&&m.status==="committed"&&m.demoRunId===(e.demoRunId??null)&&m.refs.some(r=>r.eventId===e._id)).sort((a,b)=>b._creationTime-a._creationTime||b._id.localeCompare(a._id))[0]??null;
 }
 async function plan(ctx:QueryCtx,eventId:Id<"events">){
  const e=await reader(ctx,eventId,true),m=await latestManeuver(ctx,e);
@@ -45,6 +45,9 @@ const reserveRef=ref<"mutation",{eventId:Id<"events">;requestId:string},Plan>("v
 export const input=internalQuery({args:{eventId:v.id("events")},handler:(ctx,{eventId})=>plan(ctx,eventId)});
 export const reserve=internalMutation({args:{eventId:v.id("events"),requestId:v.string()},handler:async(ctx,{eventId,requestId})=>{
  const current=await plan(ctx,eventId);
+ const history=await ctx.db.query("log").withIndex("by_event_at",q=>q.eq("eventId",eventId)).take(499);
+ // Leave room for both the request marker and its completion before contacting the service.
+ if(history.length>498)fail("LIMIT_EXCEEDED","Verification audit history needs pagination before another request.");
  await ctx.db.insert("log",{eventId,actor:{kind:"system"},action:"status_changed",summary:"Verification evidence requested for the committed maneuver.",texts:null,before:null,
   after:{verificationRequestId:requestId,intentKey:current.intentKey},proposalId:null,revision:null,roomId:null,demoRunId:current.demoRunId,simulated:current.simulated,at:Date.now()});
  return current;
@@ -57,13 +60,16 @@ function storedResult(r:Verification){
   limitations:[...r.limitations,...(omitted?["Some source types are unsupported by the current provenance schema; inspect the upstream evidence before relying on this result."]:[])],missing:r.missing,
   sources:r.sources.filter(s=>s.name&&names.has(s.name)).map(s=>({name:s.name as Infer<typeof sourceName>,url:s.url??null,epochUtc:s.epochUtc??null,fetchedAt:s.fetchedAt??null})),simulated:r.simulated};
 }
-async function evidenceForIntent(ctx:QueryCtx,eventId:Id<"events">,intentKey:string){
+async function evidenceForIntent(ctx:QueryCtx,event:Doc<"events">,maneuver:Doc<"maneuvers">){
+ const eventId=event._id,intentKey=maneuver.intentKey,demoRunId=event.demoRunId??null;
+ const signed=maneuver.refs.find(r=>r.eventId===eventId)!;
  const logs=await ctx.db.query("log").withIndex("by_event_at",q=>q.eq("eventId",eventId)).order("desc").take(501);
  if(logs.length>500)fail("LIMIT_EXCEEDED","Verification audit history needs pagination before it can be read safely.");
- const line=logs.find(l=>l.action==="verified"&&l.after?.intentKey===intentKey&&typeof l.after.verificationId==="string");
+ const line=logs.find(l=>l.action==="verified"&&l.after?.intentKey===intentKey&&typeof l.after.verificationId==="string"&&
+  l.demoRunId===demoRunId&&l.proposalId===signed.proposalId&&l.revision===signed.revision);
  if(!line)return null;
  const id=ctx.db.normalizeId("verifications",line.after!.verificationId as string);if(!id)return null;
- const row=await ctx.db.get(id);return row?.eventId===eventId&&row.kind==="live"?row:null;
+ const row=await ctx.db.get(id);return row?.eventId===eventId&&row.kind==="live"&&row.demoRunId===demoRunId&&row.simulated===line.simulated?row:null;
 }
 export const storeResult=internalMutation({args:{eventId:v.id("events"),fingerprint:v.string(),requestId:v.string(),result:v.any()},handler:async(ctx,{eventId,fingerprint,requestId,result:raw})=>{
  const current=await plan(ctx,eventId);if(current.fingerprint!==fingerprint)fail("STALE_REVISION","The scheduled plan changed during verification.");
@@ -74,15 +80,25 @@ export const storeResult=internalMutation({args:{eventId:v.id("events"),fingerpr
  const r=raw as Verification;
  if(r.kind!=="live"||r.simulated!==current.simulated)fail("INVALID_RESPONSE","Verification evidence has the wrong origin.");
  if(r.result!=="awaiting_data"&&Date.parse(current.request.expected.burnTimeUtc)>Date.now())fail("INVALID_RESPONSE","A future burn cannot have execution evidence.");
- const fields=storedResult(r),prior=await evidenceForIntent(ctx,eventId,current.intentKey);
- if(prior){const {_id,_creationTime,eventId:_eventId,demoRunId,createdAt,...old}=prior;if(stable(old)===stable(fields))return {verificationId:_id,reused:true};}
- const verificationId=await ctx.db.insert("verifications",{...fields,eventId,demoRunId:current.demoRunId,createdAt:Date.now()});
+ const fields=storedResult(r),event=(await ctx.db.get(eventId))!,maneuver=(await ctx.db.get(current.maneuverId))!;
+ const same=(row:Doc<"verifications">)=>{const {_id,_creationTime,eventId:_eventId,demoRunId,createdAt,...old}=row;return stable(old)===stable(fields);};
+ // One request has one immutable result. A duplicate delivery may reuse it, never replace its verdict.
+ const completed=requests.find(l=>l.action==="verified"&&l.after?.intentKey===current.intentKey&&l.after?.verificationRequestId===requestId);
+ if(completed){
+  const id=typeof completed.after?.verificationId==="string"?ctx.db.normalizeId("verifications",completed.after.verificationId):null;
+  const row=id&&await ctx.db.get(id);
+  if(!row||row.eventId!==eventId||row.demoRunId!==current.demoRunId||!same(row))fail("CONFLICT","This verification request already has a different recorded result.");
+  return {verificationId:row._id,reused:true};
+ }
+ if(requests.length>=500)fail("LIMIT_EXCEEDED","Verification audit history has no room for another result.");
+ const prior=await evidenceForIntent(ctx,event,maneuver),reused=!!prior&&same(prior);
+ const verificationId=reused?prior!._id:await ctx.db.insert("verifications",{...fields,eventId,demoRunId:current.demoRunId,createdAt:Date.now()});
  const status=r.result==="awaiting_data"?"awaiting_verification_data":r.result==="consistent"?"verified":"flagged";
  await ctx.db.patch(eventId,{status,updatedAt:Date.now()});
  const m=(await ctx.db.get(current.maneuverId))!,signed=m.refs.find(x=>x.eventId===eventId)!;
  await ctx.db.insert("log",{eventId,actor:{kind:"system"},action:"verified",summary:r.label,texts:null,before:null,
-  after:{verificationId:String(verificationId),intentKey:current.intentKey,result:r.result},proposalId:signed.proposalId,revision:signed.revision,roomId:null,demoRunId:current.demoRunId,simulated:r.simulated,at:Date.now()});
- return {verificationId,reused:false};
+  after:{verificationId:String(verificationId),verificationRequestId:requestId,intentKey:current.intentKey,result:r.result},proposalId:signed.proposalId,revision:signed.revision,roomId:null,demoRunId:current.demoRunId,simulated:r.simulated,at:Date.now()});
+ return {verificationId,reused};
 }});
 export const request=action({args:{eventId:v.id("events")},handler:async(ctx,{eventId})=>{
  const requestId=crypto.randomUUID();
@@ -92,7 +108,7 @@ export const request=action({args:{eventId:v.id("events")},handler:async(ctx,{ev
 }});
 export const get=query({args:{eventId:v.id("events")},handler:async(ctx,{eventId})=>{
  const e=await reader(ctx,eventId),m=await latestManeuver(ctx,e);if(!m)return null;
- const row=await evidenceForIntent(ctx,eventId,m.intentKey);if(!row)return null;
+ const row=await evidenceForIntent(ctx,e,m);if(!row)return null;
  const {_id,_creationTime,eventId:_eventId,demoRunId,createdAt,...publicResult}=row;
  return {verificationId:_id,...publicResult,createdAt:new Date(createdAt).toISOString(),reviewRequired:m.reviewRequired};
 }});
