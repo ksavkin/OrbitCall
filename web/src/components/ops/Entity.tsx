@@ -45,13 +45,22 @@ export function ObjectChip({ e, side, size = "md" }: { e: ConjunctionEvent; side
         </span>
       }
     >
-      <button
+      {/* a span, not a button: these links sit inside rows that are buttons, and nested buttons are invalid HTML */}
+      <span
+        role="link"
+        tabIndex={0}
         onClick={(ev) => {
           ev.stopPropagation();
           showObjectOnGlobe(e.id, side);
         }}
+        onKeyDown={(ev) => {
+          if (ev.key !== "Enter" && ev.key !== " ") return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          showObjectOnGlobe(e.id, side);
+        }}
         // reads as a name in the sentence, not a box: underline on hover says it is a link
-        className={`group/chip inline-flex max-w-full items-baseline gap-1 align-baseline font-semibold text-white underline decoration-white/20 decoration-1 underline-offset-[4px] transition-colors hover:decoration-white/80`}
+        className={`group/chip inline-flex cursor-pointer outline-none focus-visible:decoration-white max-w-full items-baseline gap-1 align-baseline font-semibold text-white underline decoration-white/20 decoration-1 underline-offset-[4px] transition-colors hover:decoration-white/80`}
       >
         {info?.flags[0] && (
           <span className="relative top-[1px] inline-block self-center overflow-hidden rounded-[2px]">
@@ -60,7 +69,7 @@ export function ObjectChip({ e, side, size = "md" }: { e: ConjunctionEvent; side
         )}
         <span className="truncate">{ref.name.replace(/\s*\(SYN\)$/, "")}</span>
         {ref.synthetic && <span className="self-center text-[9px] font-medium uppercase tracking-[0.08em] text-neutral-500 no-underline">syn</span>}
-      </button>
+      </span>
     </Tooltip>
   );
 }
