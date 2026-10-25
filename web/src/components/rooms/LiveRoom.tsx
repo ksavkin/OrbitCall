@@ -1,13 +1,17 @@
 "use client";
 
 import { DoorOpen, ServerOff } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCoordinationCall } from "@/call/useCoordinationCall";
 import { CONVEX_ENABLED } from "@/lib/backend/provider";
 import { QueryBoundary, briefError } from "@/lib/backend/QueryBoundary";
+import { fmtWhen } from "@/lib/ops/format";
+import { useOps } from "@/lib/ops/store";
+import type { ConjunctionEvent } from "@/lib/ops/types";
 import { sfx } from "@/lib/sound";
+import type { RoomCard } from "@/components/roomChat/model";
 import { toggleDev } from "@/components/ui/Navbar";
-import { CallStage, type FlagOf, type StageMode } from "./CallStage";
+import { CallStage, type FlagOf, type StageCall, type StageMode } from "./CallStage";
 
 // Live mode: the real call. Rooms are not linked to cases in the backend yet (the call module keeps roomId as a
 // string until the team's rooms table exists), and until sign-in exists each person joins with a dev token from
@@ -88,6 +92,95 @@ function Call({ target }: { target: LiveTarget }) {
 // flag follows the language for display only; a flag never grants access.
 const FLAG_BY_LANG: Record<string, string> = { en: "us", ru: "ru", zh: "cn" };
 const flagOfLang: FlagOf = (p) => (p.lang ? (FLAG_BY_LANG[p.lang] ?? null) : null);
+
+/* ---------------------------------------------------------------- the call of a case */
+
+/** The plan a phrase names: "option B" / "plan 2" / "P2" / "вариант Б" → "P2". Null when it names none. */
+function planNamed(text: string): string | null {
+  const t = text.toLowerCase();
+  const m = t.match(/\b(?:option|plan|card)\s*([a-d1-4])\b/) ?? t.match(/\bp\s*([1-4])\b/) ?? t.match(/вариант\s*([а-г1-4])/);
+  if (!m) return null;
+  const k = m[1];
+  const n = "abcd".indexOf(k) + 1 || "абвг".indexOf(k) + 1 || Number(k);
+  return n >= 1 && n <= 4 ? `P${n}` : null;
+}
+
+/**
+ * One case's call on the stage, whichever call drives it (dev: the simulated call in RoomsScreen). It joins on its
+ * own when asked, tells the parties bar who is in the call and speaking, and offers a plan named by voice to the plan
+ * panel, which asks for a click to confirm it (speech never approves).
+ */
+export function CaseCallStage({
+  e,
+  call,
+  compact,
+  mode,
+  onMode,
+  lockedBy,
+  cards,
+  autoJoin,
+}: {
+  e: ConjunctionEvent;
+  call: StageCall;
+  compact: boolean;
+  mode: StageMode;
+  onMode: (m: StageMode) => void;
+  lockedBy?: string;
+  cards?: RoomCard[];
+  autoJoin: boolean;
+}) {
+  // in a running case the call joins on its own: nobody should hunt for Join in the middle of a decision
+  const joinedOnce = useRef(false);
+  useEffect(() => {
+    if (!autoJoin || joinedOnce.current || call.state !== "idle") return;
+    joinedOnce.current = true;
+    void call.join();
+  }, [autoJoin, call]);
+
+  // the parties bar shows who is in the call and who is speaking; only the case's docked call reports it
+  const inCallKey = call.participants.filter((p) => !p.isTranslator).map((p) => p.identity.replace(/^user-/, "")).join(",");
+  const speakingKey = call.participants.filter((p) => p.speaking).map((p) => p.identity.replace(/^user-/, "")).join(",");
+  const me = call.identity?.replace(/^user-/, "") ?? null;
+  useEffect(() => {
+    if (!compact) return;
+    useOps.setState({ callLive: { eventId: e.id, inCall: inCallKey ? inCallKey.split(",") : [], speaking: speakingKey ? speakingKey.split(",") : [], messages: call.captions ?? [], me } });
+  }, [compact, e.id, inCallKey, speakingKey, call.captions, me]);
+  useEffect(() => (compact ? () => useOps.setState({ callLive: null }) : undefined), [compact]);
+
+  // "option B", "P2", "вариант Б": a plan named in the call is offered for confirmation in the plan panel
+  const lastSaid = useRef<string | null>(null);
+  useEffect(() => {
+    const myId = call.identity?.replace(/^user-/, "");
+    const mine = [...(call.captions ?? [])].reverse().find((m) => m.author.kind === "human" && m.author.userId === myId);
+    if (!mine || mine.messageId === lastSaid.current) return;
+    lastSaid.current = mine.messageId;
+    const label = planNamed(mine.originalText);
+    if (label) useOps.setState({ voiceIntent: { eventId: e.id, label, said: mine.originalText, at: Date.now() } });
+  }, [call.captions, call.identity, e.id]);
+
+  const flagOf: FlagOf = (p) => {
+    if (p.isTranslator) return null;
+    const id = p.identity.replace(/^user-/, "");
+    return e.parties?.find((x) => x.id === id)?.country ?? null;
+  };
+  return (
+    <CallStage
+      compact={compact}
+      lockedBy={lockedBy}
+      call={call}
+      mode={mode}
+      onMode={onMode}
+      cards={cards}
+      flagOf={flagOf}
+      title={`Coordination room · ${e.id}`}
+      subtitle={
+        <>
+          {e.a.name} × {e.b.name} · closest approach {fmtWhen(e.tca)}
+        </>
+      }
+    />
+  );
+}
 
 function JoinForm({ onOpen }: { onOpen: (t: LiveTarget) => void }) {
   const [roomId, setRoomId] = useState("");
