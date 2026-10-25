@@ -232,9 +232,9 @@ function CallCard({ s, now, open: wantOpen }: { s: Span; now: number; open: bool
           >
             <div className="px-2.5 pb-2">
               {s.http && (
-                <div className="mono mb-1.5 flex items-center gap-1.5 break-all text-[9.5px]">
-                  <span className="rounded-[4px] bg-[rgba(79,140,255,0.14)] px-1 text-blue">{s.http.method}</span>
-                  <span className="text-fg-2">{s.http.url}</span>
+                <div className="mono mb-1.5 flex min-w-0 items-center gap-1.5 text-[9.5px]">
+                  <span className="shrink-0 whitespace-nowrap rounded-[4px] bg-[rgba(79,140,255,0.14)] px-1 text-blue">{s.http.method}</span>
+                  <span className="min-w-0 truncate text-fg-2" title={s.http.url}>{s.http.url}</span>
                   {s.http.status && <span className="ml-auto shrink-0 text-green">{s.http.status}</span>}
                 </div>
               )}
@@ -521,9 +521,9 @@ function SpanDetail({ s }: { s: Span }) {
   return (
     <div className="space-y-1.5 px-2.5 pb-2.5 pt-0.5 text-[10.5px]" style={{ paddingLeft: s.parent ? 22 : 10 }}>
       {s.http && (
-        <div className="mono flex items-center gap-1.5 break-all text-[10px]">
-          <span className="rounded-[4px] bg-[rgba(79,140,255,0.14)] px-1 text-blue">{s.http.method}</span>
-          <span className="text-fg-2">{s.http.url}</span>
+        <div className="mono flex min-w-0 items-center gap-1.5 text-[10px]">
+          <span className="shrink-0 whitespace-nowrap rounded-[4px] bg-[rgba(79,140,255,0.14)] px-1 text-blue">{s.http.method}</span>
+          <span className="min-w-0 truncate text-fg-2" title={s.http.url}>{s.http.url}</span>
           {s.http.status && <span className="ml-auto shrink-0 text-green">{s.http.status}</span>}
         </div>
       )}
