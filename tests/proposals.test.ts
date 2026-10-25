@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { internal } from "../convex/_generated/api";
+import { api, internal } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
 import { FIXTURE_NOW } from "../fixtures/events";
 import { advocateCandidates, advocateEvent } from "../fixtures/policies";
-import { insertEvent } from "./helpers";
+import { insertEvent, type Backend } from "./helpers";
 import { as, code, fn, pick, proposalId, seed, selection, tick, userId, withCard } from "./decision";
 
 beforeEach(() => {
@@ -97,5 +98,45 @@ describe("proposals.select", () => {
     await as(t, "b").mutation(fn.approve, await tick(t, eventId));
     expect(await code(as(t, "a").mutation(fn.select, {
       eventId, proposalId: await proposalId(t, eventId, "P1"), revision: 1, expectedGeneration: 1 }))).toBe("INVALID_STATE");
+  });
+});
+
+// Inbox notices from proposals.select (issue #6 round 3): the required sides hear of a changed selection.
+const notices = (t: Backend, eventId: Id<"events">) => t.run(async ctx => {
+  const rows = (await ctx.db.query("inbox").collect()).filter(r => r.eventId === eventId);
+  return Object.fromEntries(await Promise.all(rows.map(async r => [(await ctx.db.get(r.userId))!.name!.toLowerCase(),
+    { unread: r.unread, at: r.lastUpdateAt, summary: r.lastUpdateSummary }] as const)));
+});
+const later = (ms = 1000) => vi.setSystemTime(Date.now() + ms);
+
+describe("selection inbox notices", () => {
+  it("notifies the other required operators of a changed selection, never the selector, a re-click or a refused call", async () => {
+    const { t, eventId } = await seed();
+    await pick(t, "a", eventId, "P2");
+    const first = "Side A selected P2 revision 1 for decision. Side A decides first.";
+    expect(await as(t, "b").query(api.inbox.get, { eventId })).toMatchObject({ unread: true, lastUpdateSummary: first });
+    const before = await notices(t, eventId);
+    expect(Object.keys(before)).toEqual(["b"]);
+
+    later();
+    // Re-clicking the current card and an off-turn selection leave the inbox untouched.
+    await as(t, "a").mutation(fn.select, { eventId, proposalId: await proposalId(t, eventId, "P2"), revision: 1, expectedGeneration: 1 });
+    expect(await code(pick(t, "b", eventId, "P4"))).toBe("INVALID_STATE");
+    expect(await code(as(t, "a").mutation(fn.select, { eventId, proposalId: await proposalId(t, eventId, "P3"), revision: 1, expectedGeneration: 0 })))
+      .toBe("STALE_REVISION");
+    expect(await notices(t, eventId)).toEqual(before);
+
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    const approved = await notices(t, eventId);
+    later();
+    // B in turn moves the selection: A's approval resets, A hears both facts in one notice.
+    await pick(t, "b", eventId, "P4");
+    expect(await as(t, "a").query(api.inbox.get, { eventId })).toMatchObject({ unread: true,
+      lastUpdateSummary: "Side B selected P4 revision 1 for decision. Earlier approvals were reset. Side A decides first." });
+    const after = await notices(t, eventId);
+    // The selector's own notice is not replaced.
+    expect(after.b).toEqual(approved.b);
+    expect(after.b.summary).toBe("Side A approved P2 revision 1. It is your turn to decide.");
+    for (const name of ["unassigned", "head", "eye", "c"]) expect(after[name]).toBeUndefined();
   });
 });
