@@ -1,21 +1,27 @@
 "use client";
 
-import { DoorOpen, ServerOff } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { DoorOpen, Hourglass, PhoneOff, ServerOff } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useCoordinationCall } from "@/call/useCoordinationCall";
+import { roomSetInCallRef } from "@/lib/backend/api";
+import { backendError } from "@/lib/backend/errors";
+import { useLive } from "@/lib/backend/live";
 import { CONVEX_ENABLED } from "@/lib/backend/provider";
 import { QueryBoundary, briefError } from "@/lib/backend/QueryBoundary";
+import { mutate } from "@/lib/backend/run";
+import type { RoomId } from "@/lib/backend/types";
 import { fmtWhen } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent } from "@/lib/ops/types";
 import { sfx } from "@/lib/sound";
+import { bestEffort } from "@/components/live/RoomPresence";
 import type { RoomCard } from "@/components/roomChat/model";
 import { toggleDev } from "@/components/ui/Navbar";
 import { CallStage, type FlagOf, type StageCall, type StageMode } from "./CallStage";
 
-// Live mode: the real call. Rooms are not linked to cases in the backend yet (the call module keeps roomId as a
-// string until the team's rooms table exists), and until sign-in exists each person joins with a dev token from
-// `npx convex run call/demo:seed`. So a room opens from ?room=…&token=… in the URL, or from the form below.
+// Live mode: the real call. A case's call runs on its coordination room (CaseCall): the rooms id is the call's room
+// id, so it needs nothing from the URL. A test room from `npx convex run call/demo:seed` still opens from
+// ?room=…&token=… in the URL, or from the form below, with that seed's dev token (LiveRoom).
 
 export type LiveTarget = { roomId: string; devToken?: string };
 
@@ -95,6 +101,71 @@ const flagOfLang: FlagOf = (p) => (p.lang ? (FLAG_BY_LANG[p.lang] ?? null) : nul
 
 /* ---------------------------------------------------------------- the call of a case */
 
+/**
+ * Real mode: the case's call (wiring map §3.2, call order 6). The room comes from startWorkflow, rooms.get or
+ * rooms.forEvent (`useLive.roomId`, the open case's only); `roomId` pins another one. No room yet, or no voice
+ * service on this deployment (`config.flags.voice`): a short note in the call's place instead of a Join button.
+ */
+export function CaseCall({ e, compact, roomId: pinned }: { e: ConjunctionEvent; compact: boolean; roomId?: RoomId }) {
+  const incident = useOps((s) => s.incident);
+  const caseRoom = useLive((s) => s.roomId);
+  const voice = useLive((s) => s.flags?.voice);
+  const [attempt, setAttempt] = useState(0);
+  const roomId = pinned ?? (e.id === incident ? caseRoom : null);
+
+  if (voice === false) {
+    return <CallNote compact={compact} icon={<PhoneOff size={18} />} title="Voice calls are off" body="This deployment has no voice service. Deciding in the case is not affected." />;
+  }
+  if (!roomId) {
+    return <CallNote compact={compact} icon={<Hourglass size={18} />} title="No call yet" body="The call opens with the case's coordination room." />;
+  }
+  return (
+    // the captions query throws for a non-member (a head of ops) or a missing deployment: the note, not the page
+    <QueryBoundary
+      key={`${roomId}:${attempt}`}
+      fallback={(err) => (
+        <CallNote compact={compact} icon={<ServerOff size={18} />} title="The call could not open" body={readable(err)} onRetry={() => setAttempt((n) => n + 1)} />
+      )}
+    >
+      {/* joins on its own only once the deployment says it has voice: an unknown flag leaves Join to a click */}
+      <LiveCaseCall e={e} compact={compact} roomId={roomId} autoJoin={compact && voice === true} />
+    </QueryBoundary>
+  );
+}
+
+function readable(err: Error) {
+  const b = backendError(err);
+  return b.code === "UNKNOWN" ? briefError(err) : b.message;
+}
+
+function LiveCaseCall({ e, compact, roomId, autoJoin }: { e: ConjunctionEvent; compact: boolean; roomId: RoomId; autoJoin: boolean }) {
+  const [mode, setMode] = useState<StageMode>("voice");
+  // turns (user flow, Turns): while another side decides on this case, this dispatcher's voice and text pause
+  const room = useLive((s) => (s.room?.roomId === roomId ? s.room : undefined));
+  const linked = room?.linkedEvents.find((x) => x.eventId === e.id);
+  const lockedBy = linked?.deciding && !linked.myTurn && linked.turn ? `Side ${linked.turn}` : undefined;
+  // the rooms id is the call's room id (call_members.roomId = String(room._id)): no `?room=`, no dev token
+  const call = useCoordinationCall({ roomId: String(roomId), spaceToTalk: mode === "voice" && !lockedBy });
+
+  // the room's own presence beside the call module's (call order 3): in the call from connect to disconnect
+  const inCall = call.state === "joined" || call.state === "reconnecting";
+  useEffect(() => {
+    if (!inCall) return;
+    bestEffort(mutate(roomSetInCallRef, { roomId, inCall: true }));
+    return () => bestEffort(mutate(roomSetInCallRef, { roomId, inCall: false }));
+  }, [inCall, roomId]);
+
+  // a paused voice is really paused: a live microphone (open mic, or Space still held) closes when the other side
+  // starts deciding. Setting the microphone mode always mutes, in either mode; a toggle could open it instead.
+  const { micOn, micMode, setMicMode } = call;
+  useEffect(() => {
+    if (lockedBy && micOn) setMicMode(micMode);
+  }, [lockedBy, micOn, micMode, setMicMode]);
+
+  // never into a closed room: it joins on its own only once the room reads open
+  return <CaseCallStage e={e} call={call} compact={compact} mode={mode} onMode={setMode} lockedBy={lockedBy} autoJoin={autoJoin && room?.state === "open"} />;
+}
+
 /** The plan a phrase names: "option B" / "plan 2" / "P2" / "вариант Б" → "P2". Null when it names none. */
 function planNamed(text: string): string | null {
   const t = text.toLowerCase();
@@ -106,9 +177,9 @@ function planNamed(text: string): string | null {
 }
 
 /**
- * One case's call on the stage, whichever call drives it (dev: the simulated call in RoomsScreen). It joins on its
- * own when asked, tells the parties bar who is in the call and speaking, and offers a plan named by voice to the plan
- * panel, which asks for a click to confirm it (speech never approves).
+ * One case's call on the stage, in both modes (dev: the simulated call in RoomsScreen; real: LiveCaseCall). It joins
+ * on its own when asked, tells the parties bar who is in the call and speaking, and offers a plan named by voice to
+ * the plan panel, which asks for a click to confirm it (speech never approves).
  */
 export function CaseCallStage({
   e,
@@ -182,6 +253,36 @@ export function CaseCallStage({
   );
 }
 
+/** The call's place without a call: docked, the docked call's own row (nothing jumps when it arrives); else centered. */
+function CallNote({ compact, icon, title, body, onRetry }: { compact: boolean; icon: ReactNode; title: string; body: string; onRetry?: () => void }) {
+  const retry = (className: string) =>
+    onRetry && (
+      <button
+        className={`btn btn-ghost-line ${className}`}
+        onClick={() => {
+          sfx.click();
+          onRetry();
+        }}
+      >
+        Try again
+      </button>
+    );
+  if (!compact) return <Center icon={icon} title={title} body={body} action={retry("mt-4 h-9 px-3 text-[12.5px]")} />;
+  return (
+    <div className="mx-auto flex w-full max-w-[908px] items-center gap-4 px-6 py-3" data-testid="call-note">
+      <span className="grid h-[68px] w-[68px] shrink-0 place-items-center rounded-full bg-white/[0.025] text-neutral-500 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-[12px]">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-neutral-600" />
+          <span className="truncate font-medium text-[#8a8a8a]">{title}</span>
+        </div>
+        <div className="mt-1 truncate text-[13px] text-neutral-600">{body}</div>
+      </div>
+      {retry("h-10 shrink-0 px-3.5 text-[13px]")}
+    </div>
+  );
+}
+
 function JoinForm({ onOpen }: { onOpen: (t: LiveTarget) => void }) {
   const [roomId, setRoomId] = useState("");
   const [token, setToken] = useState("");
@@ -189,7 +290,7 @@ function JoinForm({ onOpen }: { onOpen: (t: LiveTarget) => void }) {
     <Center
       icon={<DoorOpen size={18} />}
       title="Open a room"
-      body="Rooms are not linked to cases yet. Paste the room ID and your token from the seed command. The token stays in this tab only."
+      body="A case's call opens from the case. For a test room, paste its room ID and your token from the seed command. The token stays in this tab only."
       action={
         <form
           className="mx-auto mt-5 grid w-full max-w-[360px] gap-2 text-left"

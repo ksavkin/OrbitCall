@@ -3,6 +3,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight, DoorOpen } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useRealMode } from "@/lib/backend/live";
+import type { RoomId } from "@/lib/backend/types";
 import { fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent } from "@/lib/ops/types";
@@ -13,7 +15,7 @@ import type { StageMode } from "./CallStage";
 import { useSimCall } from "./simCall";
 import { SAMPLE_ID, sampleCards, sampleEvent, sampleMessages } from "./sampleRoom";
 import { roomCards } from "@/components/roomChat/model";
-import { CaseCallStage, LiveRoom, useLiveTarget, type LiveTarget } from "./LiveRoom";
+import { CaseCall, CaseCallStage, LiveRoom, useLiveTarget, type LiveTarget } from "./LiveRoom";
 
 // Rooms: one coordination room per incident, with the live call in the middle and the case beside it.
 // Dev mode runs a simulated call with the same shape as the real hook; live mode waits for the backend's
@@ -77,8 +79,16 @@ export function RoomsScreen() {
   );
 }
 
-/** One room's call. Keyed by room: switching rooms leaves the call, as the real hook does. */
-export function RoomCall({ e, compact = false }: { e: ConjunctionEvent; compact?: boolean }) {
+/**
+ * One room's call. Keyed by room: switching rooms leaves the call, as the real hook does. Dev mode runs the simulated
+ * call; real mode the case's call on its coordination room (CaseCall, LiveRoom.tsx), or on `roomId` when given.
+ */
+export function RoomCall({ e, compact = false, roomId }: { e: ConjunctionEvent; compact?: boolean; roomId?: RoomId }) {
+  const real = useRealMode();
+  return real ? <CaseCall e={e} compact={compact} roomId={roomId} /> : <SimRoomCall e={e} compact={compact} />;
+}
+
+function SimRoomCall({ e, compact }: { e: ConjunctionEvent; compact: boolean }) {
   const isSample = e.id === SAMPLE_ID;
   const [mode, setMode] = useState<StageMode>("voice");
   const [seed] = useState(() => (isSample ? sampleMessages(e) : undefined));
