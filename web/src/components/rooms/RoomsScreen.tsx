@@ -14,10 +14,13 @@ import { useSimCall } from "./simCall";
 import { SAMPLE_ID, sampleCards, sampleEvent, sampleMessages } from "./sampleRoom";
 import { roomCards } from "@/components/roomChat/model";
 import { LiveRoom, useLiveTarget, type LiveTarget } from "./LiveRoom";
+import { MyRooms } from "./MyRooms";
+import { useRealMode } from "@/lib/backend/live";
 
 // Rooms: one coordination room per incident, with the live call in the middle and the case beside it.
-// Dev mode runs a simulated call with the same shape as the real hook; live mode waits for the backend's
-// call module (convex/call) and the voice worker, and the /call test page proves the real path until then.
+// Dev mode runs a simulated call with the same shape as the real hook. Real mode lists the caller's open rooms
+// (rooms.listMine, MyRooms.tsx); the call itself runs inside the case. Without a backend the live call path explains
+// what is missing, and the /call test page proves the call module on its own.
 
 const ROOM_STATUSES: ConjunctionEvent["status"][] = [
   "proposal",
@@ -50,6 +53,7 @@ export function RoomsScreen() {
   const roomId = pick && shown.some((r) => r.id === pick) ? pick : (shown[0]?.id ?? null);
   const e = shown.find((r) => r.id === roomId);
   const [live, setLive] = useLiveTarget();
+  const real = useRealMode();
 
   return (
     <motion.div
@@ -59,19 +63,25 @@ export function RoomsScreen() {
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="pointer-events-auto absolute inset-x-2.5 bottom-[42px] top-[58px] z-[38] grid grid-cols-[280px_minmax(0,1fr)_320px] overflow-hidden rounded-[18px] bg-[rgba(4,4,5,0.94)] text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_40px_100px_-30px_rgba(0,0,0,0.9)] backdrop-blur-2xl"
     >
-      {dev ? <RoomList rooms={shown} active={roomId} onPick={setPick} /> : <LiveList target={live} onClose={() => setLive(null)} />}
-      <div className="flex min-h-0 flex-col border-x border-white/[0.06]">
-        {!dev ? (
-          <LiveRoom target={live} onOpen={setLive} onLeave={() => setLive(null)} />
-        ) : e ? (
-          <RoomCall key={e.id} e={e} />
-        ) : (
-          <Empty
-            title="No open rooms"
-            body="A room opens when another operator is in a case and the agents have a plan. Debris cases have no one to call. Run a scan on Conjunctions and pick a case with two operators."
-          />
-        )}
-      </div>
+      {real ? (
+        <MyRooms />
+      ) : (
+        <>
+          {dev ? <RoomList rooms={shown} active={roomId} onPick={setPick} /> : <LiveList target={live} onClose={() => setLive(null)} />}
+          <div className="flex min-h-0 flex-col border-x border-white/[0.06]">
+            {!dev ? (
+              <LiveRoom target={live} onOpen={setLive} onLeave={() => setLive(null)} />
+            ) : e ? (
+              <RoomCall key={e.id} e={e} />
+            ) : (
+              <Empty
+                title="No open rooms"
+                body="A room opens when another operator is in a case and the agents have a plan. Debris cases have no one to call. Run a scan on Conjunctions and pick a case with two operators."
+              />
+            )}
+          </div>
+        </>
+      )}
       {dev ? <CaseSide e={e} /> : <LiveSide />}
     </motion.div>
   );
