@@ -7,14 +7,35 @@ import { requireUser } from "./session";
 import { setActiveAssignments } from "./lib/accounts";
 import { findObject,ingestEncounter,isoUtc } from "./lib/events";
 import { ommSnapshotId } from "./lib/publishCandidates";
-import { simulate,orbitFailure,type SimulateResult } from "./lib/orbitClient";
+import { simulate,orbitFailure,orbitConfig,OrbitServiceError,type SimulateResult } from "./lib/orbitClient";
 
 function fail(code:string,message:string):never {throw new ConvexError({code,message});}
 function enabled(){if(process.env.DEMO_LAUNCH!=="on")fail("FEATURE_DISABLED","Demo satellite launch is disabled.");}
+// /simulate does not yet echo a snapshot. The deployed service loads one immutable catalog per process;
+// check its pinned ID on both sides of the non-idempotent request, refusing publication across a catalog switch.
+async function requireServiceSnapshot(expected: string) {
+ const {url}=orbitConfig(), controller=new AbortController();
+ const timer=setTimeout(()=>controller.abort(),5000);
+ try {
+  const response=await fetch(`${url}/health`,{method:"GET",headers:{accept:"application/json","cache-control":"no-cache"},cache:"no-store",redirect:"error",signal:controller.signal});
+  if(response.status===503)throw new OrbitServiceError("NOT_READY","The orbit service catalog is not ready.");
+  if(response.status!==200)throw new OrbitServiceError("UPSTREAM_UNAVAILABLE","The orbit service health check is unavailable.");
+  const health:unknown=await response.json();
+  if(controller.signal.aborted)throw new OrbitServiceError("UPSTREAM_UNAVAILABLE","The orbit service health check timed out.");
+  if(!health || typeof health!=="object" || !("ok" in health) || !("snapshotId" in health) || !("objects" in health) ||
+   typeof health.snapshotId!=="string" || !health.snapshotId || typeof health.objects!=="number" || !Number.isSafeInteger(health.objects) || health.objects<0)
+   throw new OrbitServiceError("INVALID_RESPONSE","The orbit service returned invalid health data.");
+  if(health.ok!==true || health.objects===0)throw new OrbitServiceError("NOT_READY","The orbit service catalog is not ready.");
+  if(health.snapshotId!==expected)throw new OrbitServiceError("SNAPSHOT_MISMATCH","The orbit service holds a different snapshot than the launch pinned.");
+ } catch(error) {
+  if(error instanceof OrbitServiceError)throw error;
+  throw new OrbitServiceError("UPSTREAM_UNAVAILABLE","The orbit service health check did not complete.");
+ } finally {clearTimeout(timer);}
+}
 const args={name:v.string(),ownerName:v.string(),ownerCountry:v.string(),targetObjectId:v.string(),tcaUtc:v.string(),scenarioPc:v.number(),requestId:v.optional(v.string()),replaceObjectId:v.optional(v.string())};
 type Input={name:string;ownerName:string;ownerCountry:string;targetObjectId:string;tcaUtc:string;scenarioPc:number;requestId?:string;replaceObjectId?:string};
 type Result={objectId:string;eventId:Id<"events">;demoRunId:Id<"demoRuns">;assignmentVersion:number};
-type Reservation={state:"pending"|"failed"|"completed";input:Input;objectId:string;userId:Id<"users">;companyId:Id<"companies">;assignmentVersion:number;snapshotId:Id<"snapshots">;assignedObjectIds?:string[];result?:Result;omm?:string};
+type Reservation={state:"pending"|"failed"|"completed";input:Input;objectId:string;userId:Id<"users">;companyId:Id<"companies">;assignmentVersion:number;snapshotId:Id<"snapshots">;ommSnapshotId?:string;assignedObjectIds?:string[];result?:Result;omm?:string};
 const keyOf=(a:Input)=>`launch:${a.requestId??JSON.stringify([a.name,a.targetObjectId,a.tcaUtc,a.scenarioPc,a.replaceObjectId??null])}`;
 const read=(d:Doc<"demoRuns">,key:string):Reservation|null=>typeof d.manifest?.[key]==="string"?JSON.parse(d.manifest[key] as string):null;
 const reserveRef=ref<"mutation">("demoLaunch:reserve"),publishRef=ref<"mutation">("demoLaunch:publish"),failedRef=ref<"mutation">("demoLaunch:failed");
@@ -51,11 +72,11 @@ export const reserve=internalMutation({args,handler:async(ctx,input)=>{
  for(let n=8000;n<=9999;n++){const id=`SIM-${n}`;if(!taken.has(id)){objectId=id;break;}}
  if(!objectId)fail("LIMIT_EXCEEDED","No reserved demo IDs remain.");
  await ctx.db.insert("spaceObjects",{objectId,name:input.name,country:input.ownerCountry,launchDate:null});
- const reservation:Reservation={state:"pending",input,objectId,userId:scope.user._id,companyId:scope.company._id,assignmentVersion:scope.user.assignmentVersion??1,assignedObjectIds:scope.objects.map(o=>o.objectId),snapshotId:snapshot._id};
+ const reservation:Reservation={state:"pending",input,objectId,userId:scope.user._id,companyId:scope.company._id,assignmentVersion:scope.user.assignmentVersion??1,assignedObjectIds:scope.objects.map(o=>o.objectId),snapshotId:snapshot._id,ommSnapshotId:ommSnapshotId(snapshot)!};
  await ctx.db.patch(d._id,{manifest:{...d.manifest,[key]:JSON.stringify(reservation)}});return {demoRunId:d._id,key,reservation};
 }});
 const ticket={demoRunId:v.id("demoRuns"),key:v.string()};
-export const publish=internalMutation({args:{...ticket,result:v.any()},handler:async(ctx,{demoRunId,key,result:raw})=>{
+export const publish=internalMutation({args:{...ticket,result:v.any(),verifiedSnapshotId:v.string()},handler:async(ctx,{demoRunId,key,result:raw,verifiedSnapshotId})=>{
  const d=await ctx.db.get(demoRunId),r=d&&read(d,key);if(!d||d.state!=="open"||d.closedAt!==null||!r)fail("INVALID_STATE","This demo run was closed.");
  if(r.result)return r.result;
  if(r.state!=="pending")fail("INVALID_STATE","This launch is no longer pending.");
@@ -71,6 +92,8 @@ export const publish=internalMutation({args:{...ticket,result:v.any()},handler:a
  const result=raw as SimulateResult;
  if(result.objectId!==r.objectId||result.event.objectA!==r.input.targetObjectId||result.event.objectB!==r.objectId||!result.simulated||!result.event.simulated||!Number.isFinite(Date.parse(result.event.tcaUtc))||Math.abs(Date.parse(result.event.tcaUtc)-Date.parse(r.input.tcaUtc))>600000||Date.parse(result.event.tcaUtc)<=Date.now())fail("INVALID_RESPONSE","The simulated result does not match the launch.");
  const source=await ctx.db.get(r.snapshotId);if(!source)fail("NOT_READY","Snapshot provenance is unavailable.");
+ if(!r.ommSnapshotId || verifiedSnapshotId!==r.ommSnapshotId || ommSnapshotId(source)!==r.ommSnapshotId || source.sources.some(s=>s.name==="simulated"))
+  fail("SNAPSHOT_MISMATCH","The launch snapshot changed before publication.");
  // /simulate refines closest approach within the requested time ±10 min; persist that measured time.
  const snapshotId=await ctx.db.insert("snapshots",{snapshotId:`demo:${demoRunId}:${r.objectId}`,ommUrl:source.ommUrl,sources:[...source.sources.filter(s=>s.name!=="simulated"),{name:"simulated",url:null,epochUtc:result.event.tcaUtc,fetchedAt:isoUtc(Date.now())}]});
  const target=await findObject(ctx,r.input.targetObjectId);if(!target)fail("NOT_FOUND","The target is no longer registered.");
@@ -89,8 +112,12 @@ export const launchSatellite=action({args,handler:async(ctx,input):Promise<Resul
  const ticket=await ctx.runMutation(reserveRef,input) as {demoRunId:Id<"demoRuns">;key:string;reservation:Reservation};
  if(ticket.reservation.result)return ticket.reservation.result;
  try {
+  const pin=ticket.reservation.ommSnapshotId;
+  if(!pin)fail("NOT_READY","This launch has no pinned catalog; start a new demonstration.");
+  await requireServiceSnapshot(pin);
   const result=await simulate({targetObjectId:input.targetObjectId,tcaUtc:input.tcaUtc,name:input.name,objectId:ticket.reservation.objectId});
-  return await ctx.runMutation(publishRef,{demoRunId:ticket.demoRunId,key:ticket.key,result});
+  await requireServiceSnapshot(pin);
+  return await ctx.runMutation(publishRef,{demoRunId:ticket.demoRunId,key:ticket.key,result,verifiedSnapshotId:pin});
  } catch(error) {
   await ctx.runMutation(failedRef,{demoRunId:ticket.demoRunId,key:ticket.key});
   if(error instanceof ConvexError)throw error;
