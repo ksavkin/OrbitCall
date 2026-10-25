@@ -128,6 +128,16 @@ describe("Grok transport", () => {
 describe("Rationale check action", () => {
   const run = (value: CheckInput = input, attempt = 2) => backend().action(internal.rationaleCheck.run, { input: value, attempt });
 
+  it("returns a sanitized failed span when a 200 response is not JSON", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response("<html>secret diagnostic</html>", { status: 200, headers: { "content-type": "text/html" } }));
+    vi.stubGlobal("fetch", fetch);
+    const value = await run();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(value.result).toBeNull();
+    expect(value.span).toMatchObject({ status: "failed", errorCode: "UPSTREAM_UNAVAILABLE", usage: null });
+    expect(JSON.stringify(value)).not.toContain("secret diagnostic");
+  });
+
   it.each([0, 2.5])("fails without calling the model for attempt %s", async attempt => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);

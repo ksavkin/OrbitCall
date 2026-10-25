@@ -351,8 +351,18 @@ describe("Coordination Host action", () => {
   it("rejects a context with a private field before the handler runs", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
-    await expect(run({ ...hostContext, policy: {} } as HostContext)).rejects.toThrow();
+    await expect(run({ ...hostContext, policy: {} } as HostContext)).rejects.toThrow(/Unexpected field `policy`/);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns a sanitized failed span after one call when the network fails", async () => {
+    const fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed: secret diagnostic"));
+    vi.stubGlobal("fetch", fetch);
+    const result = await run();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result.output).toBeNull();
+    expect(result.span).toMatchObject({ status: "failed", errorCode: "UPSTREAM_UNAVAILABLE", usage: null });
+    expect(JSON.stringify(result)).not.toContain("secret diagnostic");
   });
 
   it.each([0, -1, 1.5])("fails without calling the model for attempt %s", async attempt => {

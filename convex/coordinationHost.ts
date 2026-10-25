@@ -18,7 +18,8 @@ function geminiConfig() {
 
 export async function callGemini(prompt: { system: string; user: string }): Promise<{ raw: string; model: string; usage: AgentSpan["usage"] }> {
   const { apiKey, model } = geminiConfig();
-  // The SDK retries 429 and 5xx five times by default; retries are explicit attempts here.
+  // Retries are explicit attempts. The SDK retries only when retryOptions is set; attempts: 1 keeps
+  // one request per attempt even if a later SDK version enables retries by default.
   const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 90_000, retryOptions: { attempts: 1 } } });
   let result;
   try {
