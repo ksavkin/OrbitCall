@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { sfx } from "@/lib/sound";
 import { Flag } from "@/components/ui/OwnerBadge";
-import { CONVEX_ENABLED } from "@/lib/backend/provider";
+import { CONVEX_AUTH, CONVEX_ENABLED } from "@/lib/backend/provider";
 import { BackendSession } from "./BackendSession";
 import { restoreSession, useMe, useSession } from "./session";
 
@@ -15,7 +15,7 @@ import { restoreSession, useMe, useSession } from "./session";
 export function AccountMenu() {
   return (
     <>
-      {CONVEX_ENABLED && <BackendSession />}
+      {CONVEX_ENABLED && CONVEX_AUTH && <BackendSession />}
       <AccountButton />
     </>
   );
