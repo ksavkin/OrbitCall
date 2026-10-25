@@ -36,4 +36,8 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      # Task branches do not commit convex/_generated/ (issue #6). --system-udfs generates
+      # from the local convex/ folder with no deployment or secret; the output is not committed.
+      - name: Regenerate Convex API types
+        run: npx convex codegen --system-udfs --typecheck disable
       - run: npm run check

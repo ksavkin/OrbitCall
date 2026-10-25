@@ -1,0 +1,31 @@
+# OrbitCall HTTPS entry point. See deploy/README.md.
+# ORBITCALL_API_HOST must be a hostname the team controls, with an A record to the Droplet,
+# so Caddy can obtain its certificate. Caddy does not authenticate callers: the orbit
+# service checks ORBIT_SERVICE_TOKEN on every route except /health.
+
+{$ORBITCALL_API_HOST} {
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Service-Token delete
+			}
+		}
+	}
+
+	handle /orbit/health {
+		rewrite * /health
+		reverse_proxy orbit:8000
+	}
+
+	handle_path /orbit/* {
+		reverse_proxy orbit:8000
+	}
+
+	# Schedule worker routes (/scheduler/*) join here with services/scheduler.
+
+	handle {
+		respond 404
+	}
+}

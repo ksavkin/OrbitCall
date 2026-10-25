@@ -27,6 +27,7 @@ import { ScanResults, UrgencyOverlay } from "@/components/ops/DemoFlow";
 import { DecisionDock } from "@/components/ops/DecisionDock";
 import { ResolutionOverlay } from "@/components/ops/Resolution";
 import { IncidentView, setIncidentView } from "@/components/ops/IncidentView";
+import { RoomsScreen } from "@/components/rooms/RoomsScreen";
 import { ScenarioBar } from "@/components/ops/ScenarioBar";
 import { useOps } from "@/lib/ops/store";
 import { sceneRef } from "@/lib/sceneRef";
@@ -73,6 +74,7 @@ export function OrbitApp() {
       </div>
       {!conj && <SatellitePanel />}
       <AnimatePresence>{conj && <AgentsPanel key="agents" />}</AnimatePresence>
+      <AnimatePresence>{tab === "rooms" && <RoomsScreen key="rooms" />}</AnimatePresence>
       <AnimatePresence>{conj && dev && <ScenarioBar key="scenario" />}</AnimatePresence>
       <DecisionDock />
       <IncidentView />
