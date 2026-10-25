@@ -126,6 +126,42 @@ export function buildEncounter(
   };
 }
 
+/**
+ * A real pair from two catalog element sets: both states come from SGP4 at the reported TCA, so the drawn
+ * orbits are the objects' own and cross where the source says they meet. B is carried by a two-body step from
+ * its TCA state, which is accurate for the one revolution the globe draws around TCA.
+ */
+export function realEncounter(a: Elements, b: Elements, tca: number): Encounter | null {
+  const satrec = satrecOf(a);
+  const pa = propagate(satrec, new Date(tca));
+  const pb = propagate(satrecOf(b), new Date(tca));
+  if (!pa?.position || !pa.velocity || !pb?.position || !pb.velocity) return null;
+  if (![pa.position.x, pb.position.x].every(Number.isFinite)) return null;
+  const rA: V3 = [pa.position.x, pa.position.y, pa.position.z];
+  const vA: V3 = [pa.velocity.x, pa.velocity.y, pa.velocity.z];
+  const rB: V3 = [pb.position.x, pb.position.y, pb.position.z];
+  const vB: V3 = [pb.velocity.x, pb.velocity.y, pb.velocity.z];
+  const d = sub(rB, rA);
+  const up = unit(rA);
+  const alpha = 2 / len(rB) - dot(vB, vB) / MU_EARTH;
+  const geo = eciToGeodetic({ x: rA[0], y: rA[1], z: rA[2] }, gstime(new Date(tca)));
+  const cosCross = dot(unit(vA), unit(vB));
+  return {
+    tca,
+    rA,
+    vA,
+    rB,
+    vB,
+    missM: len(d) * 1000,
+    radialM: Math.abs(dot(d, up)) * 1000,
+    relVelKms: len(sub(vB, vA)),
+    crossDeg: (Math.acos(Math.min(Math.max(cosCross, -1), 1)) * 180) / Math.PI,
+    periodB: alpha > 0 ? 2 * Math.PI * Math.sqrt(1 / (alpha * alpha * alpha) / MU_EARTH) : 5400,
+    where: { lat: (geo.latitude * 180) / Math.PI, lon: (geo.longitude * 180) / Math.PI, altKm: geo.height },
+    satrec,
+  };
+}
+
 /** B's TEME position at time t (ms). */
 export function posB(enc: Encounter, t: number): V3 {
   return kepler(enc.rB, enc.vB, (t - enc.tca) / 1000).r;
