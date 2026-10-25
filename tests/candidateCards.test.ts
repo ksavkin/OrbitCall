@@ -48,10 +48,12 @@ describe("parseCandidatesResponse", () => {
   it("accepts the provisional /candidates shape", () => {
     const value = response([maneuver(), wait()]);
     expect(parseCandidatesResponse(JSON.parse(JSON.stringify(value)))).toEqual(value);
+    expect(parseCandidatesResponse(response(Array.from({ length: 100 }, () => wait()))).candidates).toHaveLength(100);
   });
   it.each<[string, unknown]>([
     ["non-object", "nope"],
-    ["missing echo", { ...response([]), snapshotId: undefined }],
+    ["missing echo", (({ snapshotId: _omitted, ...rest }) => rest)(response([]))],
+    ["more than 100 candidates", response(Array.from({ length: 101 }, () => wait()))],
     ["extra top-level field", { ...response([]), pc: 0.0002 }],
     ["extra candidate field", response([{ ...maneuver(), postManeuverPc: 1e-6 } as Item])],
     ["unknown kind", response([{ ...maneuver(), kind: "abort" } as unknown as Item])],
