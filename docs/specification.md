@@ -175,10 +175,27 @@ interface EventRow {
   roomId: Id<"rooms"> | null;       // coordination room may link several pair events
   roomOpen: boolean;                // a room exists (created at red) [Q-3]
   sources: SourceRef[];
+  reference: ReferenceCheck | null; // SOCRATES check of our scan's event; null before matching_sources ran
   simulated: boolean;
   updatedAt: ISODate;
 }
+
+/** How a scan event compares with the SOCRATES reference list (decision of Oct 25, 2026; SCR-3 rules). */
+interface ReferenceCheck {
+  source: "socrates";
+  referenceRunUtc: ISODate;          // the SOCRATES run the event was compared with
+  status: "matched"                  // same canonical pair, reference TCA within 60 s of ours
+        | "data_differs"             // same pair, but their element-set epochs differ from ours by more than 45 s
+        | "not_listed";              // the pair is not in that SOCRATES run
+  referenceTcaUtc: ISODate | null;   // null when not_listed
+  referenceMissKm: number | null;
+  referenceMaxProb: number | null;   // SOCRATES max_prob, labeled as such, never a Pc
+  tcaDiffS: number | null;           // ours − theirs
+  missDiffKm: number | null;
+}
 ```
+
+A reference match is provenance, not a confidence score. "Not in SOCRATES" is not an error: their run may be older than our snapshot, or the pair may fall outside their thresholds.
 
 ### 2.3 Room, proposals, approvals
 
@@ -521,7 +538,7 @@ The default dashboard is My Fleet + My Incidents + globe. Label the separate mis
 |---|---|---|---|
 | `fleet.listMine` | query | `{}` → `{ assignmentVersion, satellites: FleetSatellite[] }` | All assigned objects, including zero-incident objects. Head of ops gets company read scope. No public assignment mutation [FLEET-1..FLEET-4] |
 | `scans.startMine` | mutation | `{ requestId: string }` → `{ scanId, reused: boolean }` | Resolves all assignments server-side, queues work; duplicate requests/active runs reuse a job. No client-supplied primary IDs. `EMPTY_FLEET`, `RATE_LIMITED` [SCAN-1..SCAN-3] |
-| `scans.getMine` | query | `{ scanId? }` → `ScanRun \| null` | Own run/latest run, live progress, coverage, partial/failure and zero-result states. Shared computation cannot expose another user's results |
+| `scans.getMine` | query | `{ scanId? }` → `ScanRun \| null` | Own run/latest run, live progress, coverage, partial/failure and zero-result states. Shared computation cannot expose another user's results. The `matching_sources` phase fills `EventRow.reference` for every published event |
 | `events.myQueue` | query | `{ objectId?: ObjectId }` → `EventRow[]` | Assigned-fleet events only, deduplicated. Optional filter must be assigned. Head of ops gets company read scope. Separate active, data-review, follow-up and history sections. Active order: red, yellow, other usable Pc; within severity earliest TCA, emergency flag, descending Pc, event ID. Data review: TCA, miss, event ID. No Pc/time score [Q-1, Q-5, §20 Q12] |
 | `events.orbits` | query | `{ eventId }` → orbit payload from section 2.6 | Authorized assigned incident only; available before room creation, stable object IDs and snapshot/evidence versions |
 | `events.catalogPairs` | query | `{ limit?: number }` (default: every active real pair, at most 1200 rows) → `EventRow[]` | Real pairs from the snapshot for a separate Explore catalog view, never the default queue; read-only, `mySide: null`, `myObjectIds: []`, no room access [DATA-5] |

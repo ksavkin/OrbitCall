@@ -15,6 +15,10 @@ The historical implementation notes below describe the simulator. Its Pc/time so
 
 Agent traces must identify the actual provider/model for each call, including the Gemini Host. Show provider results only after backend integration. A local simulator animation does not establish live sponsor use.
 
+## Decision, October 25: the queue comes from our scan
+
+My Incidents shows only our own fleet-scan events and stays empty until Run Scan has run. SOCRATES is the reference each event is checked against: Matched in SOCRATES, Data differs, or Not in SOCRATES, with their TCA, miss and `max_prob` next to ours. The numerical screening is the orbital service (`POST /screen`), not an AI agent; agents analyze what the scan found. Run Scan is on Orbit and Conjunctions, visible but not runnable when signed out. Probability: two significant digits as a decimal from 0.0001 up, scientific below, "1 in N" in the tooltip. Recorded in [integration status](../integration-status.md), [user flow](../user-flow.md) §3, [specification](../specification.md) `ReferenceCheck` and [master roadmap](../master-roadmap.md) §8. Backend: `convex/scans.ts` (Kostya, round 2). Frontend: queue under `web/src/components/queue/` (Adil, round 2).
+
 ## Merged backend and mode boundary
 
 Phase 1 Convex catalog/snapshot/Analyst integration is included alongside the simulator. The `ec5ea34` merge adds pinned OMM assets, a Convex catalog URL, the loader and direct OMM propagation in Dev off. Dev on keeps TLE plus synthetic scenarios. Missing OMM stays pending/error and never loads `/api/catalog` or substitutes a synthetic event. Shared-deployment validation and the full assigned-fleet flow remain work to complete. SOCRATES queue geometry is not recomputed by merely loading the OMM catalog. See [integration status](../integration-status.md).
