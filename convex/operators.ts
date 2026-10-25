@@ -2,6 +2,8 @@ import { internalMutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { contactPatch, lang, LEGACY_ASSIGNMENT_VERSION, profileText, setActiveAssignments, userRole } from "./lib/accounts";
 
+import { invalidateObjectApprovals } from "./lib/approvalState";
+
 // Trusted account/ownership setup, not registration. No browser may claim a company or satellite.
 // Optional profile and settings fields: omitted keeps the stored value; provided overwrites it.
 export const provision = internalMutation({
@@ -31,7 +33,10 @@ export const provision = internalMutation({
       if (!object) throw new ConvexError({ code: "NOT_FOUND", message: "Register the satellite before assigning its operator." });
       const owner = await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", objectId)).unique();
       if (owner && owner.companyId !== companyId) throw new ConvexError({ code: "FORBIDDEN", message: "This satellite already has a different operator." });
-      if (!owner) await ctx.db.insert("satelliteOwners", { objectId, companyId });
+      if (!owner) {
+        await ctx.db.insert("satelliteOwners", { objectId, companyId });
+        await invalidateObjectApprovals(ctx, [objectId], "authorization_changed");
+      }
     }
     for (const member of members) {
       // Auth0 never emits padding, so a padded identifier could never sign in; refuse it instead of storing an orphan.
@@ -47,6 +52,10 @@ export const provision = internalMutation({
         ...(member.dispatcherCountry === undefined ? {} : { dispatcherCountry: profileText("Dispatcher country", member.dispatcherCountry) }),
       };
       if (user) await ctx.db.patch(user._id, profile);
+      if (user && user.role !== member.role) {
+        const assignments = await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", user._id)).collect();
+        await invalidateObjectApprovals(ctx, assignments.filter(a => a.active).map(a => a.objectId), "authorization_changed");
+      }
       const userId = user?._id ?? await ctx.db.insert("users", { tokenIdentifier: member.tokenIdentifier, companyId, ...profile });
       await setActiveAssignments(ctx, (await ctx.db.get(userId))!, member.assignedObjectIds, { created: !user });
     }

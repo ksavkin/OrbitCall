@@ -3,6 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { AnalystError, inputKey, isRed, validateFacts, type EventFacts } from "./analyst";
 import { supersede } from "./runs";
+import { invalidateEventApprovals, invalidateObjectApprovals } from "./approvalState";
 import type { objectInput, sourceRef } from "./validators";
 
 type ObjectInput = Infer<typeof objectInput>;
@@ -46,6 +47,11 @@ export async function loadFacts(ctx: QueryCtx, event: Doc<"events">): Promise<Ev
   return buildFacts(event, a, b, snapshot.sources);
 }
 
+export function sameSources(a: Infer<typeof sourceRef>[], b: Infer<typeof sourceRef>[]) {
+  return a.length === b.length && a.every((source, i) => source.name === b[i].name && source.url === b[i].url &&
+    source.epochUtc === b[i].epochUtc && source.fetchedAt === b[i].fetchedAt);
+}
+
 export function findObject(ctx: QueryCtx, objectId: string) {
   return ctx.db.query("spaceObjects").withIndex("by_object_id", q => q.eq("objectId", objectId)).unique();
 }
@@ -56,6 +62,7 @@ export async function upsertObject(ctx: MutationCtx, input: ObjectInput, fixture
   if (!stored) return ctx.db.insert("spaceObjects", input);
   if (!fixture && (stored.name !== input.name || stored.country !== input.country || stored.launchDate !== input.launchDate)) {
     await ctx.db.patch(stored._id, input);
+    if (stored.name !== input.name) await invalidateObjectApprovals(ctx, [input.objectId], "evidence_changed");
   }
   return stored._id;
 }
@@ -71,7 +78,13 @@ export async function findEncounter(ctx: QueryCtx, objectAId: Id<"spaceObjects">
 export async function putFixture(ctx: MutationCtx, key: string, facts: EventFacts, color: Doc<"events">["color"]) {
   const snapshot = await ctx.db.query("snapshots").withIndex("by_snapshot_id", q => q.eq("snapshotId", key)).unique();
   const snapshotId = snapshot?._id ?? await ctx.db.insert("snapshots", { snapshotId: key, sources: facts.sources });
-  if (snapshot) await ctx.db.patch(snapshot._id, { sources: facts.sources });
+  if (snapshot && !sameSources(snapshot.sources, facts.sources)) {
+    await ctx.db.patch(snapshot._id, { sources: facts.sources });
+    for await (const set of ctx.db.query("candidateSets")) {
+      const event = await ctx.db.get(set.eventId);
+      if (event?.snapshotId === snapshot._id) await invalidateEventApprovals(ctx, event, "evidence_changed");
+    }
+  }
   const pick = ({ objectId, name, country, launchDate }: ObjectInput) => ({ objectId, name, country, launchDate });
   const objectAId = await upsertObject(ctx, pick(facts.objectA), true);
   const objectBId = await upsertObject(ctx, pick(facts.objectB), true);
@@ -82,7 +95,10 @@ export async function putFixture(ctx: MutationCtx, key: string, facts: EventFact
   };
   const existing = await findEncounter(ctx, objectAId, objectBId, tcaMs);
   if (!existing) return ctx.db.insert("events", row);
+  const before = inputKey(await loadFacts(ctx, existing));
   await ctx.db.patch(existing._id, row);
+  const current = (await ctx.db.get(existing._id))!;
+  if (!existing.active || before !== inputKey(await loadFacts(ctx, current))) await invalidateEventApprovals(ctx, current, "evidence_changed");
   return existing._id;
 }
 
@@ -125,8 +141,12 @@ export async function ingestEncounter(ctx: MutationCtx, { snapshotId, objectA, o
     if (changed) await ctx.db.patch(eventId, { ...row, updatedAt: now });
     else if (!same) await ctx.db.patch(eventId, row);
   }
+  if (previous && !changed && previous.snapshotId !== snapshotId) {
+    await invalidateEventApprovals(ctx, (await ctx.db.get(eventId))!, "evidence_changed");
+  }
   // Publishing a changed input also invalidates any result still being computed for it.
   if (changed && previous) {
+    await invalidateEventApprovals(ctx, (await ctx.db.get(eventId))!, "evidence_changed");
     const running = await ctx.db.query("agentRuns").withIndex("by_event_status", q =>
       q.eq("eventId", eventId).eq("status", "running")).collect();
     for (const run of running) await supersede(ctx, run._id);

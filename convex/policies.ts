@@ -5,6 +5,7 @@ import { satellitePolicy } from "./lib/policyValidators";
 import { changedCategories, validatePolicies } from "./lib/policies";
 import { supersede } from "./lib/runs";
 import { internal } from "./_generated/api";
+import { invalidateEventApprovals } from "./lib/approvalState";
 
 export const getMine = query({
   args: {},
@@ -41,6 +42,8 @@ export const update = mutation({
     ];
     for (const set of sets) {
       if (set.state === "closed") continue;
+      const event = await ctx.db.get(set.eventId);
+      if (event) await invalidateEventApprovals(ctx, event, "policy_changed");
       const side = set.companyAId === user.companyId ? "A" as const : "B" as const;
       // Both sides must reconsider: the other Advocate may have relied on the old shared outcome.
       const runs = await ctx.db.query("agentRuns").withIndex("by_event_role_company", q => q.eq("eventId", set.eventId)
