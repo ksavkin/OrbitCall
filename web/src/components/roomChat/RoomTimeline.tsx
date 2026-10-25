@@ -36,14 +36,39 @@ export function RoomTimeline({
       ),
     [messages, cards],
   );
+  // Stay pinned to the newest message while the reader is at the bottom, including when a message grows after it
+  // arrives (its entry animation, a translation filling in). Someone who scrolled up to read is left where they are.
+  const list = useRef<HTMLOListElement>(null);
+  const pinned = useRef(true);
   useEffect(() => {
     const el = box.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    const ol = list.current;
+    if (!el || !ol) return;
+    const onScroll = () => {
+      pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    };
+    const follow = () => {
+      if (pinned.current) el.scrollTop = el.scrollHeight;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(follow);
+    ro.observe(ol);
+    follow();
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+    };
+  }, []);
+  useEffect(() => {
+    // a new message pins again: the reader expects to see what just arrived
+    pinned.current = true;
+    const el = box.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [items.length]);
   return (
     <div ref={box} className="thin-scroll min-h-0 flex-1 overflow-y-auto border-t border-white/[0.06] px-6 py-4" data-testid={testId}>
       {items.length === 0 && <div className="grid h-full place-items-center text-center text-[13px] text-neutral-500">{empty}</div>}
-      <ol className="space-y-3.5">
+      <ol ref={list} className="space-y-3.5 pb-1">
         <AnimatePresence initial={false}>
           {items.map((it) => (it.kind === "msg" ? <Message key={it.m.messageId} m={it.m} myUserId={myUserId} /> : <SharedCard key={it.c.id} c={it.c} />))}
         </AnimatePresence>
