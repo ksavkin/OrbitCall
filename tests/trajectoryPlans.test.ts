@@ -223,6 +223,17 @@ describe("trajectoryPlans: a change resets every affected event", () => {
     expect(await t.mutation(fns.refuse, { id: plan._id, version: plan.planVersion })).toBe(false);
     expect(await active(t)).toHaveLength(1);
   });
+
+  it("a refusal after the partner event closed supersedes the refused version: no plan is left to block the mover", async () => {
+    const { t, X, Y } = await shared();
+    for (const [name, e] of [["a", X], ["b", X], ["a", Y], ["c", Y]] as const) await approve(t, name, e);
+    const plan = (await active(t))[0];
+    // Deactivated rather than resolved: the refusal returns every affected event to the agents, which rewrites status.
+    await t.run(ctx => ctx.db.patch(Y, { active: false }));
+    expect(await t.mutation(fns.refuse, { id: plan._id, version: plan.planVersion })).toBe(true);
+    expect((await t.run(ctx => ctx.db.get(plan._id)))!.state).toBe("superseded");
+    expect((await plans(t)).filter(p => p.state !== "superseded")).toEqual([]);
+  });
 });
 
 describe("trajectoryPlans: isolation and concurrency", () => {
@@ -272,14 +283,13 @@ describe("trajectoryPlans: isolation and concurrency", () => {
     expect(signed.every(a => a.trajectoryPlanId === plan._id && a.trajectoryPlanVersion === plan.planVersion)).toBe(true);
   });
 
-  it("an approval on a stale link is not recorded: the event is reset and the next approval signs the new plan", async () => {
+  it("an approval made before a new event entered the burn horizon is not recorded: the event is reset and the next approval signs the new plan", async () => {
     const { t, eventId: X } = await seed();
-    const Y = await insertEvent(t, pairOf("SIM-1001", "SIM-3001"));
-    await t.mutation(internal.candidates.publish, { eventId: Y, baseVersion: null, candidates: cardsFor("SIM-1001", "SIM-3001"), start: false });
     await pick(t, "a", X, "P1");
     await approve(t, "a", X);
-    // Linked after X's side A signed without a plan: no selection write saw the link.
-    await link(t, [X, Y]);
+    // Y appears in the burn's horizon after X's side A signed without a plan: no selection write saw it.
+    const Y = await insertEvent(t, pairOf("SIM-1001", "SIM-3001"));
+    await t.mutation(internal.candidates.publish, { eventId: Y, baseVersion: null, candidates: cardsFor("SIM-1001", "SIM-3001"), start: false });
     expect(await approve(t, "b", X)).toEqual({ allRequiredApproved: false, requiredApprovalSides: ["A", "B"] });
     expect(await current(t, X)).toEqual([]);
     expect((await status(t, "a", X)).lastReset?.reason).toBe("trajectory_changed");

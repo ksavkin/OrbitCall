@@ -245,7 +245,8 @@ describe("shared mover: authorization over every affected event", () => {
       expect((await get(s, e.selectionId))!.lastReset!.reason.length).toBeGreaterThan(0);
       expect((await get(s, e.eventId))!.status).toBe("agents");
     }
-    expect((await get(s, s.planId))!.state).toBe("review_required");
+    // The refused version never strands the mover: the sync after the reset supersedes it.
+    expect((await get(s, s.planId))!.state).toBe("superseded");
   });
 
   it.each([
