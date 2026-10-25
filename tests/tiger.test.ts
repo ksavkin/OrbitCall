@@ -3,12 +3,16 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  MAX_SERIES_POINTS, MAX_WRITE_BATCH, OBSERVATION_TABLE, TIGER_SOURCES, ensureObservationTable, observationKey, readSeries,
-  safeTigerFailure, tigerConfig, validateObservation, withTiger, writeObservations,
-  type SqlResult, type TigerConnection, type TigerObservation,
+  MAX_SERIES_POINTS, MAX_WRITE_BATCH, OBSERVATION_TABLE, TIGER_SOURCES, connectTiger, ensureObservationTable, observationKey, readSeries,
+  safeTigerFailure, tigerClientConfig, validateObservation, withTiger, writeObservations,
+  type SqlResult, type TigerClient, type TigerClientConfig, type TigerConnection, type TigerObservation,
 } from "../convex/lib/tiger";
 
 const URL_WITH_SECRET = "postgres://tsdbadmin:SECRET-password@abc123.x.tsdb.cloud.timescale.com:34567/tsdb?sslmode=require";
+const CLOUD_CONFIG: TigerClientConfig = {
+  host: "abc123.x.tsdb.cloud.timescale.com", port: 34567, user: "tsdbadmin", password: "SECRET-password", database: "tsdb",
+  ssl: { rejectUnauthorized: true }, connectionTimeoutMillis: 10_000, query_timeout: 20_000,
+};
 const observation: TigerObservation = {
   observationKey: "event-1|socrates|missKm|evidence-v3|2026-10-24T10:30:00Z", eventId: "event-1", runId: null,
   observedAt: "2026-10-24T10:30:00Z", source: "socrates", metric: "missKm", value: 0.18, evidenceVersion: "evidence-v3", simulated: false,
@@ -39,27 +43,102 @@ const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim();
 beforeEach(() => { vi.stubEnv("TIGER_DATABASE_URL", URL_WITH_SECRET); });
 afterEach(() => { vi.unstubAllEnvs(); });
 
-describe("Tiger configuration", () => {
-  it("reads TIGER_DATABASE_URL and keeps TLS on for a cloud database", () => {
-    expect(tigerConfig()).toEqual({ connectionString: URL_WITH_SECRET, ssl: true });
+describe("Tiger client configuration", () => {
+  it("builds the exact pg.Client object from TIGER_DATABASE_URL, with TLS verification on and no connection string", () => {
+    const config = tigerClientConfig();
+    expect(config).toEqual(CLOUD_CONFIG);
+    expect(Object.keys(config)).not.toContain("connectionString");
+    expect(Object.keys(config)).not.toContain("statement_timeout");
   });
 
-  it("fails as not configured without a postgres URL and opens no connection", async () => {
-    for (const value of ["", "not a url", "https://example.com/db", "postgres:///nohost"]) {
-      vi.stubEnv("TIGER_DATABASE_URL", value);
-      const error = (() => { try { tigerConfig(); return null; } catch (error) { return error; } })();
-      expect(safeTigerFailure(error).code).toBe("HISTORY_NOT_CONFIGURED");
-      expect(safeTigerFailure(error).message).not.toContain("example.com");
-    }
+  it("defaults the port, decodes user and password, and accepts verify-full and verify-ca", () => {
+    expect(tigerClientConfig("postgresql://us%40er:p%40ss%2Fword@db.example.com/orbit?sslmode=verify-full")).toEqual({
+      ...CLOUD_CONFIG, host: "db.example.com", port: 5432, user: "us@er", password: "p@ss/word", database: "orbit",
+    });
+    expect(tigerClientConfig("postgres://u:p@db.example.com/orbit?sslmode=verify-ca").ssl).toEqual({ rejectUnauthorized: true });
+    expect(tigerClientConfig("postgres://u:p@db.example.com/orbit").ssl).toEqual({ rejectUnauthorized: true });
   });
 
-  it("keeps TLS on unless a loopback database asks for sslmode=disable", () => {
-    vi.stubEnv("TIGER_DATABASE_URL", "postgres://dev:dev@localhost:5432/orbitcall?sslmode=disable");
-    expect(tigerConfig().ssl).toBe(false);
-    vi.stubEnv("TIGER_DATABASE_URL", "postgres://dev:dev@db.internal:5432/orbitcall?sslmode=disable");
-    expect(tigerConfig().ssl).toBe(true);
-    vi.stubEnv("TIGER_DATABASE_URL", "postgres://dev:dev@localhost:5432/orbitcall");
-    expect(tigerConfig().ssl).toBe(true);
+  it("allows plaintext only for a loopback database that asks for it", () => {
+    expect(tigerClientConfig("postgres://dev:dev@localhost:5432/orbitcall?sslmode=disable").ssl).toBe(false);
+    expect(tigerClientConfig("postgres://dev:dev@127.0.0.1/orbitcall?sslmode=disable").ssl).toBe(false);
+  });
+
+  it.each([
+    ["an empty value", ""],
+    ["a non-URL", "not a url"],
+    ["a non-postgres scheme", "https://db.example.com/db"],
+    ["a missing host", "postgres:///nohost"],
+    ["a missing database", "postgres://u:p@db.example.com/"],
+    ["a missing user", "postgres://db.example.com/db"],
+    ["an invalid port", "postgres://u:p@db.example.com:99999/db"],
+    ["sslmode=disable on a remote host", "postgres://u:p@db.internal:5432/orbitcall?sslmode=disable"],
+    ["sslmode=no-verify", "postgres://u:p@db.example.com/db?sslmode=no-verify"],
+    ["sslmode=prefer", "postgres://u:p@db.example.com/db?sslmode=prefer"],
+    ["a host override", "postgres://u:p@localhost/db?host=remote.example.com&sslmode=disable"],
+    ["a statement_timeout override", `${URL_WITH_SECRET}&statement_timeout=0`],
+    ["an options override", `${URL_WITH_SECRET}&options=-c%20statement_timeout%3D0`],
+    ["libpq compatibility mode", `${URL_WITH_SECRET}&uselibpqcompat=true`],
+  ])("rejects %s as not configured without naming the host", (_name, value) => {
+    const error = (() => { try { tigerClientConfig(value); return null; } catch (error) { return error; } })();
+    expect(safeTigerFailure(error).code).toBe("HISTORY_NOT_CONFIGURED");
+    expect(safeTigerFailure(error).message).not.toContain("example.com");
+    expect(safeTigerFailure(error).message).not.toContain("SECRET");
+  });
+
+  it("reads the environment when no value is passed and fails closed without it", () => {
+    vi.stubEnv("TIGER_DATABASE_URL", "");
+    expect(() => tigerClientConfig()).toThrow("TIGER_DATABASE_URL");
+  });
+});
+
+// A pg.Client stand-in: records the config it was built with, the listeners, and the statements.
+function fakeClient(results: (SqlResult | Error)[] = [], connectError?: Error) {
+  const listeners: Record<string, ((error: unknown) => void)[]> = {};
+  const db = recorder(...results);
+  const state = { config: null as TigerClientConfig | null, connected: 0, ended: 0, listeners, calls: db.calls };
+  const factory = (config: TigerClientConfig): TigerClient => {
+    state.config = config;
+    return {
+      async connect() { state.connected += 1; if (connectError) throw connectError; },
+      async end() { state.ended += 1; },
+      on(event, listener) { (listeners[event] ??= []).push(listener); return this; },
+      query: (text, values) => db.sql(text, values),
+    };
+  };
+  return { factory, state, emitError: (error: unknown) => listeners.error?.forEach(listener => listener(error)) };
+}
+
+describe("connectTiger", () => {
+  it("builds the client from the parsed configuration, listens for connection errors, and connects once", async () => {
+    const { factory, state, emitError } = fakeClient();
+    const connection = await connectTiger(factory);
+    expect(state.config).toEqual(CLOUD_CONFIG);
+    expect(state.connected).toBe(1);
+    expect(state.listeners.error).toHaveLength(1);
+    // A dropped connection emits "error"; with the listener in place it is not an uncaught exception.
+    expect(() => emitError(pgError("ECONNRESET"))).not.toThrow();
+    await connection.end();
+    expect(state.ended).toBe(1);
+  });
+
+  it("sanitizes every statement failure before a caller can catch it inside the work", async () => {
+    const { factory } = fakeClient([pgError("42P01", `relation "x" does not exist at ${URL_WITH_SECRET}`)]);
+    const connection = await connectTiger(factory);
+    const error = await connection.sql("SELECT 1").catch(error => error);
+    expect(error.name).toBe("AnalystError");
+    expect(error.code).toBe("HISTORY_QUERY_REJECTED");
+    expect(error.message).not.toContain("SECRET");
+    expect(error.message).not.toContain("does not exist");
+  });
+
+  it("does not build a client when the URL is not configured", async () => {
+    vi.stubEnv("TIGER_DATABASE_URL", "postgres://u:p@db.internal/db?sslmode=disable");
+    const { factory, state } = fakeClient();
+    const error = await connectTiger(factory).catch(error => error);
+    expect(safeTigerFailure(error).code).toBe("HISTORY_NOT_CONFIGURED");
+    expect(state.config).toBeNull();
+    expect(state.connected).toBe(0);
   });
 });
 
@@ -75,6 +154,14 @@ describe("withTiger", () => {
     expect(end).toHaveBeenCalledTimes(1);
   });
 
+  it("runs through a real client factory: connect, work, end, in that order", async () => {
+    const { factory, state } = fakeClient([{ rows: [{ one: 1 }], rowCount: 1 }]);
+    const result = await withTiger(tiger => tiger.sql("SELECT 1"), () => connectTiger(factory));
+    expect(result.rows).toEqual([{ one: 1 }]);
+    expect(state.connected).toBe(1);
+    expect(state.ended).toBe(1);
+  });
+
   it("closes the connection when the work fails and hides the database error", async () => {
     const { connect, end } = connection(recorder(pgError("57014")));
     const error = await withTiger(tiger => tiger.sql("SELECT pg_sleep(100)"), connect).catch(error => error);
@@ -84,10 +171,14 @@ describe("withTiger", () => {
     expect(String(error.message)).not.toContain("timescale");
   });
 
-  it("reports a refused or unauthenticated connection without the URL", async () => {
-    for (const [code, expected] of [["ECONNREFUSED", "UPSTREAM_UNAVAILABLE"], ["28P01", "HISTORY_ACCESS_DENIED"], ["53300", "RATE_LIMITED"]]) {
-      const connect = vi.fn().mockRejectedValue(pgError(code));
-      const error = await withTiger(async () => "unreachable", connect).catch(error => error);
+  it("reports a refused, unauthenticated, or unverifiable connection without the URL", async () => {
+    for (const [code, expected] of [
+      ["ECONNREFUSED", "UPSTREAM_UNAVAILABLE"], ["28P01", "HISTORY_ACCESS_DENIED"], ["53300", "RATE_LIMITED"],
+      ["SELF_SIGNED_CERT_IN_CHAIN", "HISTORY_ACCESS_DENIED"], ["3D000", "HISTORY_NOT_CONFIGURED"],
+    ]) {
+      const { factory, state } = fakeClient([], pgError(code));
+      const error = await withTiger(async () => "unreachable", () => connectTiger(factory)).catch(error => error);
+      expect(state.connected).toBe(1);
       expect(safeTigerFailure(error).code).toBe(expected);
       expect(safeTigerFailure(error).message).not.toContain("SECRET");
       expect(safeTigerFailure(error).message).not.toContain("tsdb");
@@ -287,8 +378,11 @@ describe("safeTigerFailure", () => {
   it.each([
     ["28P01", "HISTORY_ACCESS_DENIED"], ["28000", "HISTORY_ACCESS_DENIED"], ["42883", "HISTORY_QUERY_REJECTED"],
     ["42601", "HISTORY_QUERY_REJECTED"], ["23505", "HISTORY_QUERY_REJECTED"], ["22P02", "HISTORY_QUERY_REJECTED"],
+    ["0A000", "HISTORY_QUERY_REJECTED"], ["3D000", "HISTORY_NOT_CONFIGURED"],
     ["53300", "RATE_LIMITED"], ["57P01", "UPSTREAM_UNAVAILABLE"], ["ECONNREFUSED", "UPSTREAM_UNAVAILABLE"],
     ["ENOTFOUND", "UPSTREAM_UNAVAILABLE"], ["ETIMEDOUT", "UPSTREAM_UNAVAILABLE"],
+    ["SELF_SIGNED_CERT_IN_CHAIN", "HISTORY_ACCESS_DENIED"], ["ERR_TLS_CERT_ALTNAME_INVALID", "HISTORY_ACCESS_DENIED"],
+    ["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "HISTORY_ACCESS_DENIED"],
   ])("maps code %s to %s without the provider message", (code, expected) => {
     const failure = safeTigerFailure(pgError(code));
     expect(failure.code).toBe(expected);
@@ -296,8 +390,20 @@ describe("safeTigerFailure", () => {
     expect(failure.message).not.toContain("connection to server");
   });
 
-  it("names TimescaleDB when the hypertable function is missing", () => {
-    expect(safeTigerFailure(pgError("42883")).message).toContain("TimescaleDB");
+  it("does not treat a look-alike code as a SQLSTATE and never echoes it", () => {
+    for (const code of ["42", "42P01-extra", "23505 SECRET", "4", "ECONNRESET"]) {
+      const failure = safeTigerFailure(pgError(code));
+      expect(failure.code).toBe("UPSTREAM_UNAVAILABLE");
+      expect(failure.message).not.toContain(code);
+    }
+  });
+
+  it("names TimescaleDB only when the hypertable function itself is missing", () => {
+    expect(safeTigerFailure(pgError("42883", "function create_hypertable(unknown, ...) does not exist")).message).toContain("TimescaleDB");
+    const other = safeTigerFailure(pgError("42883", "function secret_fn(text) does not exist"));
+    expect(other.message).not.toContain("TimescaleDB");
+    expect(other.message).not.toContain("secret_fn");
+    expect(other.code).toBe("HISTORY_QUERY_REJECTED");
   });
 
   it("treats unknown errors as unavailable", () => {

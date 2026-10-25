@@ -15,7 +15,8 @@ export const MAX_WRITE_BATCH = 500;
 export const MAX_SERIES_POINTS = 5_000;
 const DEFAULT_SERIES_POINTS = 1_000;
 const CONNECT_TIMEOUT_MS = 10_000;
-const STATEMENT_TIMEOUT_MS = 20_000;
+// Enforced by the client, so a black-holed connection fails too, and no startup parameter reaches a pooler.
+const QUERY_TIMEOUT_MS = 20_000;
 
 // One observation row. The key must identify the observation and include its time, so the same
 // observation exported twice lands on the same (observation_key, observed_at) and is skipped.
@@ -53,35 +54,75 @@ function utc(value: unknown): value is string {
   return new Date(value).toISOString().slice(0, 19) === value.slice(0, 19);
 }
 
-export function tigerConfig(): { connectionString: string; ssl: boolean } {
-  const connectionString = process.env.TIGER_DATABASE_URL;
-  if (!connectionString) throw new AnalystError("HISTORY_NOT_CONFIGURED", "Set TIGER_DATABASE_URL in this Convex deployment.");
+// The exact object handed to pg.Client. The URL is parsed here and never passed through, because pg applies a
+// connection string's own options (sslmode, host, statement_timeout, ...) on top of explicit settings.
+export interface TigerClientConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+  ssl: { rejectUnauthorized: true } | false;
+  connectionTimeoutMillis: number;
+  query_timeout: number;
+}
+
+const notConfigured = (message: string) => new AnalystError("HISTORY_NOT_CONFIGURED", message);
+const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
+
+export function tigerClientConfig(connectionString: string | undefined = process.env.TIGER_DATABASE_URL): TigerClientConfig {
+  if (!connectionString) throw notConfigured("Set TIGER_DATABASE_URL in this Convex deployment.");
   let url: URL;
   try {
     url = new URL(connectionString);
   } catch {
-    throw new AnalystError("HISTORY_NOT_CONFIGURED", "TIGER_DATABASE_URL must be a postgres:// connection URL.");
+    throw notConfigured("TIGER_DATABASE_URL must be a postgres:// connection URL.");
   }
-  if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname) {
-    throw new AnalystError("HISTORY_NOT_CONFIGURED", "TIGER_DATABASE_URL must be a postgres:// connection URL.");
-  }
-  // TLS with certificate verification is always on. The one exception is a loopback database that says so.
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-  const ssl = !(loopback && url.searchParams.get("sslmode") === "disable");
-  return { connectionString, ssl };
+  if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname) throw notConfigured("TIGER_DATABASE_URL must be a postgres:// connection URL.");
+  const port = url.port === "" ? 5432 : Number(url.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw notConfigured("TIGER_DATABASE_URL has an invalid port.");
+  const database = decodeURIComponent(url.pathname.replace(/^\//, ""));
+  if (!url.username || !database) throw notConfigured("TIGER_DATABASE_URL needs a user and a database name.");
+  // Only sslmode may appear, and only with a value that keeps certificate verification on. A loopback database
+  // may say sslmode=disable. Anything else (host=, options=, statement_timeout=, no-verify, prefer) is rejected
+  // rather than silently weakening the connection.
+  const params = [...url.searchParams.keys()];
+  if (params.some(key => key !== "sslmode")) throw notConfigured("TIGER_DATABASE_URL may carry only the sslmode option.");
+  const sslmode = url.searchParams.get("sslmode") ?? "verify-full";
+  const loopback = LOOPBACK.includes(url.hostname);
+  let ssl: TigerClientConfig["ssl"];
+  if (["require", "verify-ca", "verify-full"].includes(sslmode)) ssl = { rejectUnauthorized: true };
+  else if (sslmode === "disable" && loopback) ssl = false;
+  else throw notConfigured("TIGER_DATABASE_URL must use TLS: sslmode=require or verify-full (disable is allowed on localhost only).");
+  return {
+    host: url.hostname, port, user: decodeURIComponent(url.username), password: decodeURIComponent(url.password), database,
+    ssl, connectionTimeoutMillis: CONNECT_TIMEOUT_MS, query_timeout: QUERY_TIMEOUT_MS,
+  };
 }
 
-async function connectTiger(): Promise<TigerConnection> {
-  const { connectionString, ssl } = tigerConfig();
-  const client = new pg.Client({
-    connectionString,
-    ssl: ssl ? { rejectUnauthorized: true } : false,
-    connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
-    statement_timeout: STATEMENT_TIMEOUT_MS,
-  });
+// What the adapter uses of a pg client. Tests substitute a fake; production passes pg.Client.
+export interface TigerClient {
+  connect(): Promise<void>;
+  end(): Promise<void>;
+  on(event: "error", listener: (error: unknown) => void): unknown;
+  query: (text: string, values?: unknown[]) => Promise<SqlResult>;
+}
+export type TigerClientFactory = (config: TigerClientConfig) => TigerClient;
+const pgClient: TigerClientFactory = config => new pg.Client(config) as unknown as TigerClient;
+
+export async function connectTiger(createClient: TigerClientFactory = pgClient): Promise<TigerConnection> {
+  const client = createClient(tigerClientConfig());
+  // A dropped connection makes pg emit "error" besides rejecting the pending statement. Without a listener that
+  // event is an uncaught exception outside every try/catch, carrying the raw driver message. The rejection is
+  // the signal callers get; the next statement on a broken client fails too.
+  client.on("error", () => undefined);
   await client.connect();
-  const run: (text: string, values?: unknown[]) => Promise<SqlResult> = client.query.bind(client);
-  return { sql: run, end: () => client.end() };
+  const run = client.query.bind(client);
+  return {
+    // Every statement failure is sanitized here, so a caller catching inside `work` never sees a driver message.
+    sql: (text, values) => run(text, values).catch((error: unknown) => { throw toTigerError(error); }),
+    end: () => client.end(),
+  };
 }
 
 // One connection per action call, always closed. Convex actions are short-lived, so a pool gains nothing.
@@ -210,12 +251,17 @@ export async function readSeries(
 
 // pg errors carry a SQLSTATE in `code`; connection errors carry a Node errno code. Their messages can name
 // hosts, users and statements, so only our own text is ever kept.
+const TLS_CODES = /^(ERR_TLS_|CERT_|SELF_SIGNED_CERT|DEPTH_ZERO_SELF_SIGNED|UNABLE_TO_VERIFY_LEAF|UNABLE_TO_GET_ISSUER)/;
 function toTigerError(error: unknown): AnalystError {
   if (error instanceof AnalystError) return error;
   const code = isRecord(error) && typeof error.code === "string" ? error.code : "";
+  const message = isRecord(error) && typeof error.message === "string" ? error.message : "";
   if (code === "28P01" || code === "28000") return new AnalystError("HISTORY_ACCESS_DENIED", "The configured account cannot access the history database.");
-  if (code === "42883") return new AnalystError("HISTORY_QUERY_REJECTED", "The history database does not provide TimescaleDB.");
-  if (/^(42|22|23|0A)/.test(code)) return new AnalystError("HISTORY_QUERY_REJECTED", `The history database rejected the statement (SQLSTATE ${code}).`);
+  if (TLS_CODES.test(code)) return new AnalystError("HISTORY_ACCESS_DENIED", "The history database's TLS certificate could not be verified.");
+  if (code === "3D000") return new AnalystError("HISTORY_NOT_CONFIGURED", "The configured history database does not exist.");
+  // The driver text is only matched here, never kept.
+  if (code === "42883" && /create_hypertable/.test(message)) return new AnalystError("HISTORY_QUERY_REJECTED", "The history database does not provide TimescaleDB.");
+  if (/^(42|22|23|0A)[0-9A-Z]{3}$/.test(code)) return new AnalystError("HISTORY_QUERY_REJECTED", `The history database rejected the statement (SQLSTATE ${code}).`);
   if (code === "53300") return new AnalystError("RATE_LIMITED", "The history database has no free connections. Retry later.");
   return new AnalystError("UPSTREAM_UNAVAILABLE", "The history database could not complete this request. Retry later.");
 }
