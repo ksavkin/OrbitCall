@@ -2,8 +2,8 @@ import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { requireParty, requireReader } from "./lib/operatorAccess";
-import { advanceSelection, allApproved, classifyIfUnset, countingApprovals } from "./lib/approvals";
-import { decisionTurn } from "./lib/decision";
+import { advanceSelection, allApproved, classifyIfUnset, countingApprovals, currentEvidence, turnOf } from "./lib/approvals";
+import { isResolved } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
 import { workflow } from "./lib/validators";
@@ -42,13 +42,15 @@ async function checkDecision(ctx: MutationCtx, args: Args) {
   const stored = await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
     q.eq("proposalId", args.proposalId).eq("revision", args.revision)).unique();
   if (proposal?.latestRevision !== args.revision || !stored || !set.candidateRevisionIds.includes(stored.candidateRevisionId)) throw stale();
+  // Candidates computed on older orbital evidence are not decidable until they are recomputed (spec §4.1 step 3).
+  if (!await currentEvidence(ctx, event, set)) throw error("STALE_REVISION", "The incident's evidence changed; wait for recomputed candidates.");
   return { user, side, event, selection };
 }
 
-// Off-turn approve or veto is refused; null means every required side looks approved under the turn rule.
+// Off-turn approve or veto is refused. The turn comes from the approvals that count, the same rule as consensus.
 async function requireTurn(ctx: MutationCtx, d: Awaited<ReturnType<typeof checkDecision>>) {
-  const { turn } = await decisionTurn(ctx, d.event);
-  if (turn !== null && turn !== d.side) throw error("INVALID_STATE", `It is side ${turn}'s turn to decide.`);
+  const turn = turnOf(d.event, await countingApprovals(ctx, d.event, d.selection));
+  if (turn !== d.side) throw error("INVALID_STATE", turn ? `It is side ${turn}'s turn to decide.` : "Every required side has approved.");
 }
 
 const approveResult = v.object({ allRequiredApproved: v.boolean(), requiredApprovalSides: v.array(side) });
@@ -134,7 +136,10 @@ export const status = query({
       ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", eventId)).unique(),
       ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique(),
     ]);
-    const [counted, { deciding, turn }] = await Promise.all([countingApprovals(ctx, event, selection), decisionTurn(ctx, event)]);
+    const counted = await countingApprovals(ctx, event, selection);
+    const decidable = !isResolved(event) && !!selection?.proposalId && (event.workflow === "bilateral" || event.workflow === "unilateral_debris");
+    const turn = decidable ? turnOf(event, counted) : null;
+    const deciding = turn !== null;
     const required = event.requiredApprovalSides ?? [];
     const ruleVersion = event.approvalRuleVersion ?? null;
     const approvals: Partial<Record<"A" | "B", Infer<typeof sideApproval>>> = {};
