@@ -1,0 +1,82 @@
+name: Orbit service checks
+
+on:
+  pull_request:
+    paths:
+      - "services/orbit/**"
+      - ".github/workflows/orbit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/orbit/**"
+      - ".github/workflows/orbit.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/orbit
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect dependency format
+        id: layout
+        run: |
+          if [ -f uv.lock ]; then
+            manager=uv
+          elif ls requirements*.txt >/dev/null 2>&1 || [ -f pyproject.toml ]; then
+            manager=pip
+          else
+            echo "::error::services/orbit has no uv.lock, requirements*.txt or pyproject.toml"
+            exit 1
+          fi
+          if [ -z "$(find . -path ./.venv -prune -o \( -name 'test_*.py' -o -name '*_test.py' \) -print -quit)" ]; then
+            echo "::error::services/orbit has no test_*.py or *_test.py files"
+            exit 1
+          fi
+          echo "manager=$manager" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: ${{ steps.layout.outputs.manager == 'pip' && 'pip' || '' }}
+          cache-dependency-path: |
+            services/orbit/requirements*.txt
+            services/orbit/pyproject.toml
+      - if: steps.layout.outputs.manager == 'uv'
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          working-directory: services/orbit
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install dependencies
+        env:
+          MANAGER: ${{ steps.layout.outputs.manager }}
+          UV_PYTHON: "3.12"
+        run: |
+          if [ "$MANAGER" = uv ]; then
+            uv sync --frozen
+          elif ls requirements*.txt >/dev/null 2>&1; then
+            for f in requirements.txt requirements-dev.txt; do
+              if [ -f "$f" ]; then pip install -r "$f"; fi
+            done
+          else
+            extra=$(python -c "import tomllib; print('[test]' if 'test' in tomllib.load(open('pyproject.toml', 'rb')).get('project', {}).get('optional-dependencies', {}) else '')")
+            pip install -e ".$extra"
+          fi
+      - name: Run tests
+        env:
+          MANAGER: ${{ steps.layout.outputs.manager }}
+          UV_PYTHON: "3.12"
+        run: |
+          if [ "$MANAGER" = uv ]; then
+            uv run --frozen pytest
+          else
+            python -m pytest
+          fi
