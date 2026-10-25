@@ -4,7 +4,7 @@ import { v, ConvexError } from "convex/values";
 import { side } from "./lib/policyValidators";
 import { STALLED_AFTER_MS, inputKey } from "./lib/analyst";
 import { loadFacts } from "./lib/events";
-import { advocateKey, currentAssessment, currentEvidenceKey, latestAdvocate, loadCandidates } from "./lib/coordination";
+import { advocateKey, companyOf, currentAssessment, currentEvidenceKey, latestAdvocate, loadCandidates } from "./lib/coordination";
 import { checkRecommendation, evaluateCandidates, shareEvaluations } from "./lib/advocate";
 import { requireParty } from "./lib/operatorAccess";
 import { runFlags, stageOf, supersede } from "./lib/runs";
@@ -17,7 +17,8 @@ export const begin = internalMutation({
     if (!set || !event || set.state !== "open" || set.candidateRevisionIds.length === 0) return null;
     const facts = await loadFacts(ctx, event);
     if (set.evidenceKey !== inputKey(facts)) return null;
-    const companyId = side === "A" ? set.companyAId : set.companyBId;
+    const companyId = companyOf(set, side);
+    if (!companyId) return null;
     // Only this company's policy is read; the other side enters as checked shareable messages.
     const policyRow = await ctx.db.query("policies").withIndex("by_company", q => q.eq("companyId", companyId)).unique();
     const policyRevision = policyRow?.revision ?? 0;
@@ -70,7 +71,7 @@ export const finish = internalMutation({
       candidateVersion: set.version, evidenceKey: set.evidenceKey,
     });
     await ctx.db.patch(runId, { status: "succeeded", stage: undefined, finishedAt: Date.now(), stalled: false, model, usage });
-    if (context.side === "A") {
+    if (context.side === "A" && set.companyBId) {
       // B may have started before A finished, or answered while A's previous attempt failed.
       // Invalidate that response atomically and give B the newly published shared outcomes.
       const response = await latestAdvocate(ctx, run.eventId, set.companyBId);
@@ -100,14 +101,14 @@ export const list = query({
     const key = await currentEvidenceKey(ctx, set);
     const [a, b] = await Promise.all([currentAssessment(ctx, set, "A", key ?? ""), currentAssessment(ctx, set, "B", key ?? "")]);
     const candidates = await loadCandidates(ctx, set);
-    const companies = await Promise.all([ctx.db.get(set.companyAId), ctx.db.get(set.companyBId)]);
+    const companies = await Promise.all([ctx.db.get(set.companyAId), set.companyBId ? ctx.db.get(set.companyBId) : null]);
     const accepted = (value: string) => value === "feasible" || value === "preferred";
     const mutuallyAcceptable = candidates.filter(c => accepted(a?.entries.find(e => e.candidateId === c.candidateId)?.outcome ?? "") &&
       accepted(b?.entries.find(e => e.candidateId === c.candidateId)?.outcome ?? "")).map(c => c.candidateId);
     const reviewCandidates = candidates.filter(c => [a, b].every(m => m?.entries.some(e => e.candidateId === c.candidateId && e.outcome !== "infeasible"))).map(c => c.candidateId);
     const messages = await ctx.db.query("negotiationMessages").withIndex("by_event", q => q.eq("eventId", eventId)).order("desc").take(50);
     const runStates = await Promise.all([set.companyAId, set.companyBId].map(async companyId => {
-      const run = await latestAdvocate(ctx, eventId, companyId);
+      const run = companyId && await latestAdvocate(ctx, eventId, companyId);
       return run ? { status: run.status, stage: stageOf(run), startedAt: new Date(run._creationTime).toISOString(),
         lastProgressAt: new Date(run.lastProgressAt).toISOString(), errorCode: run.errorCode ?? null, errorMessage: run.errorMessage ?? null } : null;
     }));

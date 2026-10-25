@@ -19,14 +19,19 @@ export function latestAdvocate(ctx: QueryCtx, eventId: Id<"events">, companyId: 
     .eq("role", "operator_advocate").eq("companyId", companyId)).order("desc").first();
 }
 
+/** The company acting for a side; null for side B of confirmed debris. */
+export const companyOf = (set: Doc<"candidateSets">, side: Side) => side === "A" ? set.companyAId : set.companyBId;
+
 // Public-data references and a revision counter only: never include raw policy in the shared run key.
 export const advocateKey = (set: Doc<"candidateSets">, side: Side, policyRevision: number) => JSON.stringify({
   version: "advocate-v1", setId: set._id, candidateVersion: set.version,
-  evidenceKey: set.evidenceKey, side, companyId: side === "A" ? set.companyAId : set.companyBId, policyRevision,
+  evidenceKey: set.evidenceKey, side, companyId: companyOf(set, side), policyRevision,
 });
 
 export async function currentAssessment(ctx: QueryCtx, set: Doc<"candidateSets">, side: Side, evidenceKey: string) {
-  const run = await latestAdvocate(ctx, set.eventId, side === "A" ? set.companyAId : set.companyBId);
+  const companyId = companyOf(set, side);
+  if (!companyId) return null;
+  const run = await latestAdvocate(ctx, set.eventId, companyId);
   if (!run || run.status !== "succeeded") return null;
   const message = await ctx.db.query("negotiationMessages").withIndex("by_run", q => q.eq("runId", run._id)).unique();
   return message && message.candidateVersion === set.version && message.evidenceKey === evidenceKey ? message : null;

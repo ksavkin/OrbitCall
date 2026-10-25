@@ -40,8 +40,9 @@ export const agentTables = {
     .index("by_user_object", ["userId", "objectId"]),
   policies: defineTable({ companyId: v.id("companies"), revision: v.number(), satellites: v.array(satellitePolicy), updatedAt: v.number() })
     .index("by_company", ["companyId"]),
+  // companyBId is null for confirmed debris: one active operator, one Advocate, no side B (spec §4.1).
   candidateSets: defineTable({
-    eventId: v.id("events"), companyAId: v.id("companies"), companyBId: v.id("companies"),
+    eventId: v.id("events"), companyAId: v.id("companies"), companyBId: v.union(v.id("companies"), v.null()),
     version: v.number(), evidenceKey: v.string(), candidateRevisionIds: v.array(v.id("candidateRevisions")),
     state: v.union(v.literal("open"), v.literal("scheduled"), v.literal("closed")), reviewRequired: v.boolean(),
   }).index("by_event", ["eventId"]).index("by_company_a", ["companyAId"]).index("by_company_b", ["companyBId"]),
