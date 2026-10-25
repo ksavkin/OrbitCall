@@ -21,3 +21,38 @@ describe("demo launch",()=>{
  it("refuses a changed request key and hides raw upstream failures",async()=>{const {as}=await setup();vi.mocked(simulate).mockRejectedValueOnce(new Error("private token"));await expect(as().action(launch,args)).rejects.toThrow(/orbit service/);await expect(as().action(launch,{...args,name:"different"})).rejects.toThrow(/different/);expect(simulate).toHaveBeenCalledTimes(1);});
  it("does not publish after reset while the numerical request is in flight",async()=>{const {t,as}=await setup();const original=vi.mocked(simulate).getMockImplementation()!;vi.mocked(simulate).mockImplementation(async r=>{await t.run(async ctx=>{const d=(await ctx.db.query("demoRuns").first())!;await ctx.db.patch(d._id,{state:"closed",closedAt:Date.now()});});return original(r);});await expect(as().action(launch,args)).rejects.toThrow();expect(await t.run(ctx=>ctx.db.query("events").collect())).toHaveLength(0);expect(await t.run(ctx=>ctx.db.query("fleetAssignments").collect())).toHaveLength(0);});
 });
+
+it("does not publish after ownership changes without an assignment-version change",async()=>{
+ const {t,as}=await setup();
+ await t.run(async ctx=>{
+  const user=(await ctx.db.query("users").withIndex("by_token_identifier",q=>q.eq("tokenIdentifier","a")).unique())!;
+  await ctx.db.insert("fleetAssignments",{userId:user._id,objectId:"100",active:true});
+  await ctx.db.insert("satelliteOwners",{companyId:user.companyId,objectId:"100"});
+ });
+ const original=vi.mocked(simulate).getMockImplementation()!;
+ vi.mocked(simulate).mockImplementation(async r=>{
+  await t.run(async ctx=>{const owner=(await ctx.db.query("satelliteOwners").first())!;await ctx.db.delete(owner._id);});
+  return original(r);
+ });
+ await expect(as().action(launch,args)).rejects.toThrow(/ownership changed/);
+ expect(await t.run(ctx=>ctx.db.query("events").collect())).toHaveLength(0);
+ const run=await t.run(ctx=>ctx.db.query("demoRuns").first());
+ expect(JSON.parse(run!.manifest!["launch:one"] as string).state).toBe("failed");
+});
+it("ignores an earlier failed reservation if its result arrives late",async()=>{
+ const {t,as}=await setup();
+ const reservation=await as().mutation(ref<"mutation">("demoLaunch:reserve"),args);
+ const ticket={demoRunId:reservation.demoRunId,key:reservation.key};
+ await t.mutation(ref<"mutation">("demoLaunch:failed"),ticket);
+ const result=await vi.mocked(simulate).getMockImplementation()!({targetObjectId:args.targetObjectId,tcaUtc:args.tcaUtc,objectId:reservation.reservation.objectId,name:args.name});
+ await expect(t.mutation(ref<"mutation">("demoLaunch:publish"),{...ticket,result})).rejects.toThrow(/no longer pending/);
+ expect(await t.run(ctx=>ctx.db.query("events").collect())).toHaveLength(0);
+});
+it("does not mutate the reset manifest when a late upstream error arrives",async()=>{
+ const {t,as}=await setup();
+ const ticket=await as().mutation(ref<"mutation">("demoLaunch:reserve"),args);
+ await t.run(ctx=>ctx.db.patch(ticket.demoRunId,{state:"closed",closedAt:Date.now()}));
+ const before=await t.run(ctx=>ctx.db.get(ticket.demoRunId));
+ await t.mutation(ref<"mutation">("demoLaunch:failed"),{demoRunId:ticket.demoRunId,key:ticket.key});
+ expect(await t.run(ctx=>ctx.db.get(ticket.demoRunId))).toEqual(before);
+});
