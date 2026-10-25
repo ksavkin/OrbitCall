@@ -64,15 +64,17 @@ async function report(ctx: QueryCtx, args: { periodStart: string; periodEnd: str
       const verifications = await ctx.db.query("verifications").withIndex("by_event", q => q.eq("eventId", member._id)).take(101);
       if (approvals.length > 100 || logs.length > 500 || links.length > 50 || verifications.length > 100)
         fail("LIMIT_EXCEEDED", "Incident history exceeds the report limit; no partial totals were returned.");
-      coordinated ||= approvals.some(x => x.status === "approved" || x.status === "vetoed") ||
-        logs.some(x => x.actor.kind === "human" && ["message", "countered", "approved", "vetoed"].includes(x.action));
+      coordinated ||= approvals.some(x => x.demoRunId === null && (x.status === "approved" || x.status === "vetoed")) ||
+        logs.some(x => !x.simulated && x.demoRunId === null && x.actor.kind === "human" && ["message", "countered", "approved", "vetoed"].includes(x.action));
       for (const link of links) {
         const m = await ctx.db.get(link.maneuverId);
         scheduled ||= !!m && m.status === "committed" && m.demoRunId === null;
       }
       evidence.push(...verifications.filter(x => x.kind === "live" && !x.simulated && x.demoRunId === null));
     }
-    const latest = evidence.sort((x, y) => y.createdAt - x.createdAt)[0];
+    const latest = evidence.sort((x, y) => y.createdAt - x.createdAt || y._creationTime - x._creationTime)[0];
+    // The frozen verification table has no proposal/evidence pin. Preserve that uncertainty in exports.
+    if (latest) missing.set("verificationPlanLink", "Stored verification records do not identify the exact proposal revision or evidence generation they assessed.");
     for (const s of snapshot.sources) {
       if (s.name === "simulated") continue;
       const prior = sources.get(s.name) ?? { source: s.name, fromUtc: null, toUtc: null };

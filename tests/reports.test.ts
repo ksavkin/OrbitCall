@@ -59,3 +59,17 @@ describe("company report", () => {
     expect(csvCell(null)).toBe('""'); expect(csvCell("hello,world")).toBe('"hello,world"');
   });
 });
+
+it("excludes simulated coordination attached to a real event",async()=>{
+ const {t,as,eventId}=await setup();
+ await t.run(async ctx=>{
+  const user=(await ctx.db.query("users").withIndex("by_token_identifier",q=>q.eq("tokenIdentifier","https://fixture.invalid|a")).unique())!;
+  const run=await ctx.db.insert("demoRuns",{scenario:"demo",state:"open",startedBy:user._id,manifest:null,startedAt:Date.now(),closedAt:null});
+  const proposalId=await ctx.db.insert("proposals",{eventId,candidateId:"P1",label:"P1",latestRevision:1,demoRunId:run,createdAt:Date.now()});
+  await ctx.db.insert("approvals",{eventId,side:"A",status:"approved",userId:user._id,companyId:user.companyId,proposalId,revision:1,selectionGeneration:1,approvalRuleVersion:1,trajectoryPlanId:null,trajectoryPlanVersion:null,reason:null,demoRunId:run,current:true,at:Date.now()});
+  await ctx.db.insert("log",{eventId,actor:{kind:"human",userId:user._id,companyId:user.companyId,name:"A",side:"A"},action:"message",summary:"Demo discussion",texts:null,before:null,after:null,proposalId:null,revision:null,roomId:null,demoRunId:null,simulated:true,at:Date.now()});
+ });
+ expect((await as("a").query(preview,period)).eventsWithCoordination).toBe(0);
+ await t.run(async ctx=>{const row=(await ctx.db.query("log").first())!;await ctx.db.patch(row._id,{simulated:false});});
+ expect((await as("a").query(preview,period)).eventsWithCoordination).toBe(1);
+});
