@@ -1,9 +1,9 @@
 # Proposed changes for the scheduler hooks
 
-Status: proposed; the functionality edit below is not applied yet. The specification note and the issue #6
+Status: the functionality edit below is applied on `kostya/r4-scheduler-triggers`. The specification note and the issue #6
 text are still for the team to post.
 
-## Proposed for docs/functionality.md
+## Applied in docs/functionality.md
 
 1. **ROOM-9.** Adds: while the schedule worker is configured, Approve on a maneuver waits until its diff is prepared.
 
