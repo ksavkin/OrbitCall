@@ -261,7 +261,7 @@ function Report({
     <aside className="flex min-h-0 flex-col overflow-y-auto px-4 py-4">
       <div className="eyebrow">Report draft</div>
       <h2 className="mt-1 text-[13.5px] font-semibold text-white">{companyName}</h2>
-      <p className="mt-1 text-[12px] leading-[1.5] text-neutral-500">Your company only. Six months is the default period. Simulated cases are excluded, and policy values are not exported.</p>
+      <p className="mt-1 text-[12px] leading-[1.5] text-neutral-500">Your company only. Six months is the default period. Policy values are not exported.</p>
       <div className="mt-3 grid grid-cols-2 gap-2">
         <label className="block">
           <span className="mb-1 block text-[10.5px] text-muted">From, UTC</span>
@@ -312,7 +312,7 @@ function Report({
           <button className="btn mt-4 h-8 w-full gap-1.5 text-[12px] opacity-50" disabled>
             <Download size={13} /> Download CSV
           </button>
-          <p className="mt-2 text-[11.5px] leading-[1.45] text-neutral-500">CSV export arrives with the report action. It leaves out policy values and simulated cases. Review the draft before anyone uses it for a report.</p>
+          <p className="mt-2 text-[11.5px] leading-[1.45] text-neutral-500">CSV export arrives with the report action. It leaves out policy values. Review the draft before anyone uses it for a report.</p>
         </>
       )}
     </aside>

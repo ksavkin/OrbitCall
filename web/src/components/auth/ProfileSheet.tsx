@@ -60,7 +60,6 @@ function Header({ me, onClose }: { me: Me; onClose: () => void }) {
           {me.company && <span>{me.company.name}</span>}
           <span>{me.role === "operator" ? "Dispatcher" : me.role === "head_of_ops" ? "Head of operations" : "Observer"}</span>
           <span>{me.language ? `Speaks ${LANG[me.language]}` : "Language not set"}</span>
-          {me.company?.simulated && <span className="text-orange">Demo account · simulated fleet</span>}
         </div>
       </div>
       <button className="icon-btn -mr-2 h-8 w-8" onClick={onClose} aria-label="Close">

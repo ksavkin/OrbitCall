@@ -38,7 +38,9 @@ type Panel = "launch" | "reset";
 export function DemoControls() {
   const on = useLive((s) => s.flags?.demoLaunch === true);
   const me = useSession((s) => (s.backend?.status === "ok" ? s.backend.me : null));
-  if (!on || me?.role !== "operator") return null;
+  // Off the judged screens: the launch and reset panel shows only with ?controls in the URL.
+  const [asked] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).has("controls"));
+  if (!on || !asked || me?.role !== "operator") return null;
   return (
     <QueryBoundary key={me.userId}>
       <Controls assigned={me.assignedObjectIds} />

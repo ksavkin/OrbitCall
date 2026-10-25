@@ -27,6 +27,7 @@ import type * as call_messages from "../call/messages.js";
 import type * as call_presence from "../call/presence.js";
 import type * as candidates from "../candidates.js";
 import type * as catalog from "../catalog.js";
+import type * as config from "../config.js";
 import type * as coordinationHost from "../coordinationHost.js";
 import type * as crons from "../crons.js";
 import type * as demoLaunch from "../demoLaunch.js";
@@ -67,9 +68,11 @@ import type * as lib_queue from "../lib/queue.js";
 import type * as lib_rationale from "../lib/rationale.js";
 import type * as lib_runs from "../lib/runs.js";
 import type * as lib_scheduleClient from "../lib/scheduleClient.js";
+import type * as lib_seeded from "../lib/seeded.js";
 import type * as lib_tiger from "../lib/tiger.js";
 import type * as lib_tigerExport from "../lib/tigerExport.js";
 import type * as lib_validators from "../lib/validators.js";
+import type * as log from "../log.js";
 import type * as maneuvers from "../maneuvers.js";
 import type * as messages from "../messages.js";
 import type * as myQueue from "../myQueue.js";
@@ -93,9 +96,11 @@ import type * as schema_records from "../schema/records.js";
 import type * as schema_rooms from "../schema/rooms.js";
 import type * as schema_scans from "../schema/scans.js";
 import type * as schema_schedule from "../schema/schedule.js";
+import type * as seedCases from "../seedCases.js";
 import type * as session from "../session.js";
 import type * as spans from "../spans.js";
 import type * as summary from "../summary.js";
+import type * as trajectoryPlans from "../trajectoryPlans.js";
 import type * as verifications from "../verifications.js";
 
 import type {
@@ -124,6 +129,7 @@ declare const fullApi: ApiFromModules<{
   "call/presence": typeof call_presence;
   candidates: typeof candidates;
   catalog: typeof catalog;
+  config: typeof config;
   coordinationHost: typeof coordinationHost;
   crons: typeof crons;
   demoLaunch: typeof demoLaunch;
@@ -164,9 +170,11 @@ declare const fullApi: ApiFromModules<{
   "lib/rationale": typeof lib_rationale;
   "lib/runs": typeof lib_runs;
   "lib/scheduleClient": typeof lib_scheduleClient;
+  "lib/seeded": typeof lib_seeded;
   "lib/tiger": typeof lib_tiger;
   "lib/tigerExport": typeof lib_tigerExport;
   "lib/validators": typeof lib_validators;
+  log: typeof log;
   maneuvers: typeof maneuvers;
   messages: typeof messages;
   myQueue: typeof myQueue;
@@ -190,9 +198,11 @@ declare const fullApi: ApiFromModules<{
   "schema/rooms": typeof schema_rooms;
   "schema/scans": typeof schema_scans;
   "schema/schedule": typeof schema_schedule;
+  seedCases: typeof seedCases;
   session: typeof session;
   spans: typeof spans;
   summary: typeof summary;
+  trajectoryPlans: typeof trajectoryPlans;
   verifications: typeof verifications;
 }>;
 

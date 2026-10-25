@@ -127,10 +127,10 @@ function DevSwitch() {
       label={
         dev ? (
           <span>
-            Synthetic scenarios over the TLE catalog. <span className="text-muted">Click to use the real OMM mode.</span>
+            Scenarios over the TLE catalog. <span className="text-muted">Click to use the real OMM mode.</span>
           </span>
         ) : (
-          "Real mode requires backend OMM. Click for the TLE catalog and synthetic scenarios."
+          "Real mode requires backend OMM. Click for the TLE catalog and scenarios."
         )
       }
       hint="D"

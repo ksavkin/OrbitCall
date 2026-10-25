@@ -326,7 +326,6 @@ function RowFace({ row, pair: [a, b], now, review = false }: { row: EventRow; pa
         <span className="mono truncate text-[10px] text-muted">
           {fmtObjectId(a.objectId)} × {fmtObjectId(b.objectId)}
         </span>
-        {row.simulated && <span className="mono shrink-0 text-[8.5px] uppercase tracking-[0.1em] text-orange">sim</span>}
         <span className="mono tnum ml-auto shrink-0 text-[10.5px]" style={{ color: soon ? "var(--orange)" : "var(--fg-2)" }}>
           {now && Number.isFinite(tca) ? fmtCountdown(tca - now) : "—"}
         </span>
@@ -472,7 +471,6 @@ function ObjectLine({ o, dot }: { o: SpaceObject; dot: string }) {
         ) : (
           <span className="mono shrink-0 text-[10px] text-muted">{fmtObjectId(o.objectId)}</span>
         )}
-        {o.simulated && <span className="mono shrink-0 text-[8.5px] uppercase tracking-[0.1em] text-orange">sim</span>}
       </div>
       {meta && <div className="truncate pl-[13px] text-[9.5px] text-faint">{meta}</div>}
     </div>
@@ -532,11 +530,6 @@ export function SummaryView({ s, color, now }: { s: AgentSummary | undefined; co
           <Chip color="var(--green)" size="sm" icon={<ShieldCheck size={9} />}>
             Numbers checked
           </Chip>
-          {s.simulated && (
-            <Chip color="var(--orange)" size="sm">
-              Simulated incident
-            </Chip>
-          )}
           {s.agentsStalled ? (
             <Chip color="var(--orange)" size="sm" icon={<TriangleAlert size={9} />}>
               Stalled

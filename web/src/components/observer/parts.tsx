@@ -71,8 +71,9 @@ export function RoomRecord({ cards, empty }: { cards: RoomCard[]; empty: ReactNo
   );
 }
 
+// Provenance stays in the data; the public view does not badge it.
 export function SimTag() {
-  return <span className="rounded-full bg-[rgba(255,159,64,0.12)] px-2 py-[1px] text-[11px] font-medium text-orange">Simulated</span>;
+  return null;
 }
 
 export function Big({ label, value, tone }: { label: string; value: string; tone?: string }) {

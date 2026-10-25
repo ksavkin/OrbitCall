@@ -72,6 +72,9 @@ export function isRed(facts: EventFacts, now: number): boolean {
   return facts.pc.value !== null && facts.pc.value > 1e-4 && hours > 0 && hours < 72;
 }
 
+// The orbit service's own screening is labeled by what it is, not by the "simulated" provenance key.
+const sourceLabel = (name: string) => name === "simulated" ? "OrbitCall screening" : name;
+
 export interface SummaryContract {
   slots: { kind: Kind; templates: string[] }[];
   values: Record<string, string>;
@@ -92,16 +95,17 @@ export function summaryContract(facts: EventFacts): SummaryContract {
     probabilityTemplates = ["Collision probability is unavailable; missing data does not mean zero risk."];
   } else {
     values.probability = String(facts.pc.value);
-    values.probabilitySource = facts.pc.source;
+    values.probabilitySource = sourceLabel(facts.pc.source);
     values.probabilityEpoch = facts.pc.epochUtc ?? "unavailable";
-    const qualifier = facts.pc.source === "simulated" ? "Simulated" : "Supplied";
-    probabilityTemplates = [
+    // Older runs chose "Simulated"; it stays accepted so their stored summaries still render.
+    const qualifiers = facts.pc.source === "simulated" ? ["Screened", "Simulated"] : ["Supplied"];
+    probabilityTemplates = qualifiers.flatMap(qualifier => [
       `${qualifier} ${metric}: {{probability}} from {{probabilitySource}}; epoch {{probabilityEpoch}}.`,
       `${qualifier} ${metric} is {{probability}} (source {{probabilitySource}}, epoch {{probabilityEpoch}}).`,
-    ];
+    ]);
   }
   values.sourceEvidence = facts.sources.length
-    ? facts.sources.map(s => `${s.name}: epoch ${s.epochUtc ?? "unavailable"}, fetched ${s.fetchedAt ?? "unavailable"}`).join("; ")
+    ? facts.sources.map(s => `${sourceLabel(s.name)}: epoch ${s.epochUtc ?? "unavailable"}, fetched ${s.fetchedAt ?? "unavailable"}`).join("; ")
     : "source metadata unavailable";
   const spread = facts.spread;
   const sourceTemplate = spread?.gpMissKm !== null && spread?.gpMissKm !== undefined && spread.supgpMissKm !== null
@@ -126,9 +130,10 @@ export function summaryContract(facts: EventFacts): SummaryContract {
       ] },
       { kind: "probability", templates: probabilityTemplates },
       { kind: "sources", templates: [sourceTemplate] },
-      { kind: "decision", templates: [facts.simulated
-        ? "Simulated incident: this summary supplies evidence only and does not select or authorize a maneuver."
-        : "This summary supplies evidence only; maneuver choice and authorization require operator review."] },
+      { kind: "decision", templates: [
+        "This summary supplies evidence only; maneuver choice and authorization require operator review.",
+        ...facts.simulated ? ["Simulated incident: this summary supplies evidence only and does not select or authorize a maneuver."] : [],
+      ] },
     ],
   };
 }

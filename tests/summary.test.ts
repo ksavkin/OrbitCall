@@ -13,7 +13,7 @@ describe("checked five-line summary", () => {
     expect(lines[1]).toContain("0.18 km");
     expect(lines[1]).toContain("7.6 km/s");
     expect(lines[2]).toContain("0.0002");
-    expect(lines[4]).toContain("Simulated incident");
+    expect(lines[4]).toContain("require operator review");
     expect(lines.join("\n")).not.toContain("{{");
   });
 

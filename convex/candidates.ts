@@ -1,6 +1,6 @@
-import { internalMutation } from "./_generated/server";
+import { internalMutation, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { v, ConvexError } from "convex/values";
+import { v, ConvexError, type ObjectType } from "convex/values";
 import { candidate } from "./lib/policyValidators";
 import { validateCandidates } from "./lib/policies";
 import { loadFacts } from "./lib/events";
@@ -11,15 +11,18 @@ import { syncProposals } from "./lib/proposals";
 import { RESOLVED_STATUSES } from "./lib/decision";
 import type { Id } from "./_generated/dataModel";
 
-export const publish = internalMutation({
-  args: {
+const publishArgs = {
     eventId: v.id("events"), baseVersion: v.union(v.number(), v.null()), candidates: v.array(candidate), start: v.optional(v.boolean()),
     // What the candidates were computed on; an event that moved on since then is refused rather than mislabeled.
     expectedEvidenceKey: v.optional(v.string()), expectedSnapshotId: v.optional(v.string()),
     expectedOmmSnapshotId: v.optional(v.string()),
     expectedDemoRunId: v.optional(v.union(v.id("demoRuns"), v.null())),
-  },
-  handler: async (ctx, { eventId, baseVersion, candidates, start = true, expectedEvidenceKey, expectedSnapshotId, expectedOmmSnapshotId, expectedDemoRunId }) => {
+};
+
+export const publish = internalMutation({ args: publishArgs, handler: (ctx, args) => publishCandidates(ctx, args) });
+
+/** candidates.publish inside the caller's transaction (seedCases.play). */
+export async function publishCandidates(ctx: MutationCtx, { eventId, baseVersion, candidates, start = true, expectedEvidenceKey, expectedSnapshotId, expectedOmmSnapshotId, expectedDemoRunId }: ObjectType<typeof publishArgs>) {
     const event = await ctx.db.get(eventId);
     if (!event) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
     // A remote calculation can outlive its event or a burn. Recheck inside this transaction before any writes.
@@ -97,5 +100,4 @@ export const publish = internalMutation({
     for (const run of runs) if (run.status === "running" || run.status === "succeeded") await supersede(ctx, run._id);
     if (start) await ctx.scheduler.runAfter(0, internal.agents.advocate.negotiate, { eventId });
     return { version: value.version, changed: true };
-  },
-});
+}

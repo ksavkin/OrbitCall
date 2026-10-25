@@ -31,7 +31,7 @@ export function RealModeStatus() {
     : hasOmm
       ? "Pinned CelesTrak element sets named by the backend. No TLE fallback is used."
       : local
-        ? "Real satellite data appears after the OMM pipeline is connected. Turn Dev on to explore the TLE catalog and synthetic scenarios."
+        ? "Real satellite data appears after the OMM pipeline is connected. Turn Dev on to explore the TLE catalog."
         : "Real satellite data appears after the OMM pipeline is connected.";
 
   return (

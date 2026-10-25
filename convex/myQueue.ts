@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { fleetEvents, fleetIds, requireFleetScope, resolveFleet } from "./fleetQuery";
+import { seededRunForFleet } from "./seedCases";
 import { catalogRow, eventRow } from "./lib/queue";
 import { runFlags } from "./lib/runs";
 import { priorityReason, sectionOf, viewerSides, type Ranked, type Section } from "./lib/incident";
@@ -77,13 +78,17 @@ export const myQueue = query({
     // A filter on an object that has no catalog row yet can match no event.
     if (objectId !== undefined && focus === null) return [];
 
+    // Seeded demo cases (seedCases.ts) stay out of the queue until a scan finds them, then lead it.
+    const seeded = await seededRunForFleet(ctx, scope.objects.map(o => o.objectId));
+    const isSeeded = (e: Doc<"events">) => !!seeded && e.demoRunId === seeded._id;
     const events = [...await fleetEvents(ctx, ids, true), ...await fleetEvents(ctx, ids, false)]
-      .filter(e => focus === null || e.objectAId === focus || e.objectBId === focus);
+      .filter(e => focus === null || e.objectAId === focus || e.objectBId === focus)
+      .filter(e => !isSeeded(e) || e.active);
     const sections: Record<Section, Doc<"events">[]> = { active: [], data_review: [], history: [] };
     for (const event of events) sections[sectionOf(event)].push(event);
     const ordered: { event: Doc<"events">; section: Section; rank: number }[] = [];
     for (const section of ["active", "data_review", "history"] as const) {
-      sections[section].sort(comparators[section]).forEach((event, i) => ordered.push({ event, section, rank: i + 1 }));
+      sections[section].sort((a, b) => Number(isSeeded(b)) - Number(isSeeded(a)) || comparators[section](a, b)).forEach((event, i) => ordered.push({ event, section, rank: i + 1 }));
     }
     const top = ordered.slice(0, MAX_ROWS);
 
