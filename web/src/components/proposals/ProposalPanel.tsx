@@ -54,11 +54,19 @@ export function ProposalPanel({
   const me = partyOf(e, viewer);
   const rev = revisionOf(e, sel?.option);
   const selName = sel ? `${sel.label} · R${rev}` : "";
+  // the circle is this dispatcher's own choice; nothing reaches the room until Approve sends it
+  const [choice, setChoice] = useState<string | undefined>(undefined);
+  const chosen = cards.find((c) => c.option.id === (choice ?? sel?.option.id));
+  const chosenName = chosen ? `${chosen.label} · R${revisionOf(e, chosen.option)}` : "";
+  // choosing another plan than the one both sides already have in front of them is a counter: the agents recompute it
+  const counter = !!chosen && !!sel && !chosen.selected;
 
   const approve = () => {
-    if (!sel) return;
+    if (!chosen) return;
+    if (counter) return select(chosen);
     sfx.chime();
-    engine.decide(e.id, viewer, { decision: "approved", via: "approve", label: sel.label });
+    if (!sel) engine.select(e.id, viewer, chosen.option.id);
+    engine.decide(e.id, viewer, { decision: "approved", via: "approve", label: chosen.label });
   };
   const veto = () => {
     sfx.click();
@@ -87,8 +95,8 @@ export function ProposalPanel({
       {embedded ? (
         <div className="flex items-baseline gap-3 px-5 pb-3 pt-4">
           <span className="text-[15px] font-semibold tracking-[-0.01em] text-white">{readOnly ? "Plans on the table" : "Choose a plan"}</span>
-          <span className="text-[12.5px] text-neutral-500">{sel ? `${selName} selected` : "none selected yet"}</span>
-          <span className="ml-auto truncate text-[12px] text-neutral-600">{readOnly ? "Read only until your turn" : "Pick a circle to select · selecting is not approving"}</span>
+          <span className="text-[12.5px] text-neutral-500">{readOnly ? (sel ? `${sel.label} in front of both sides` : "none selected yet") : chosen ? `${chosenName} chosen` : "none chosen yet"}</span>
+          <span className="ml-auto truncate text-[12px] text-neutral-600">{readOnly ? "Read only until your turn" : "Choose a plan, then approve to send it"}</span>
         </div>
       ) : (
         <div className="flex items-start gap-3 px-5 pb-3 pt-5">
@@ -139,7 +147,7 @@ export function ProposalPanel({
                 </div>
                 <div className="text-[11.5px] text-neutral-500">Speech never decides. Confirm with a click.</div>
               </div>
-              {intentCard.selected ? (
+              {intentCard.option.id === chosen?.option.id ? (
                 <button
                   className="btn btn-primary h-8 shrink-0 gap-1.5 px-3 text-[12.5px]"
                   onClick={() => {
@@ -154,10 +162,11 @@ export function ProposalPanel({
                   className="btn btn-primary h-8 shrink-0 gap-1.5 px-3 text-[12.5px]"
                   onClick={() => {
                     clearIntent();
-                    select(intentCard);
+                    setChoice(intentCard.option.id);
+                    setLook(intentCard.option.id);
                   }}
                 >
-                  <Eye size={13} /> Select {intentCard.label} for both sides
+                  <Eye size={13} /> Choose {intentCard.label}
                 </button>
               )}
               <button className="shrink-0 text-[12px] text-neutral-500 hover:text-white" onClick={clearIntent}>
@@ -179,7 +188,12 @@ export function ProposalPanel({
             viewing={viewing?.option.id === c.option.id}
             onLook={() => setLook(c.option.id)}
             canSelect={!readOnly}
-            onSelect={() => select(c)}
+            checked={readOnly ? c.selected : chosen?.option.id === c.option.id}
+            onSelect={() => {
+              sfx.click();
+              setChoice(c.option.id);
+              setLook(c.option.id);
+            }}
           />
         ))}
       </div>
@@ -217,8 +231,8 @@ export function ProposalPanel({
             <button className="btn ml-auto h-9 gap-1.5 px-3.5 text-[13px] text-neutral-300 hover:text-red" onClick={veto}>
               <X size={13} /> Veto {sel?.label}
             </button>
-            <button className="btn btn-primary h-9 gap-1.5 px-4 text-[13px]" disabled={!sel} onClick={approve}>
-              <Check size={14} /> {sel ? `Approve ${selName}` : "Select a plan to approve"}
+            <button className="btn btn-primary h-9 gap-1.5 px-4 text-[13px]" disabled={!chosen} onClick={approve}>
+              <Check size={14} /> {!chosen ? "Choose a plan to approve" : counter ? `Propose ${chosen.label} instead` : `Approve ${chosenName}`}
             </button>
           </div>
         </>
@@ -275,6 +289,7 @@ function PlanCard({
   viewing,
   onLook,
   canSelect,
+  checked,
   onSelect,
 }: {
   e: ConjunctionEvent;
@@ -284,6 +299,8 @@ function PlanCard({
   viewing: boolean;
   onLook: () => void;
   canSelect: boolean;
+  /** This dispatcher's choice (or, read only, the shared selection): the filled circle. */
+  checked: boolean;
   onSelect: () => void;
 }) {
   const o = c.option;
@@ -298,25 +315,25 @@ function PlanCard({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.05 + index * 0.05, duration: 0.25 }}
-      className={`relative ${last ? "" : "border-b border-white/[0.06]"} ${c.selected ? "bg-white/[0.06]" : ""}`}
+      className={`relative ${last ? "" : "border-b border-white/[0.06]"} ${checked ? "bg-white/[0.06]" : ""}`}
     >
       {/* previewed: only a thin grey bar; selected: the filled radio and a light fill */}
-      {viewing && !c.selected && <span className="absolute inset-y-2 left-0 w-[2px] rounded-full bg-white/30" />}
+      {viewing && !checked && <span className="absolute inset-y-2 left-0 w-[2px] rounded-full bg-white/30" />}
       {/* the radio is the only control that selects; the row itself only previews */}
       <button
         role="radio"
-        aria-checked={c.selected}
-        aria-label={`Select ${c.label} for both sides`}
-        disabled={!canSelect || c.selected}
+        aria-checked={checked}
+        aria-label={`Choose ${c.label}`}
+        disabled={!canSelect || checked}
         onClick={() => {
-          if (canSelect && !c.selected) onSelect();
+          if (canSelect && !checked) onSelect();
         }}
         className={`group/radio absolute left-4 top-[15px] z-[1] grid h-5 w-5 place-items-center rounded-full transition-[box-shadow,background] duration-200 ${
-          c.selected ? "bg-white" : canSelect ? "shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.32)] hover:shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.8)]" : "shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.14)]"
+          checked ? "bg-white" : canSelect ? "shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.32)] hover:shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.8)]" : "shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.14)]"
         } disabled:cursor-default`}
       >
         <AnimatePresence initial={false}>
-          {c.selected ? (
+          {checked ? (
             <motion.span key="on" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={{ type: "spring", stiffness: 600, damping: 26 }} className="h-2 w-2 rounded-full bg-black" />
           ) : (
             canSelect && <span key="hover" className="h-2 w-2 rounded-full bg-white/0 transition-colors group-hover/radio:bg-white/40" />
@@ -345,7 +362,7 @@ function PlanCard({
           </span>
           <span className="tnum mt-1 block text-[12.5px] text-neutral-400">{meta}</span>
           <AnimatePresence initial={false}>
-            {(viewing || c.selected) && (
+            {(viewing || checked) && (
               <motion.span initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="block overflow-hidden">
                 <span className="mt-1 block text-[12.5px] leading-[1.5] text-neutral-500">{o.why}</span>
               </motion.span>
