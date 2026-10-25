@@ -41,6 +41,7 @@ const calls = {
   commit: makeFunctionReference<"action">("maneuvers:commit"),
   preview: makeFunctionReference<"query">("maneuvers:preview"),
   prepare: makeFunctionReference<"action">("maneuvers:prepare"),
+  syncPlans: makeFunctionReference<"mutation">("trajectoryPlans:sync"),
   recordPreview: makeFunctionReference<"mutation">("maneuvers:recordPreview"),
   prepareFailed: makeFunctionReference<"mutation">("maneuvers:recordPrepareFailure"),
   commitIntent: makeFunctionReference<"query">("maneuvers:commitIntent"),
@@ -143,7 +144,7 @@ async function context(ctx: QueryCtx, ref: Ref, approved = false, allowPast = fa
     ];
     const duplicate = (e: Doc<"events">) => Math.abs(e.tcaMs - event.tcaMs) <= 60_000 &&
       ((e.objectAId === event.objectAId && e.objectBId === event.objectBId) || (e.objectAId === event.objectBId && e.objectBId === event.objectAId));
-    const linked = others.filter(e => e._id !== event._id && e.active && e.tcaMs >= lower && e.tcaMs <= upper &&
+    const linked = others.filter(e => e._id !== event._id && e.active && !["verified", "no_action_needed"].includes(e.status ?? "") && e.tcaMs >= lower && e.tcaMs <= upper &&
       (e.demoRunId ?? null) === (event.demoRunId ?? null) && !duplicate(e));
     const plans = (await ctx.db.query("trajectoryPlans").withIndex("by_object_state", q => q.eq("objectId", candidate.movingObjectId!)).collect())
       .filter(p => p.state !== "superseded" && p.demoRunId === (event.demoRunId ?? null) && p.affectedEventIds.length > 1);
@@ -291,6 +292,15 @@ export const requestPreview = internalMutation({
     if (!s.head.entry || s.parts.some(c => c.set.state !== "open")) return { status: "skipped" as const, code: "NO_ARTIFACT" };
     const existing = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", s.intentKey)).unique();
     if (existing) return { status: "prepared" as const, code: null };
+    // Selection and plan changes may each request the same selection before its first /prepare is recorded. Only a
+    // first attempt counts (a poll has already pinned its scope); one that started reads the plan version in that same
+    // run, so only a plan change inside that window is missed. Bounded scan of the newest jobs: a miss only repeats an
+    // idempotent /prepare (same intentKey, same job id).
+    const recent = await ctx.db.system.query("_scheduled_functions").order("desc").take(200);
+    if (recent.some(job => {
+      const args = job.args[0] as { ref?: unknown; attempt?: unknown; expectedPinned?: unknown } | undefined;
+      return (job.state.kind === "pending" || job.state.kind === "inProgress") && /^maneuvers(\.js)?:prepare$/.test(job.name) && args?.attempt === 0 && args.expectedPinned === undefined && same(args.ref, ref);
+    })) return { status: "requested" as const, code: null };
     const early = s.parts.find(c => c.approvals.some(a => a.status === "approved") && c.revision.schedulePreviewHash === null);
     if (early) {
       await audit(ctx, early, "schedule_failed", "PREVIEW_AFTER_APPROVAL: An approval arrived before Factory prepared the schedule diff; select the plan again to prepare it.", { intentKey: s.intentKey });
@@ -388,6 +398,8 @@ async function reset(ctx: MutationCtx, row: Maneuver, reason: string) {
   for (const ref of row.refs) await resetEvent(ctx, row, ref, reason);
   const plan = row.trajectoryPlanId && await ctx.db.get(row.trajectoryPlanId);
   if (plan && plan.state !== "superseded" && plan.planVersion === row.trajectoryPlanVersion) await ctx.db.patch(plan._id, { state: "review_required", updatedAt: Date.now() });
+  // The refused version must not strand the mover: the next sync supersedes it and drafts or drops the plan.
+  if (row.trajectoryPlanId) await ctx.scheduler.runAfter(0, calls.syncPlans, { eventId: row.refs[0].eventId });
 }
 async function resetEvent(ctx: MutationCtx, row: Maneuver, ref: Maneuver["refs"][number], reason: string) {
   const event = await ctx.db.get(ref.eventId);

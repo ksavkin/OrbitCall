@@ -4,10 +4,12 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { inputKey } from "./analyst";
 import { loadFacts } from "./events";
 import { LEGACY_ASSIGNMENT_VERSION } from "./accounts";
+import { syncPlans } from "../trajectoryPlans";
 
 type Side = "A" | "B";
 export type ResetReason = "selection_changed" | "revision_changed" | "proposal_withdrawn" | "vetoed" |
-  "event_expired" | "policy_changed" | "assignment_revoked" | "evidence_changed" | "assignment_changed" | "authorization_changed" | "candidate_set_changed";
+  "event_expired" | "policy_changed" | "assignment_revoked" | "evidence_changed" | "assignment_changed" | "authorization_changed" | "candidate_set_changed" |
+  "trajectory_changed" | "trajectory_refused";
 type Next = { proposalId: Id<"proposals">; revision: number } | null;
 
 // Every selection write passes through advanceSelection, so the schedule preview for a newly selected plan is requested
@@ -122,6 +124,9 @@ export async function advanceSelection(ctx: MutationCtx, event: Doc<"events">, n
       proposalId: row?.proposalId ?? null, revision: row?.revision ?? null, roomId: null,
       demoRunId: event.demoRunId ?? null, simulated: event.simulated, at: now });
   }
+  // Every selection change passes here, so a shared trajectory plan follows it in the same transaction (spec §4.1
+  // "Shared maneuvers"). Its own resets of the other affected events carry a trajectory_ reason and stop here.
+  if (!reason.startsWith("trajectory_")) await syncPlans(ctx, event, { trigger: true });
   return value.generation;
 }
 
