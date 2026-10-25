@@ -323,6 +323,13 @@ function gatherEvidence(context: HostContext): Evidence {
       ...e.feasibility.map(f => f.companyId), ...e.approvals.map(a => a.companyId),
     ]),
   ]);
+  // Card labels such as "P1" are names participants use. Only letter-and-digit tokens count, so a bare number or a
+  // unit in a label never becomes an ID that would skip the number check.
+  for (const c of context.events.flatMap(e => e.candidates)) {
+    for (const [token] of c.label.normalize("NFKC").matchAll(TOKEN)) {
+      if (/\p{L}/u.test(token) && /\p{N}/u.test(token) && !UNIT_OR_ORDINAL.test(token)) ids.add(token);
+    }
+  }
   const idPrefixes = new Set([...ids].map(id => /^(.+?)[-_:]/.exec(id)?.[1].toLowerCase()).filter((p): p is string => Boolean(p)));
   const timestamps = [
     ...context.events.flatMap(e => [e.tcaUtc, ...e.candidates.flatMap(c => c.burnTimeUtc === null ? [] : [c.burnTimeUtc])]),

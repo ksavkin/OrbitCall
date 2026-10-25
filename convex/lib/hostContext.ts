@@ -40,12 +40,15 @@ async function hostEvent(ctx: QueryCtx, event: Doc<"events">): Promise<{ event: 
   // Candidate IDs repeat across events (P1, or the one wait card ID), so the host names each candidate by its
   // immutable revision row, which is unique in the room and leads back to the event and candidate.
   const hostIds = new Map(revisions.map(r => [`${r.candidateId}#${r.revision}`, r._id]));
+  // People name cards by their proposal label ("P2"); a candidate without a proposal keeps its computed label.
+  const labels = await Promise.all(revisions.map(async r => (await ctx.db.query("proposals").withIndex("by_event_candidate", q =>
+    q.eq("eventId", event._id).eq("candidateId", r.candidateId)).first())?.label ?? r.label));
   return {
     event: {
       eventId: event._id, objectAId: a.objectId, objectBId: b.objectId, debris: event.workflow === "unilateral_debris",
       tcaUtc: isoUtc(event.tcaMs), missKm: event.missKm, simulated: event.simulated,
-      candidates: revisions.map(r => ({
-        candidateId: r._id, revision: r.revision, label: r.label, kind: r.kind, movingObjectId: r.movingObjectId,
+      candidates: revisions.map((r, i) => ({
+        candidateId: r._id, revision: r.revision, label: labels[i], kind: r.kind, movingObjectId: r.movingObjectId,
         burnTimeUtc: r.burnTimeUtc, deltaVMs: r.deltaVMs, missAfterKm: r.missAfterKm,
       })),
       feasibility: set ? await sharedOutcomes(ctx, set, hostIds) : [],
