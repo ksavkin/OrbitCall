@@ -5,6 +5,7 @@ import { Check, Loader2, Maximize2, Minimize2, ShieldAlert } from "lucide-react"
 import { useMemo } from "react";
 import { fmtCountdown, fmtMiss, fmtPc, fmtWhen } from "@/lib/ops/format";
 import { AGENTS, MODELS, nodeLabel } from "@/lib/ops/roster";
+import { engine } from "@/lib/ops/engine";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent, Party, Reply, Span } from "@/lib/ops/types";
 import { sfx } from "@/lib/sound";
@@ -13,9 +14,9 @@ import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { AgentGraph } from "./AgentGraph";
 import { CallFeed } from "./AgentTrace";
-import { PcChart, ProposalCard } from "./ConjunctionQueue";
-import { Decide, Done, TheirReply, Waiting, useRoomState } from "./DecisionDock";
-import { Brief, ObjectChip, RichLine } from "./Entity";
+import { PcChart } from "./ConjunctionQueue";
+import { Decide, Done, TheirReply, Waiting, optionText, useRoomState } from "./DecisionDock";
+import { ObjectChip, RichLine } from "./Entity";
 import { ModelGlyph } from "./Glyphs";
 
 // The incident command view: one near-full-screen place for the case being worked.
@@ -69,7 +70,7 @@ export function IncidentView() {
           animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
           exit={{ opacity: 0, scale: 0.985, filter: "blur(8px)" }}
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-          className="glass glass-strong pointer-events-auto absolute inset-x-2.5 bottom-[42px] top-[58px] z-[38] flex flex-col overflow-hidden rounded-[18px]"
+          className="pointer-events-auto absolute inset-x-2.5 bottom-[42px] top-[58px] z-[38] flex flex-col overflow-hidden rounded-[18px] bg-[rgba(4,4,5,0.94)] text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_40px_100px_-30px_rgba(0,0,0,0.9)] backdrop-blur-2xl"
         >
           <Header e={e!} now={now} decide={room.state?.mode === "decide"} />
           <Stepper e={e!} />
@@ -143,7 +144,7 @@ function Stepper({ e }: { e: ConjunctionEvent }) {
             >
               {done ? <Check size={11} strokeWidth={3} /> : active && working ? <Loader2 size={11} className="animate-spin" /> : i + 1}
             </span>
-            <span className={`truncate text-[11px] ${done ? "text-fg-2" : active ? "font-semibold text-fg" : "text-faint"}`}>{label}</span>
+            <span className={`truncate text-[12px] ${done ? "text-neutral-400" : active ? "font-semibold text-white" : "text-neutral-600"}`}>{label}</span>
             {i < STEPS.length - 1 && (
               <span className="relative mx-1 h-px flex-1 overflow-hidden bg-white/[0.08]">
                 <motion.span className="absolute inset-y-0 left-0 bg-green" initial={false} animate={{ width: done ? "100%" : "0%" }} transition={{ duration: 0.6 }} />
@@ -159,87 +160,134 @@ function Stepper({ e }: { e: ConjunctionEvent }) {
 /* ------------------------------------------------------------------ case */
 
 function CaseColumn({ e }: { e: ConjunctionEvent }) {
+  const now = useNow(1000);
+  const cross = engine.encounters.get(e.id)?.crossDeg;
+  const lat = `${Math.abs(Math.round(e.where.lat))}°${e.where.lat >= 0 ? "N" : "S"}`;
+  const lon = `${Math.abs(Math.round(e.where.lon))}°${e.where.lon >= 0 ? "E" : "W"}`;
+  const red = e.risk === "red";
   return (
-    <div className="thin-scroll min-h-0 space-y-4 overflow-y-auto border-r border-white/[0.06] px-5 py-4">
-      <Block title="Incident brief" note={`${AGENTS.analyst.name} · ${MODELS[AGENTS.analyst.model].label}`}>
-        {e.summary ? (
-          <Brief e={e} lines={e.summary} skipOptions />
-        ) : (
-          <div className="shimmer py-2 text-[12px] font-medium">The Incident Analyst is reading both orbits…</div>
-        )}
-      </Block>
+    <div className="thin-scroll min-h-0 overflow-y-auto border-r border-white/[0.06] px-6 py-5">
+      {/* the headline says the whole incident in one line */}
+      <h2 className="text-[21px] font-semibold leading-[1.3] tracking-[-0.02em] text-white">
+        <ObjectChip e={e} side="a" /> passes <span className="tnum">{fmtMiss(e.missM)}</span> from <ObjectChip e={e} side="b" />
+      </h2>
+      <p className="tnum mt-2 text-[13px] leading-relaxed text-neutral-400">
+        {fmtWhen(e.tca)} · over {lat} {lon} at {Math.round(e.where.altKm)} km
+      </p>
 
-      <div className="grid grid-cols-4 overflow-hidden rounded-[10px] bg-white/[0.025] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.055)]">
-        <Metric k="Miss" v={fmtMiss(e.missM)} sub={`±${fmtMiss(e.uncertaintyM)}`} />
-        <Metric k="Pc" v={fmtPc(e.pc)} sub={e.pcSource} tone={e.risk === "red" ? "var(--red)" : "var(--amber)"} />
-        <Metric k="Speed" v={`${e.relVelKms.toFixed(1)}`} sub="km/s" />
-        <Metric k="Altitude" v={`${Math.round(e.where.altKm)}`} sub="km" />
+      <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5">
+        <Fact label="Probability of collision" value={fmtPc(e.pc)} tone={red ? "var(--red)" : "var(--amber)"} note={`${e.pcSource} · ${e.trend}`} />
+        <Fact label="Miss distance" value={fmtMiss(e.missM)} note={`±${fmtMiss(e.uncertaintyM)} between data sources`} />
+        <Fact label="Relative speed" value={`${e.relVelKms.toFixed(1)} km/s`} note={cross ? `crossing at ${cross}°` : undefined} />
+        <Fact label="Until closest approach" value={now ? fmtCountdown(e.tca - now).replace("T−", "") : "—"} note={red ? "inside the 72 h action window" : undefined} />
       </div>
 
-      <PcChart e={e} />
+      <div className="mt-6">
+        <PcChart e={e} />
+      </div>
 
-      <Block title="Parties">
+      <Section title="Analyst notes" note={`${AGENTS.analyst.name} · ${MODELS[AGENTS.analyst.model].label}`}>
+        {e.summary ? (
+          <ul className="space-y-2.5">
+            {e.summary.slice(1).map((l, i) => (
+              <li key={i} className="flex gap-2.5 text-[13.5px] leading-[1.6] text-neutral-300">
+                <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-neutral-600" />
+                <span>
+                  <RichLine e={e} text={l} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="shimmer text-[13px] font-medium">The Incident Analyst is reading both orbits…</div>
+        )}
+      </Section>
+
+      <Section title="Parties">
         <PartyList e={e} />
-      </Block>
+      </Section>
 
       {e.proposal && (
-        <div>
-          <ProposalCard e={e} p={e.proposal} />
-        </div>
+        <Section title={`Current plan · v${e.proposal.version}`}>
+          <PlanSummary e={e} />
+        </Section>
       )}
     </div>
   );
 }
 
-function Block({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
+function Fact({ label, value, note, tone }: { label: string; value: string; note?: string; tone?: string }) {
   return (
-    <section>
-      <div className="mb-2 flex items-baseline justify-between">
-        <span className="eyebrow">{title}</span>
-        {note && <span className="text-[9.5px] text-faint">{note}</span>}
+    <div>
+      <div className="text-[11.5px] text-neutral-500">{label}</div>
+      <div className="tnum mt-1 text-[24px] font-semibold leading-none tracking-[-0.025em]" style={{ color: tone ?? "#fff" }}>
+        {value}
+      </div>
+      {note && <div className="mt-1.5 text-[11.5px] text-neutral-500">{note}</div>}
+    </div>
+  );
+}
+
+function Section({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
+  return (
+    <section className="mt-7">
+      <div className="mb-3 flex items-baseline justify-between border-b border-white/[0.06] pb-2">
+        <span className="text-[12px] font-semibold text-neutral-200">{title}</span>
+        {note && <span className="text-[11px] text-neutral-600">{note}</span>}
       </div>
       {children}
     </section>
   );
 }
 
-function Metric({ k, v, sub, tone }: { k: string; v: string; sub?: string; tone?: string }) {
-  return (
-    <div className="border-l border-white/[0.055] px-2.5 py-2 first:border-l-0">
-      <div className="text-[9.5px] text-muted">{k}</div>
-      <div className="mono tnum mt-0.5 text-[14px] font-semibold" style={{ color: tone }}>
-        {v}
-      </div>
-      {sub && <div className="mono truncate text-[9px] text-faint">{sub}</div>}
-    </div>
-  );
-}
-
 function PartyList({ e }: { e: ConjunctionEvent }) {
   const parties: Party[] = e.parties ?? [];
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-3">
       {parties.map((p) => {
         const state = p.role === "affected" ? "notified" : e.approvals[p.role];
-        const color = state === "approved" || state === "notified" ? "var(--green)" : state === "vetoed" ? "var(--red)" : state === "countered" ? "var(--orange)" : "var(--muted)";
+        const label = state === "vetoed" ? "Rejected" : state === "pending" ? "Waiting" : state.charAt(0).toUpperCase() + state.slice(1);
+        const color = state === "approved" || state === "notified" ? "var(--green)" : state === "vetoed" ? "var(--red)" : state === "countered" ? "var(--orange)" : "#737373";
         return (
-          <div key={p.id} className="flex items-center gap-2.5 rounded-[9px] bg-white/[0.03] px-2.5 py-1.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]">
-            <span className="grid h-6 w-6 shrink-0 place-items-center overflow-hidden rounded-[6px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)]">
-              {p.country && <Flag code={p.country} h={24} />}
+          <div key={p.id} className="flex items-center gap-3">
+            <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
+              {p.country && <Flag code={p.country} h={28} />}
             </span>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[12px] font-medium">{p.operator.replace(/\s*\(synthetic\)/i, "")}</div>
-              <div className="text-[10px] text-muted">
+              <div className="truncate text-[13.5px] font-medium text-white">{p.operator.replace(/\s*\(synthetic\)/i, "")}</div>
+              <div className="text-[11.5px] text-neutral-500">
                 {p.role === "affected" ? "Affected operator" : `Side ${p.role.toUpperCase()}`}
                 {p.language ? ` · ${p.language}` : ""}
               </div>
             </div>
-            <span className="text-[10.5px] font-medium capitalize" style={{ color }}>
-              {state === "vetoed" ? "rejected" : state}
+            <span className="flex items-center gap-1.5 text-[12px] font-medium" style={{ color }}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+              {label}
             </span>
           </div>
         );
       })}
+      {e.b.kind === "debris" && <div className="text-[12px] text-neutral-500">Debris has no operator. This is a single-operator avoidance.</div>}
+    </div>
+  );
+}
+
+function PlanSummary({ e }: { e: ConjunctionEvent }) {
+  const p = e.proposal!;
+  const t = optionText(e, p);
+  return (
+    <div>
+      <div className="flex flex-wrap items-baseline gap-x-1.5 text-[15px] font-semibold text-white">
+        {t.verb} {t.who ? <ObjectChip e={e} side={t.who} /> : "for the next CDM"}
+        {p.action !== "wait" && <span className="tnum font-normal text-neutral-400">by {p.dvMs} m/s</span>}
+      </div>
+      <div className="tnum mt-2 flex items-baseline gap-2 text-[13px] text-neutral-400">
+        Miss <span className="text-neutral-500 line-through decoration-neutral-600">{fmtMiss(p.missBeforeM)}</span>
+        <span className="text-[18px] font-semibold text-white">{fmtMiss(p.missAfterM)}</span>
+        {p.burnAt && <span className="ml-auto">burn {fmtWhen(p.burnAt)}</span>}
+      </div>
+      <p className="mt-2 text-[13px] leading-[1.6] text-neutral-400">{p.rationale}</p>
+      {p.reason && <p className="mt-1.5 text-[12px] text-orange">Revised: {p.reason}</p>}
     </div>
   );
 }
@@ -315,7 +363,7 @@ function Live({ e }: { e: ConjunctionEvent }) {
   const shown = running ? text.slice(0, Math.ceil(text.length * Math.min(span.progress * 1.12, 1))) : text;
   return (
     <div>
-      <div className="eyebrow mb-2">Now</div>
+      <div className="mb-3 text-[12px] font-semibold text-neutral-500">Now</div>
       <div className="flex items-start gap-3">
         <span
           className="grid h-10 w-10 shrink-0 place-items-center rounded-[11px] bg-[#16171b] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.1)]"
@@ -324,17 +372,17 @@ function Live({ e }: { e: ConjunctionEvent }) {
           <ModelGlyph model={span.model ?? agent.model} size={18} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-[16px] font-semibold leading-snug tracking-[-0.01em]">
-            {agent.name} <span className="font-normal text-fg-2">{running ? VERB[span.kind] : "finished"}</span>
+          <div className="text-[18px] font-semibold leading-snug tracking-[-0.015em] text-white">
+            {agent.name} <span className="font-normal text-neutral-400">{running ? VERB[span.kind] : "finished"}</span>
           </div>
-          <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-muted">
+          <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-neutral-500">
             {running && <Loader2 size={11} className="animate-spin text-blue" />}
             {span.name} <span className="text-faint">→ {nodeLabel(span.target)}</span>
           </div>
         </div>
       </div>
       {text && (
-        <p className={`mt-3 rounded-[12px] bg-white/[0.03] p-3.5 text-[13px] leading-[1.65] text-fg-2 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)] ${running ? "caret" : ""}`}>
+        <p className={`mt-4 border-l-2 border-white/15 pl-4 text-[15px] leading-[1.7] text-neutral-200 ${running ? "caret" : ""}`}>
           <RichLine e={e} text={shown} />
         </p>
       )}
@@ -367,7 +415,7 @@ function Transcript({ e }: { e: ConjunctionEvent }) {
   const flag = (side: "a" | "b") => e.parties?.find((p) => p.role === side)?.country ?? null;
   return (
     <div className="mt-5">
-      <div className="eyebrow mb-2">Negotiation</div>
+      <div className="mb-3 border-b border-white/[0.06] pb-2 text-[12px] font-semibold text-neutral-200">Negotiation</div>
       <div className="space-y-2">
         {lines.map((l, i) => {
           const right = l.side === "b";
@@ -384,21 +432,22 @@ function Transcript({ e }: { e: ConjunctionEvent }) {
                 {f ? <Flag code={f} h={24} /> : null}
               </span>
               <div
-                className={`max-w-[82%] rounded-[12px] px-3 py-2 ${right ? "rounded-br-[4px]" : "rounded-bl-[4px]"}`}
-                style={{
-                  background: l.human ? (l.reply?.decision === "approved" ? "rgba(61,220,151,0.1)" : "rgba(255,90,79,0.1)") : right ? "rgba(255,159,64,0.07)" : "rgba(79,140,255,0.08)",
-                  boxShadow: `inset 0 0 0 1px ${l.human ? (l.reply?.decision === "approved" ? "rgba(61,220,151,0.3)" : "rgba(255,90,79,0.3)") : "rgba(255,255,255,0.07)"}`,
-                }}
+                className={`max-w-[84%] rounded-[16px] px-3.5 py-2.5 ${right ? "rounded-br-[4px]" : "rounded-bl-[4px]"}`}
+                style={{ background: l.human ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.035)" }}
               >
-                <div className="mb-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-muted">
+                <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-neutral-500">
                   {l.who}
-                  {l.human && " · person"}
+                  {l.human && (
+                    <span style={{ color: l.reply?.decision === "approved" ? "var(--green)" : l.reply?.decision === "vetoed" ? "var(--red)" : "var(--orange)" }}>
+                      · {l.reply?.decision === "approved" ? "approved" : l.reply?.decision === "vetoed" ? "rejected" : "countered"}
+                    </span>
+                  )}
                 </div>
-                <div className="text-[12px] leading-[1.55] text-fg-2">
+                <div className="text-[13.5px] leading-[1.6] text-neutral-200">
                   <RichLine e={e} text={l.text} />
                 </div>
                 {l.reply?.original && (
-                  <div className="mt-1 text-[10.5px] italic text-muted">
+                  <div className="mt-1.5 text-[12px] text-neutral-500">
                     {l.reply.lang}: “{l.reply.original}”
                   </div>
                 )}

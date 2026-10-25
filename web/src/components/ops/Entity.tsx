@@ -1,6 +1,5 @@
 "use client";
 
-import { Crosshair } from "lucide-react";
 import type { ReactNode } from "react";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent, SpaceObjectRef } from "@/lib/ops/types";
@@ -51,14 +50,16 @@ export function ObjectChip({ e, side, size = "md" }: { e: ConjunctionEvent; side
           ev.stopPropagation();
           showObjectOnGlobe(e.id, side);
         }}
-        className={`group/chip inline-flex max-w-full items-center gap-1 rounded-[6px] align-baseline font-medium text-fg transition-colors ${
-          size === "sm" ? "px-1 py-0 text-[11px]" : "px-1.5 py-px text-[12px]"
-        } bg-white/[0.06] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.1)] hover:bg-white/[0.12] hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.25)]`}
+        // reads as a name in the sentence, not a box: underline on hover says it is a link
+        className={`group/chip inline-flex max-w-full items-baseline gap-1 align-baseline font-semibold text-white underline decoration-white/20 decoration-1 underline-offset-[4px] transition-colors hover:decoration-white/80`}
       >
-        {info?.flags[0] && <Flag code={info.flags[0]} h={size === "sm" ? 8 : 9} />}
+        {info?.flags[0] && (
+          <span className="relative top-[1px] inline-block self-center overflow-hidden rounded-[2px]">
+            <Flag code={info.flags[0]} h={size === "sm" ? 9 : 10} />
+          </span>
+        )}
         <span className="truncate">{ref.name.replace(/\s*\(SYN\)$/, "")}</span>
-        {ref.synthetic && <span className="mono text-[8.5px] uppercase tracking-[0.08em] text-orange">syn</span>}
-        <Crosshair size={size === "sm" ? 9 : 10} className="shrink-0 text-muted opacity-0 transition-opacity group-hover/chip:opacity-100" />
+        {ref.synthetic && <span className="self-center text-[9px] font-medium uppercase tracking-[0.08em] text-neutral-500 no-underline">syn</span>}
       </button>
     </Tooltip>
   );
@@ -72,7 +73,7 @@ export function emphasize(line: string, key = 0): ReactNode[] {
   for (const m of line.matchAll(re)) {
     if (m.index! > last) out.push(line.slice(last, m.index));
     out.push(
-      <span key={`${key}-${m.index}`} className="mono font-semibold text-fg">
+      <span key={`${key}-${m.index}`} className="tnum font-medium text-white">
         {m[0]}
       </span>,
     );
@@ -114,11 +115,11 @@ const BRIEF_LABELS = ["What", "Risk", "Data", "Where", "Options"];
 export function Brief({ e, lines, skipOptions = false }: { e: ConjunctionEvent; lines: string[]; skipOptions?: boolean }) {
   const shown = skipOptions ? lines.slice(0, 4) : lines;
   return (
-    <dl className="space-y-2">
+    <dl className="space-y-2.5">
       {shown.map((l, i) => (
-        <div key={i} className="grid grid-cols-[52px_1fr] gap-2">
-          <dt className="pt-[3px] text-[9.5px] font-semibold uppercase tracking-[0.1em] text-muted">{BRIEF_LABELS[i] ?? i + 1}</dt>
-          <dd className="text-[12.5px] leading-[1.6] text-fg-2">
+        <div key={i} className="grid grid-cols-[56px_1fr] gap-3">
+          <dt className="pt-[2px] text-[11px] font-medium text-neutral-500">{BRIEF_LABELS[i] ?? i + 1}</dt>
+          <dd className="text-[13.5px] leading-[1.6] text-neutral-300">
             <RichLine e={e} text={l} />
           </dd>
         </div>

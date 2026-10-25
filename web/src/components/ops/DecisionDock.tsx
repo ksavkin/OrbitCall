@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowRight, Check, CheckCheck, Languages, Mic, MicOff, Send, Sparkles, X } from "lucide-react";
+import { Check, CheckCheck, Languages, Mic, MicOff, Send, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { engine } from "@/lib/ops/engine";
 import { fmtCountdown, fmtMiss, fmtWhen } from "@/lib/ops/format";
@@ -126,62 +126,63 @@ export function Decide({ e, viewer, now, embedded = false }: { e: ConjunctionEve
     else engine.decide(e.id, viewer, { decision: "countered", note, preferred: { mover: chosen!.mover, action: chosen!.action } });
   };
 
-  const primaryLabel = !isRec ? "Send this option" : text.trim() ? "Send counter" : "Approve recommended";
+  const primaryLabel = !isRec ? "Send this plan" : text.trim() ? "Send counter" : "Approve plan";
+  const recText = rec ? optionText(e, rec) : null;
 
   return (
-    <div>
-      <div className="flex items-center gap-2.5 px-4 pb-2.5 pt-3.5">
-        <span className="relative grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-[9px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)]">
-          {me?.country ? <Flag code={me.country} h={32} /> : null}
+    <div className="text-fg">
+      {/* header: the question, who asks it, how long there is */}
+      <div className="flex items-start gap-3 px-5 pb-4 pt-5">
+        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
+          {me?.country ? <Flag code={me.country} h={36} /> : null}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="pulse-dot text-orange" style={{ width: 6, height: 6 }} />
-            <span className="text-[14px] font-semibold tracking-[-0.01em]">Your decision</span>
-            <span className="mono rounded-[4px] bg-white/[0.06] px-1 text-[10px] text-fg-2">v{e.proposal?.version ?? 1}</span>
+          <div className="flex items-center gap-2 text-[11px] font-medium text-orange">
+            <span className="pulse-dot" style={{ width: 5, height: 5 }} /> Your decision · plan v{e.proposal?.version ?? 1}
           </div>
-          <div className="truncate text-[11px] text-muted">
-            {me?.operator ?? "Operator A"} · {e.id} · {e.a.name} × {e.b.name}
-          </div>
+          <div className="mt-1 text-[19px] font-semibold leading-tight tracking-[-0.02em] text-white">Choose a plan for {me?.operator.replace(/\s*\(synthetic\)/i, "") ?? "your side"}</div>
+          {recText && (
+            <div className="mt-1 text-[13px] leading-snug text-neutral-400">
+              The agents recommend: <span className="text-neutral-200">{recText.verb.toLowerCase()} {recText.who ? <ObjectChip e={e} side={recText.who} size="sm" /> : "for the next CDM"}</span>
+            </div>
+          )}
         </div>
-        <div className="text-right">
-          <div className="mono tnum text-[13px] font-medium text-orange">{now ? fmtCountdown(e.tca - now) : ""}</div>
-          <div className="text-[9.5px] text-muted">to closest approach</div>
+        <div className="shrink-0 text-right">
+          <div className="tnum text-[20px] font-semibold leading-none tracking-[-0.02em] text-white">{now ? fmtCountdown(e.tca - now).replace("T−", "") : ""}</div>
+          <div className="mt-1 text-[11px] text-neutral-500">until closest approach</div>
         </div>
       </div>
 
       {!embedded && e.summary && (
-        <div className="mx-4 rounded-[10px] bg-white/[0.035] p-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)]">
+        <div className="mx-5 mb-3 rounded-[12px] bg-white/[0.03] p-3.5">
           <Brief e={e} lines={e.summary} skipOptions />
         </div>
       )}
 
-      <div className="mt-2.5 grid grid-cols-2 gap-1.5 px-4">
+      {/* plans as full-width rows: what you do, what it costs, what you get */}
+      <div className="mx-5 overflow-hidden rounded-[14px] bg-white/[0.02] shadow-[0_0_0_1px_rgba(255,255,255,0.07)]">
         {options.map((o, i) => (
-          <OptionCard key={o.id} e={e} o={o} active={chosen?.id === o.id} index={i} onPick={() => setPick(o.id)} />
+          <OptionRow key={o.id} e={e} o={o} active={chosen?.id === o.id} index={i} last={i === options.length - 1} onPick={() => setPick(o.id)} />
         ))}
       </div>
 
-      <div className="px-4 pt-2">
+      <div className="px-5 pt-3">
         <VoiceInput value={text} onChange={setText} onEnter={() => submit("approve")} lang={me?.language ?? "English"} />
       </div>
 
-      <div className="mt-2.5 flex items-center gap-2 border-t border-white/[0.07] px-4 py-2.5">
+      <div className="mt-4 flex items-center gap-2 border-t border-white/[0.07] px-5 py-3">
         {autopilot ? (
-          <span className="flex items-center gap-1.5 text-[10.5px] text-muted">
-            <Sparkles size={11} className="text-blue" /> Autopilot answers for you in a few seconds
+          <span className="flex items-center gap-1.5 text-[12px] text-neutral-500">
+            <Sparkles size={12} className="text-blue" /> Autopilot answers in a few seconds
           </span>
         ) : (
-          <span className="text-[10.5px] text-muted">Both sides must approve the same version.</span>
+          <span className="text-[12px] text-neutral-500">{e.b.kind === "debris" ? "Only your approval is needed: debris has no operator." : "Both sides must approve the same plan."}</span>
         )}
-        <button
-          className="btn ml-auto h-8 px-3 text-[11.5px] text-red shadow-[inset_0_0_0_1px_rgba(255,90,79,0.35)] hover:bg-[rgba(255,90,79,0.1)] hover:text-red"
-          onClick={() => submit("reject")}
-        >
-          <X size={12} /> Reject
+        <button className="btn ml-auto h-9 px-3.5 text-[13px] text-neutral-300 hover:text-red" onClick={() => submit("reject")}>
+          Reject
         </button>
-        <button className="btn btn-primary h-8 px-3.5 text-[12px]" onClick={() => submit("approve")}>
-          {isRec && !text.trim() ? <Check size={12} /> : <Send size={12} />}
+        <button className="btn btn-primary h-9 px-4 text-[13px]" onClick={() => submit("approve")}>
+          {isRec && !text.trim() ? <Check size={14} /> : <Send size={13} />}
           {primaryLabel}
         </button>
       </div>
@@ -189,53 +190,52 @@ export function Decide({ e, viewer, now, embedded = false }: { e: ConjunctionEve
   );
 }
 
-function OptionCard({ e, o, active, index, onPick }: { e: ConjunctionEvent; o: DecisionOption; active: boolean; index: number; onPick: () => void }) {
+/** One plan as a row: the action in words, the cost underneath, the result on the right. */
+function OptionRow({ e, o, active, index, last, onPick }: { e: ConjunctionEvent; o: DecisionOption; active: boolean; index: number; last: boolean; onPick: () => void }) {
+  const t = optionText(e, o);
+  const lead = o.burnAt ? Math.round((e.tca - o.burnAt) / 3600_000) : null;
+  const meta =
+    o.action === "wait"
+      ? "No burn. The next conjunction message decides."
+      : `Burn ${fmtWhen(o.burnAt!)}${lead !== null ? `, ${lead} h before closest approach` : ""} · ${(o.fuelKg * 1000).toFixed(1)} g fuel`;
+  const after = o.missAfterM;
   return (
     <motion.button
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.06 + index * 0.05, duration: 0.25 }}
+      transition={{ delay: 0.05 + index * 0.05, duration: 0.25 }}
       onClick={() => {
         sfx.click();
         onPick();
       }}
       onPointerEnter={() => sfx.hover()}
-      className="group relative rounded-[11px] p-2.5 text-left transition-[background,box-shadow] duration-200"
-      style={{
-        background: active ? "rgba(255,255,255,0.075)" : "rgba(255,255,255,0.03)",
-        boxShadow: active
-          ? `inset 0 0 0 1.5px ${o.recommended ? "rgba(61,220,151,0.75)" : "rgba(255,255,255,0.55)"}, 0 8px 20px -10px rgba(0,0,0,0.8)`
-          : "inset 0 0 0 1px rgba(255,255,255,0.07)",
-      }}
+      className={`relative flex w-full items-start gap-3.5 px-4 py-3.5 text-left transition-colors duration-200 ${last ? "" : "border-b border-white/[0.06]"} ${active ? "bg-white/[0.06]" : "hover:bg-white/[0.03]"}`}
     >
-      <div className="flex items-start gap-1.5">
-        <span
-          className="mt-[2px] grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full transition-colors"
-          style={{ boxShadow: `inset 0 0 0 1.5px ${active ? "#fff" : "rgba(255,255,255,0.25)"}`, background: active ? "#fff" : "transparent" }}
-        >
-          {active && <span className="h-1.5 w-1.5 rounded-full bg-black" />}
+      {active && <motion.span layoutId={`plan-sel-${e.id}`} className="absolute inset-y-0 left-0 w-[3px] bg-white" transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
+      <span
+        className="mt-[3px] grid h-4 w-4 shrink-0 place-items-center rounded-full transition-colors"
+        style={{ boxShadow: `inset 0 0 0 1.5px ${active ? "#fff" : "rgba(255,255,255,0.28)"}`, background: active ? "#fff" : "transparent" }}
+      >
+        {active && <span className="h-1.5 w-1.5 rounded-full bg-black" />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[14.5px] font-semibold leading-snug text-white">
+          {t.verb}
+          {t.who ? <ObjectChip e={e} side={t.who} size="sm" /> : <span>for the next CDM</span>}
+          {o.action !== "wait" && <span className="tnum font-normal text-neutral-400">by {o.dvMs} m/s</span>}
+          {o.recommended && (
+            <span className="ml-1 rounded-full bg-white px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-[0.06em] text-black">Recommended</span>
+          )}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1 text-[12.5px] font-semibold leading-tight tracking-[-0.005em]">
-            {optionText(e, o).verb}
-            {optionText(e, o).who && <ObjectChip e={e} side={optionText(e, o).who!} size="sm" />}
-            {!optionText(e, o).who && <span className="text-fg-2">for the next CDM</span>}
-          </span>
-          <span className="mono mt-0.5 block text-[10px] text-muted">{optionText(e, o).sub}</span>
+        <span className="tnum mt-1 block text-[12.5px] text-neutral-400">{meta}</span>
+        <span className="mt-1 block text-[12.5px] leading-[1.5] text-neutral-500">{o.why}</span>
+      </span>
+      <span className="shrink-0 pt-0.5 text-right">
+        <span className="tnum block text-[18px] font-semibold leading-none tracking-[-0.02em]" style={{ color: o.action === "wait" ? "var(--red)" : "#fff" }}>
+          {fmtMiss(after)}
         </span>
-        {o.recommended && (
-          <span className="shrink-0 rounded-full bg-[rgba(61,220,151,0.14)] px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.08em] text-green">
-            Recommended
-          </span>
-        )}
-      </div>
-      <div className="mt-1.5 flex items-center gap-1.5 pl-5 text-[11px]">
-        <span className="mono tnum text-red">{fmtMiss(e.missM)}</span>
-        <ArrowRight size={10} className="text-muted" />
-        <span className={`mono tnum font-medium ${o.action === "wait" ? "text-red" : "text-green"}`}>{fmtMiss(o.missAfterM)}</span>
-        <span className="ml-auto text-[10px] text-muted">miss at TCA</span>
-      </div>
-      <div className="mt-1 line-clamp-2 pl-5 text-[10.5px] leading-[1.4] text-muted">{o.why}</div>
+        <span className="tnum mt-1 block text-[11px] text-neutral-500">from {fmtMiss(e.missM)}</span>
+      </span>
     </motion.button>
   );
 }
