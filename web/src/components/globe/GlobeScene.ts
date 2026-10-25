@@ -140,6 +140,9 @@ interface Fly {
   fromPos?: THREE.Vector3;
 }
 
+/** Altitude profile of the selected satellite over the next revolution (what the panel charts). */
+export type SelectedPath = { index: number; alts: Float32Array; periodMs: number; start: number };
+
 /* ----------------------------------------------------------------- scene */
 
 export class GlobeScene {
@@ -215,6 +218,8 @@ export class GlobeScene {
   private pathReq = 0;
   private selPathStart = 0;
   private selPathSpan = 0;
+  /** Last accepted path of the selected satellite; the worker answers in a few ms, before the panel can subscribe. */
+  private selPath: SelectedPath | null = null;
   private hovPathTimer: ReturnType<typeof setTimeout> | null = null;
 
   // interaction
@@ -574,10 +579,22 @@ export class GlobeScene {
     this.satMesh = makeInstanced(satelliteGeometry(), this.satIdx);
     this.debMesh = makeInstanced(debrisGeometry(), this.debIdx);
 
+    // Indices do not survive a catalog swap: drop the selection, the hover and any path in flight.
+    if (this.selected !== null) this.select(null);
+    this.setHovered(null);
+    this.selPath = null;
+    this.selPathSpan = 0;
+    this.selOrbit.userData = {};
+    this.hovOrbit.userData = {};
+
     this.worker?.terminate();
-    this.worker = new Worker(new URL("../../lib/orbit/propagate.worker.ts", import.meta.url), { type: "module" });
-    this.worker.onmessage = this.onWorkerMessage;
-    this.worker.onerror = (e) => console.error("[orbit worker]", e.message);
+    const worker = new Worker(new URL("../../lib/orbit/propagate.worker.ts", import.meta.url), { type: "module" });
+    this.worker = worker;
+    // A terminated worker can still have replies queued on the main thread; ignore them.
+    worker.onmessage = (e) => {
+      if (worker === this.worker) this.onWorkerMessage(e);
+    };
+    worker.onerror = (e) => console.error("[orbit worker]", e.message);
     this.pendingElements = objs.map((o) => o.elements);
   }
 
@@ -777,6 +794,11 @@ export class GlobeScene {
 
   /* --------------------------------------------------------------- orbits */
 
+  /** The selected satellite's last accepted path, for a subscriber that arrives after the worker replied. */
+  getSelectedPath(index: number): SelectedPath | null {
+    return this.selPath !== null && this.selPath.index === index && index === this.selected ? this.selPath : null;
+  }
+
   private requestPath(index: number, kind: "sel" | "hov") {
     if (!this.worker) return;
     const id = ++this.pathReq;
@@ -815,6 +837,7 @@ export class GlobeScene {
       const ahead = new Float32Array(m.alts.length);
       ahead.set(m.alts.subarray(half));
       ahead.set(m.alts.subarray(0, half), m.alts.length - half);
+      this.selPath = { index: m.index, alts: ahead, periodMs: m.periodMs, start: this.selPathStart };
       this.pathListeners.forEach((fn) => fn(m.index, ahead, m.periodMs, this.selPathStart));
       // ground track in the Earth-fixed frame
       const gt = new Float32Array(m.points.length);
@@ -1074,6 +1097,12 @@ export class GlobeScene {
 
   select(i: number | null, opts: { fly?: boolean } = {}) {
     if (i === this.selected && !opts.fly) return;
+    if (i !== this.selected) {
+      // Another satellite: its path is not known yet. A re-select of the same one keeps
+      // the last path, so the chart does not blink while the refresh is in flight.
+      this.selPath = null;
+      this.selPathSpan = 0;
+    }
     this.selected = i;
     this.satMat.uniforms.uSelected.value = i ?? -1;
     this.selOrbit.visible = this.selGlow.visible = false;

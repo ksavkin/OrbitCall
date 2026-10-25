@@ -17,7 +17,8 @@ Round 1 contracts are written out in full because Kostya and Adil build against 
 
 - [x] `git pull` on `main`.
 - [x] Round 0 landed in `e2c5502` (done by Andrew): root `@google/genai`, `pg`, `@types/pg`, `livekit-server-sdk`; web `livekit-client`. Backboard uses `fetch`, with no SDK.
-- [x] Dev deployment `posh-crane-978` has `ANTHROPIC_*`, `GEMINI_API_KEY`, `GEMINI_HOST_MODEL=gemini-3.8-flash`, `XAI_API_KEY`, `XAI_CHECKER_MODEL=grok-4.20-0309-reasoning`. Backboard and Tiger keys are needed from round 2.
+- [x] Provider keys are set: `ANTHROPIC_*`, `GEMINI_API_KEY`, `GEMINI_HOST_MODEL=gemini-3.8-flash`, `XAI_API_KEY`, `XAI_CHECKER_MODEL=grok-4.20-0309-reasoning`, `BACKBOARD_API_KEY`, `TIGER_DATABASE_URL`, `TIGER_DATABASE_CA`.
+- Prod (`basic-wildcat-552`) is the working deployment until the demo is deployed; the dev deployments were deleted. Local `.env.local` selects it, so `npx convex env list`, `npx convex run` and `npx convex codegen` target prod. Push code for a live test with `npx convex dev --prod --once`; a push replaces the functions on the shared deployment, so push only code that passes `npm run check`.
 - [x] Post the schema request below as a comment on #6. The schema task freezes `convex/schema.ts` for the rest of the project, and it starts as soon as the voice backend lands, possibly before any of Andrew's round 1 work merges.
 
 ### Schema request for the round 1.5 task (post on #6)

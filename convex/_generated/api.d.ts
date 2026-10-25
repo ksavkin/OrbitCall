@@ -29,6 +29,7 @@ import type * as dev from "../dev.js";
 import type * as events from "../events.js";
 import type * as http from "../http.js";
 import type * as ingest from "../ingest.js";
+import type * as lib_accounts from "../lib/accounts.js";
 import type * as lib_advocate from "../lib/advocate.js";
 import type * as lib_advocateMemory from "../lib/advocateMemory.js";
 import type * as lib_analyst from "../lib/analyst.js";
@@ -40,6 +41,7 @@ import type * as lib_coordination from "../lib/coordination.js";
 import type * as lib_events from "../lib/events.js";
 import type * as lib_host from "../lib/host.js";
 import type * as lib_operatorAccess from "../lib/operatorAccess.js";
+import type * as lib_orbitClient from "../lib/orbitClient.js";
 import type * as lib_policies from "../lib/policies.js";
 import type * as lib_policyValidators from "../lib/policyValidators.js";
 import type * as lib_queue from "../lib/queue.js";
@@ -52,6 +54,7 @@ import type * as riskMonitor from "../riskMonitor.js";
 import type * as schema_agents from "../schema/agents.js";
 import type * as schema_call from "../schema/call.js";
 import type * as schema_data from "../schema/data.js";
+import type * as session from "../session.js";
 
 import type {
   ApiFromModules,
@@ -81,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   events: typeof events;
   http: typeof http;
   ingest: typeof ingest;
+  "lib/accounts": typeof lib_accounts;
   "lib/advocate": typeof lib_advocate;
   "lib/advocateMemory": typeof lib_advocateMemory;
   "lib/analyst": typeof lib_analyst;
@@ -92,6 +96,7 @@ declare const fullApi: ApiFromModules<{
   "lib/events": typeof lib_events;
   "lib/host": typeof lib_host;
   "lib/operatorAccess": typeof lib_operatorAccess;
+  "lib/orbitClient": typeof lib_orbitClient;
   "lib/policies": typeof lib_policies;
   "lib/policyValidators": typeof lib_policyValidators;
   "lib/queue": typeof lib_queue;
@@ -104,6 +109,7 @@ declare const fullApi: ApiFromModules<{
   "schema/agents": typeof schema_agents;
   "schema/call": typeof schema_call;
   "schema/data": typeof schema_data;
+  session: typeof session;
 }>;
 
 /**
