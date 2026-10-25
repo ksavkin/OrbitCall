@@ -10,6 +10,17 @@ import { publishFailure } from "../convex/lib/publishCandidates";
 import { inputKey } from "../convex/lib/analyst";
 import { loadFacts } from "../convex/lib/events";
 
+const XAI_URL = "https://api.x.ai/v1/chat/completions";
+const grokCalls = vi.fn(async (_url: string, _init: RequestInit) => Response.json({
+  model: "grok-measured", choices: [{ finish_reason: "stop", message: { content: JSON.stringify({
+    agrees: true, reason: "The candidate facts match.", flaggedCandidateIds: [],
+  }) } }], usage: { prompt_tokens: 37, completion_tokens: 13 },
+}));
+const advocateCalls = () => vi.mocked(callClaude).mock.calls.map(([p]) => JSON.parse(p.user))
+  .filter(p => Array.isArray(p.eligibleCandidateIds) && (p.side === "A" || p.side === "B"));
+const rationaleCalls = () => vi.mocked(callClaude).mock.calls.map(([p]) => JSON.parse(p.user))
+  .filter(p => Array.isArray(p.templates) && p.facts);
+
 const FEWER = "Some burns could not be computed or an object cannot move; fewer options are shown.";
 
 // Orbit answers follow services/orbit/docs/contract.md: they echo the request, rank the grid 1..n and always carry
@@ -21,10 +32,14 @@ vi.mock("../convex/lib/claude", async importOriginal => ({
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(FIXTURE_NOW);
   vi.stubEnv("ANTHROPIC_API_KEY", "test-only-not-a-key"); vi.stubEnv("ANTHROPIC_MODEL", "test-model");
+  vi.stubEnv("XAI_API_KEY", "test-only-key"); vi.stubEnv("XAI_CHECKER_MODEL", "grok-configured");
+  grokCalls.mockClear();
   vi.stubEnv("ORBIT_SERVICE_URL", "https://orbit.test"); vi.stubEnv("ORBIT_SERVICE_TOKEN", "test-only-service-token");
   vi.mocked(callClaude).mockReset().mockImplementation(async prompt => {
     const data = JSON.parse(prompt.user);
-    return { raw: JSON.stringify({ preferredCandidateId: data.eligibleCandidateIds?.[0] ?? null }), model: "test-model", usage: { inputTokens: 1, outputTokens: 1 } };
+    const result = Array.isArray(data.templates) ? { template: data.templates[0] }
+      : { preferredCandidateId: data.eligibleCandidateIds?.[0] ?? null };
+    return { raw: JSON.stringify(result), model: "test-model", usage: { inputTokens: 1, outputTokens: 1 } };
   });
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
@@ -76,7 +91,8 @@ function mockOrbit(options: AnswerOptions = {}, before?: () => Promise<void>) {
     await before?.();
     return json(orbitAnswer(JSON.parse(String(init.body)), options));
   });
-  vi.stubGlobal("fetch", fetch);
+  // Keep Orbit request/race assertions independent from the real Grok adapter called by rationale.
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => String(url) === XAI_URL ? grokCalls(url, init) : fetch(url, init));
   return fetch;
 }
 const sent = (fetch: ReturnType<typeof mockOrbit>, i = 0) => ({ url: String(fetch.mock.calls[i][0]), body: JSON.parse(String(fetch.mock.calls[i][1].body)) });
@@ -90,6 +106,18 @@ const currentCards = (t: Backend, eventId: Id<"events">) => t.run(async ctx => {
   const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
   return Promise.all((set?.candidateRevisionIds ?? []).map(async id => (await ctx.db.get(id))!));
 });
+async function expectRationaleRound(t: Backend, eventId: Id<"events">, cards: Awaited<ReturnType<typeof currentCards>>, offset = 0, reader = "a") {
+  const drafts = rationaleCalls().slice(offset);
+  expect(drafts.map(p => [p.facts.candidateId, p.facts.revision]).sort()).toEqual(cards.map(c => [c.candidateId, c.revision]).sort());
+  expect(grokCalls.mock.calls.slice(offset).map(([, init]) => {
+    const input = JSON.parse(JSON.parse(String(init.body)).messages[1].content);
+    return [input.candidates[0].candidateId, input.candidates[0].revision];
+  }).sort()).toEqual(cards.map(c => [c.candidateId, c.revision]).sort());
+  const explanations = await identity(t, reader).query(api.lib.rationale.list, { eventId });
+  expect(explanations).toHaveLength(cards.length);
+  expect(explanations.every(row => row.rationale?.numbersChecked && row.rationale.secondModel?.agrees)).toBe(true);
+  expect(vi.mocked(callClaude).mock.calls.length).toBe(advocateCalls().length + rationaleCalls().length);
+}
 const revisions = (t: Backend, eventId: Id<"events">) =>
   t.run(async ctx => (await ctx.db.query("candidateRevisions").collect()).filter(r => r.eventId === eventId));
 const pendingAdvocateStarts = (t: Backend) => t.run(async ctx =>
@@ -153,8 +181,8 @@ describe("advocates.publishFromOrbit", () => {
     expect(set?.companyAId).not.toBeNull(); expect(set?.companyBId).not.toBeNull();
 
     await finish(t);
-    expect(callClaude).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(callClaude).mock.calls.map(([p]) => JSON.parse(p.user).side)).toEqual(["A", "B"]);
+    expect(advocateCalls().map(p => p.side)).toEqual(["A", "B"]);
+    await expectRationaleRound(t, eventId, cards);
     const shared = await identity(t, "b").query(api.advocates.list, { eventId });
     expect(shared.candidates).toHaveLength(4);
     expect(shared.runs.A?.status).toBe("succeeded"); expect(shared.runs.B?.status).toBe("succeeded");
@@ -175,8 +203,8 @@ describe("advocates.publishFromOrbit", () => {
     expect(set?.companyAId).not.toBeNull(); expect(set?.companyBId).toBeNull();
 
     await finish(t);
-    expect(callClaude).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(vi.mocked(callClaude).mock.calls[0][0].user).side).toBe("A");
+    expect(advocateCalls().map(p => p.side)).toEqual(["A"]);
+    await expectRationaleRound(t, eventId, cards);
     expect(await pendingAdvocateStarts(t)).toHaveLength(0);
     const shared = await identity(t, "a").query(api.advocates.list, { eventId });
     expect(shared.runs.A?.status).toBe("succeeded"); expect(shared.runs.B).toBeNull();
@@ -193,8 +221,8 @@ describe("advocates.publishFromOrbit", () => {
     const cards = await currentCards(t, eventId);
     expect(cards.filter(c => c.kind === "maneuver").every(c => c.movingSide === "B")).toBe(true);
     await finish(t);
-    expect(callClaude).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(vi.mocked(callClaude).mock.calls[0][0].user).side).toBe("B");
+    expect(advocateCalls().map(p => p.side)).toEqual(["B"]);
+    await expectRationaleRound(t, eventId, cards, 0, "b");
   });
 
   it("leaves the previous set and runs untouched when the orbit service fails", async () => {
@@ -210,7 +238,8 @@ describe("advocates.publishFromOrbit", () => {
     await finish(t);
     expect(await candidateSet(t, eventId)).toEqual(before);
     expect(await t.run(ctx => ctx.db.query("agentRuns").collect())).toEqual(runsBefore);
-    expect(callClaude).toHaveBeenCalledTimes(2);
+    expect(advocateCalls()).toHaveLength(2);
+    await expectRationaleRound(t, eventId, await currentCards(t, eventId));
   });
 
   it("offers only waiting when no maneuver clears the pair threshold", async () => {
@@ -429,7 +458,8 @@ describe("advocates.publishFromOrbit", () => {
     await finish(t);
     expect(await candidateSet(t, eventId)).toEqual(before);
     expect(await revisions(t, eventId)).toHaveLength(4);
-    expect(callClaude).toHaveBeenCalledTimes(2);
+    expect(advocateCalls()).toHaveLength(2);
+    await expectRationaleRound(t, eventId, await currentCards(t, eventId));
   });
 
   it("bumps changed cards against every stored revision and publishes a new version", async () => {
@@ -445,7 +475,10 @@ describe("advocates.publishFromOrbit", () => {
     expect(second[0].missAfterKm).toBe(1.6);
     expect(await revisions(t, eventId)).toHaveLength(5);
     await finish(t);
-    expect(callClaude).toHaveBeenCalledTimes(4);
+    expect(advocateCalls()).toHaveLength(4);
+    expect(rationaleCalls()).toHaveLength(first.length + second.length);
+    expect(grokCalls).toHaveBeenCalledTimes(first.length + second.length);
+    await expectRationaleRound(t, eventId, second, first.length);
     // Back to the first answer: the earlier content returns as a further revision, never a rollback.
     mockOrbit();
     expect(await publish(t, eventId)).toMatchObject({ status: "published", version: 3, changed: true });
