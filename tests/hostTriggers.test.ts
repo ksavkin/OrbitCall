@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "../convex/_generated/api";
 import type { Doc, Id } from "../convex/_generated/dataModel";
-import { putFixture } from "../convex/lib/events";
+import { loadFacts, putFixture } from "../convex/lib/events";
+import { inputKey } from "../convex/lib/analyst";
 import { checkHostOutput, MAX_EVENTS, MAX_MESSAGES, validateHostContext, type HostContext, type HostOutput } from "../convex/lib/host";
 import { FIXTURE_NOW, redEvent } from "../fixtures/events";
 import { advocateCandidates, policyA } from "../fixtures/policies";
@@ -42,6 +43,12 @@ async function seedRoom(t: Backend, { companies = 2, events = 1 } = {}): Promise
     const eventIds: Id<"events">[] = [];
     for (let k = 0; k < events; k++) {
       const eventId = await putFixture(ctx, "fixture:test", eventFacts(k, events), "red");
+      await ctx.db.patch(eventId, { workflow: "bilateral", requiredApprovalSides: ["A", "B"], approvalRuleVersion: 1 });
+      for (const [i, objectId] of [`SIM-${2000 + k}`, `SIM-${3000 + k}`].entries()) {
+        const owner = await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", objectId)).unique();
+        if (!owner) await ctx.db.insert("satelliteOwners", { objectId, companyId: companyIds[i] });
+        await ctx.db.insert("fleetAssignments", { userId: userIds[i], objectId, active: true });
+      }
       eventIds.push(eventId);
       await ctx.db.insert("roomEvents", { roomId, eventId, linkedAt: FIXTURE_NOW });
     }
@@ -59,7 +66,8 @@ async function publishSet(t: Backend, eventId: Id<"events">, companyAId: Id<"com
     for (const c of advocateCandidates.filter(c => ids.includes(c.candidateId))) {
       candidateRevisionIds.push(await ctx.db.insert("candidateRevisions", { eventId, ...c, assumptions: [...c.assumptions] }));
     }
-    await ctx.db.insert("candidateSets", { eventId, companyAId, companyBId, version: 1, evidenceKey: "fixture", candidateRevisionIds, state: "open", reviewRequired: false });
+    const evidenceKey = inputKey(await loadFacts(ctx, (await ctx.db.get(eventId))!));
+    await ctx.db.insert("candidateSets", { eventId, companyAId, companyBId, version: 1, evidenceKey, candidateRevisionIds, state: "open", reviewRequired: false });
     return candidateRevisionIds;
   });
 }
@@ -83,6 +91,25 @@ const runs = (t: Backend) => t.run(ctx => ctx.db.query("hostRuns").collect());
 const scheduledRuns = (t: Backend) => t.run(async ctx =>
   (await ctx.db.system.query("_scheduled_functions").collect()).filter(f => f.name === "hostTriggers:run"));
 const execute = (t: Backend, hostRunId: Id<"hostRuns">) => t.action(internal.hostTriggers.run, { hostRunId });
+
+async function approvedRoom(t: Backend) {
+  const room = await seedRoom(t);
+  const [eventId] = room.eventIds;
+  const [candidateRevisionId] = await publishSet(t, eventId, room.companyIds[0], room.companyIds[1]);
+  const ids = await t.run(async ctx => {
+    const proposalId = await ctx.db.insert("proposals", { eventId, candidateId: "P1", label: "P1", latestRevision: 1, demoRunId: null, createdAt: FIXTURE_NOW });
+    await ctx.db.insert("proposalRevisions", { proposalId, eventId, revision: 1, candidateRevisionId,
+      changeSummary: null, sourceMessageIds: [], rationale: null, schedulePreviewDiff: null, schedulePreviewHash: null, simulated: true, createdAt: FIXTURE_NOW });
+    const selectionId = await ctx.db.insert("selections", { eventId, proposalId, revision: 1, generation: 1,
+      by: { kind: "human", userId: room.userIds[0] }, at: FIXTURE_NOW, lastReset: null });
+    const approvalId = await ctx.db.insert("approvals", { eventId, side: "A", status: "approved", current: true,
+      userId: room.userIds[0], companyId: room.companyIds[0], proposalId, revision: 1, selectionGeneration: 1,
+      approvalRuleVersion: 1, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, at: FIXTURE_NOW });
+    return { proposalId, selectionId, approvalId };
+  });
+  await say(t, room.roomId, human(room, 0), "Please summarize the current decision.", 0);
+  return { ...room, ...ids, candidateRevisionId };
+}
 
 // A grounded host answer: one summary and one requested revision for the most urgent event.
 const grounded = (c: HostContext): HostOutput => ({
@@ -191,7 +218,11 @@ describe("Coordination Host context", () => {
     await say(t, room.roomId, human(room, 0), "We prefer the first option.", 0);
     await t.run(async ctx => {
       await ctx.db.insert("policies", { companyId: a, revision: 1, satellites: [policyA], updatedAt: FIXTURE_NOW });
-      await ctx.db.insert("negotiationMessages", { eventId: sooner, side: "A", kind: "assessment", categories: ["fuel"], entries: [
+      const set = (await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", sooner)).unique())!;
+      const runId = await ctx.db.insert("agentRuns", { eventId: sooner, inputKey: "fixture", role: "operator_advocate", companyId: a,
+        status: "succeeded", lastProgressAt: FIXTURE_NOW, stalled: false });
+      await ctx.db.insert("negotiationMessages", { eventId: sooner, side: "A", kind: "assessment", runId,
+        candidateVersion: set.version, evidenceKey: set.evidenceKey, categories: ["fuel"], entries: [
         { candidateId: "P1", revision: 1, outcome: "preferred", categories: ["fuel"], recommended: true },
         { candidateId: "P2", revision: 1, outcome: "feasible", categories: [], recommended: false },
       ] });
@@ -205,6 +236,8 @@ describe("Coordination Host context", () => {
         sourceMessageIds: [], rationale: null, schedulePreviewDiff: null, schedulePreviewHash: null, simulated: true, createdAt: FIXTURE_NOW });
       const approval = { eventId: sooner, userId: room.userIds[0], companyId: a, proposalId, revision: 1, selectionGeneration: 1,
         approvalRuleVersion: 1, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, at: FIXTURE_NOW };
+      await ctx.db.insert("selections", { eventId: sooner, proposalId, revision: 1, generation: 1,
+        by: { kind: "human", userId: room.userIds[0] }, at: FIXTURE_NOW, lastReset: null });
       await ctx.db.insert("approvals", { ...approval, side: "A", status: "approved", current: true });
       await ctx.db.insert("approvals", { ...approval, side: "B", status: "approved", current: false, userId: room.userIds[1], companyId: b });
       await ctx.db.insert("approvals", { ...approval, side: "B", status: "pending", current: true, userId: room.userIds[1], companyId: b });
@@ -693,5 +726,92 @@ describe("Room host runs", () => {
     });
     await expect(t.query(api.hostTriggers.listForRoom, { roomId: room.roomId })).rejects.toThrow("UNAUTHENTICATED");
     await expect(as(t, "outsider").query(api.hostTriggers.listForRoom, { roomId: room.roomId })).rejects.toThrow("FORBIDDEN");
+  });
+});
+
+describe("Host input freshness", () => {
+  it.each(["probability", "snapshot", "set_version", "selection", "assignment", "membership", "demo_run"] as const)(
+    "supersedes a provider response after %s changes even when displayed geometry is unchanged", async change => {
+      const t = backend();
+      const room = await approvedRoom(t);
+      const [eventId] = room.eventIds;
+      stubProviders({ onHost: () => t.run(async ctx => {
+        if (change === "probability") await ctx.db.patch(eventId, { pcValue: 0.005 });
+        if (change === "snapshot") {
+          const event = (await ctx.db.get(eventId))!;
+          const snapshot = (await ctx.db.get(event.snapshotId))!;
+          await ctx.db.patch(snapshot._id, { ommUrl: "/snapshots/new/omm.json" });
+        }
+        if (change === "set_version") {
+          const set = (await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique())!;
+          await ctx.db.patch(set._id, { version: set.version + 1 });
+        }
+        if (change === "selection") await ctx.db.patch(room.selectionId, { proposalId: null, revision: null });
+        if (change === "assignment") {
+          const assignment = (await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", room.userIds[0])).first())!;
+          await ctx.db.patch(assignment._id, { active: false });
+        }
+        if (change === "membership") {
+          const member = (await ctx.db.query("roomMembers").withIndex("by_room_user", q => q.eq("roomId", room.roomId).eq("userId", room.userIds[0])).unique())!;
+          await ctx.db.delete(member._id);
+        }
+        if (change === "demo_run") {
+          const demoRunId = await ctx.db.insert("demoRuns", { scenario: "next", state: "open", startedBy: null, manifest: null, startedAt: FIXTURE_NOW, closedAt: null });
+          await ctx.db.patch(room.roomId, { demoRunId });
+        }
+      }) });
+      const hostRunId = (await request(t, room.roomId))!;
+      await execute(t, hostRunId);
+      expect(await t.run(ctx => ctx.db.get(hostRunId))).toMatchObject({ status: "superseded", output: null });
+    });
+
+  it.each(["selection", "revision", "rule", "assignment", "company", "role", "trajectory"] as const)(
+    "does not tell Gemini an approval is current after its %s changes", async change => {
+      const t = backend();
+      const room = await approvedRoom(t);
+      expect((await context(t, room.roomId)).events[0].approvals).toHaveLength(1);
+      await t.run(async ctx => {
+        if (change === "selection") await ctx.db.patch(room.selectionId, { generation: 2 });
+        if (change === "revision") await ctx.db.patch(room.proposalId, { latestRevision: 2 });
+        if (change === "rule") await ctx.db.patch(room.eventIds[0], { approvalRuleVersion: 2 });
+        if (change === "assignment") {
+          const assignment = (await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", room.userIds[0])).first())!;
+          await ctx.db.patch(assignment._id, { active: false });
+        }
+        if (change === "company") await ctx.db.patch(room.userIds[0], { companyId: room.companyIds[1] });
+        if (change === "role") await ctx.db.patch(room.userIds[0], { role: "demo_observer" });
+        if (change === "trajectory") {
+          const trajectoryPlanId = await ctx.db.insert("trajectoryPlans", { objectId: "SIM-2000", planVersion: 2, state: "draft",
+            affectedEventIds: room.eventIds, eventRefs: [], maneuverId: null, demoRunId: null, createdAt: FIXTURE_NOW, updatedAt: FIXTURE_NOW });
+          await ctx.db.patch(room.approvalId, { trajectoryPlanId, trajectoryPlanVersion: 1 });
+        }
+      });
+      expect((await context(t, room.roomId)).events[0].approvals).toEqual([]);
+    });
+
+  it("omits old Advocate outcomes after a later run supersedes their source", async () => {
+    const t = backend();
+    const room = await approvedRoom(t);
+    const [eventId] = room.eventIds;
+    await t.run(async ctx => {
+      const set = (await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique())!;
+      const runId = await ctx.db.insert("agentRuns", { eventId, role: "operator_advocate", companyId: room.companyIds[0],
+        inputKey: "fixture", status: "superseded", lastProgressAt: FIXTURE_NOW, stalled: false });
+      await ctx.db.insert("negotiationMessages", { eventId, side: "A", kind: "assessment", runId,
+        candidateVersion: set.version, evidenceKey: set.evidenceKey, categories: [],
+        entries: [{ candidateId: "P1", revision: 1, outcome: "preferred", categories: [], recommended: true }] });
+    });
+    expect((await context(t, room.roomId)).events[0].feasibility).toEqual([]);
+  });
+
+  it("does not call a provider after a queued room closes", async () => {
+    const t = backend();
+    const room = await approvedRoom(t);
+    const calls = stubProviders();
+    const hostRunId = (await request(t, room.roomId))!;
+    await t.run(ctx => ctx.db.patch(room.roomId, { state: "closed", closedAt: FIXTURE_NOW }));
+    await execute(t, hostRunId);
+    expect(calls.host).toHaveLength(0);
+    expect(await t.run(ctx => ctx.db.get(hostRunId))).toMatchObject({ status: "superseded", output: null });
   });
 });

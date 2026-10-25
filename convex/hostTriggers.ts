@@ -28,7 +28,7 @@ async function isOpen(ctx: QueryCtx, room: Doc<"rooms">): Promise<boolean> {
 
 async function currentInputs(ctx: MutationCtx, run: Doc<"hostRuns">): Promise<boolean> {
   const room = await ctx.db.get(run.roomId);
-  if (!room || !await isOpen(ctx, room)) return false;
+  if (!room || room.demoRunId !== run.demoRunId || !await isOpen(ctx, room)) return false;
   try {
     return (await buildHostContext(ctx, room, run.trigger)).inputVersion === run.inputVersion;
   } catch {
@@ -93,7 +93,8 @@ export const load = internalQuery({
     const run = await ctx.db.get(hostRunId);
     if (!run || run.status !== "running") return null;
     const room = await ctx.db.get(run.roomId);
-    return { inputVersion: run.inputVersion, attempt: run.attempt, context: room && await buildHostContext(ctx, room, run.trigger) };
+    return { inputVersion: run.inputVersion, attempt: run.attempt,
+      context: room && room.demoRunId === run.demoRunId && await isOpen(ctx, room) ? await buildHostContext(ctx, room, run.trigger) : null };
   },
 });
 
