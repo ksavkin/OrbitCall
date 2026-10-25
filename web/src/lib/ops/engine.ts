@@ -276,6 +276,21 @@ export class Engine {
     return d;
   }
 
+  /**
+   * The first selection of a published set: plans arrive with nothing selected (the agents' pick is only marked), so
+   * picking one is not a counter. It becomes the shared selection, approvals stay pending, and the side keeps its turn.
+   */
+  select(eventId: string, side: "a" | "b", optionId: string) {
+    const ev = this.event(eventId);
+    const i = ev?.options?.findIndex((o) => o.id === optionId) ?? -1;
+    if (!ev || i < 0) return null;
+    const label = `P${i + 1}`;
+    this.update(eventId, (e) => ({ selection: { optionId, generation: (e.selection?.generation ?? 0) + 1, by: side, at: Date.now() } }));
+    useOps.setState((s) => ({ replies: [...s.replies.slice(-30), { eventId, side, decision: "countered", via: "select", label, t: Date.now() }] }));
+    this.log(side === "a" ? "humanA" : "humanB", `Selected ${label} for review`, "info", { eventId });
+    return label;
+  }
+
   decide(eventId: string, side: "a" | "b", d: Decision) {
     const key = `${eventId}:${side}`;
     const fn = this.humanWaits.get(key);
@@ -288,6 +303,12 @@ export class Engine {
       const ev = this.event(eventId);
       const i = ev?.options?.findIndex((o) => o.id === ev.selection?.optionId) ?? -1;
       if (i >= 0) d = { ...d, label: `P${i + 1}` };
+      // nothing selected yet: autopilot selects the agents' pick before it approves, as a person would
+      else if (d.decision === "approved") {
+        const pick = ev?.options?.find((o) => o.recommended) ?? ev?.options?.[0];
+        const label = pick ? this.select(eventId, side, pick.id) : null;
+        if (label) d = { ...d, label };
+      }
     }
     if (!d.via) d = { ...d, via: d.decision === "approved" ? "approve" : d.decision === "vetoed" ? "veto" : d.preferred ? "select" : "message" };
     this.update(eventId, (e) => ({ approvals: { ...e.approvals, [side]: d.decision } }));
