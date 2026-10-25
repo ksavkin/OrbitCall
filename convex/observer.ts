@@ -81,10 +81,10 @@ const publicViewResult = v.object({
   truncated: v.boolean(),
 });
 
-// Spec §4.5 Limits: Convex caps one query at 4096 index ranges, 32,000 scanned documents and 16 MiB read.
-// Each event costs up to about 120 ranges and 700 documents (501 of them `log` rows, which have no index by action
-// or intent), so the projection reads at most six whole events: about 4.3k documents and 750 ranges. The rehearsed
-// demo has two to five events.
+// Spec §4.5 Limits: at most 32,000 scanned documents per query; Convex also caps one query at 4096 index ranges
+// and 16 MiB read. Each event costs up to about 120 ranges and 700 documents (501 of them `log` rows, which have no
+// index by action or intent), so the projection reads at most six whole events: about 4.3k documents and 750 ranges.
+// The rehearsed demo has two to five events.
 const MAX_EVENTS = 6;
 
 /** Grants one provisioned observer the read of one open demo run (internal: run from the CLI or a seed). */
