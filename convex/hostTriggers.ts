@@ -113,7 +113,9 @@ function mergeChecks(checks: ({ eventId: string } & HostCheck)[]): HostCheck {
     errorCode: firstFailure?.errorCode ?? null, errorMessage: firstFailure?.errorMessage ?? null,
   };
   if (checks.every(c => c.result === null)) return { span, result: null };
-  const reason = checks.map(c => `${c.eventId}: ${c.result?.reason ?? `The check failed (${c.span.errorCode}).`}`).join("\n");
+  // The storage budget must not hide a disagreement behind long successful reasons from earlier events.
+  const ordered = [...checks.filter(c => c.result?.agrees !== true), ...checks.filter(c => c.result?.agrees === true)];
+  const reason = ordered.map(c => `${c.eventId}: ${c.result?.reason ?? `The check failed (${c.span.errorCode}).`}`).join("\n");
   return {
     span,
     result: {

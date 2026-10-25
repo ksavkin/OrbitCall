@@ -593,6 +593,20 @@ async function threeEventRoom(t: Backend) {
 }
 
 describe("Rationale checks of host summaries", () => {
+  it("keeps a late disagreement visible when the combined reasons exceed storage limits", async () => {
+    const t = backend();
+    const room = await threeEventRoom(t);
+    const flagged = (await context(t, room.roomId)).events[2].candidates[0].candidateId;
+    stubProviders({ host: summarizeAll, check: sent => sent.candidates[0].candidateId === flagged
+      ? { agrees: false, reason: "The burn time is misstated.", flaggedCandidateIds: [flagged] }
+      : { ...agreement, reason: "The supplied candidate facts support this account. ".repeat(18).trim() } });
+    const hostRunId = (await request(t, room.roomId))!;
+    await execute(t, hostRunId);
+    const row = (await t.run(ctx => ctx.db.get(hostRunId)))!;
+    expect(row.check!.result!.reason).toContain("The burn time is misstated.");
+    expect(row.check!.result!.reason.length).toBeLessThanOrEqual(1000);
+  });
+
   it("checks each summary against its own event's candidates and merges the results", async () => {
     const t = backend();
     const room = await threeEventRoom(t);
