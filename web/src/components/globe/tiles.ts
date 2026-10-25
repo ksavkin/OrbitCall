@@ -14,6 +14,8 @@ interface TileSource {
   attribution: string;
   /** Night-lights tiles blended in on the dark side. */
   lights?: boolean;
+  /** Same-grid tiles where water is drawn darker than land; a sharp lake and river mask up close. */
+  water?: (z: number, x: number, y: number) => string;
 }
 
 const IMAGERY_URL = (z: number, x: number, y: number) =>
@@ -48,7 +50,9 @@ const SOURCES: Partial<Record<ViewMode, TileSource>> = {
       `https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/${z}/${y}/${x}`,
     maxZ: 15,
     srgb: false,
-    attribution: "Hillshade Esri, USGS, NGA, NASA, CGIAR",
+    attribution: "Hillshade Esri, USGS, NGA, NASA, CGIAR · Water Esri, HERE, Garmin, © OpenStreetMap contributors",
+    // Esri's dark gray canvas: water (35, 34, 39) against land at 71–80, rivers included, to zoom 16
+    water: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/${z}/${y}/${x}`,
   },
   night: {
     id: "esri-imagery+lights-night",
@@ -86,6 +90,8 @@ const tileFragment = /* glsl */ `
   uniform sampler2D uLights;    // Black Marble tile (this tile or an ancestor)
   uniform vec4 uLightsUv;       // xy offset, zw scale into uLights
   uniform float uHasLights;
+  uniform sampler2D uWaterTile;  // sharp water mask for this tile (terrain view)
+  uniform float uHasWaterTile;
   uniform sampler2D uNight;
   uniform sampler2D uSpec;
   uniform sampler2D uTopo;
@@ -142,6 +148,26 @@ const tileFragment = /* glsl */ `
       float shade = clamp((tile.r - 0.35) * 1.6, 0.0, 1.4);
       float h = texture2D(uTopo, eq).r;
       float land = 1.0 - smoothstep(0.3, 0.7, texture2D(uSpec, eq).r); // 4K ocean mask, smooth coasts
+      if (uHasWaterTile > 0.5) {
+        // per-tile mask: lakes and rivers stay sharp at any zoom. Water is ~0.14, land ~0.29.
+        // Labels and borders printed on the canvas fall outside both bands; those pixels take
+        // the majority of their clearly classified neighbours instead of their own value.
+        float c = dot(texture2D(uWaterTile, vUv).rgb, vec3(0.299, 0.587, 0.114));
+        float water = 1.0 - smoothstep(0.17, 0.2, c);
+        if (c > 0.17 && (c < 0.255 || c > 0.36)) {
+          float w = 0.0;
+          float n = 0.0;
+          for (int i = 0; i < 8; i++) {
+            float a = float(i) * 0.785398;
+            vec3 q = texture2D(uWaterTile, vUv + vec2(cos(a), sin(a)) * (2.5 / 256.0)).rgb;
+            float l = dot(q, vec3(0.299, 0.587, 0.114));
+            if (l < 0.17) { w += 1.0; n += 1.0; }
+            else if (l > 0.255 && l < 0.36) { n += 1.0; }
+          }
+          water = n > 0.0 && w / n > 0.5 ? 1.0 : 0.0;
+        }
+        land = 1.0 - water;
+      }
       vec3 sea = mix(vec3(0.030, 0.045, 0.070), vec3(0.055, 0.080, 0.115), fres);
       vec3 ground = mix(vec3(0.11, 0.12, 0.14), vec3(0.50, 0.52, 0.55), pow(clamp(h * 1.15, 0.0, 1.0), 0.8));
       col = mix(sea, ground * (0.25 + 1.0 * shade * shade), land);
@@ -161,6 +187,7 @@ interface Tile {
   mesh: THREE.Mesh | null;
   texture: THREE.Texture | null;
   lights: THREE.Texture | null;
+  waterTex: THREE.Texture | null;
   center: THREE.Vector3; // earth-fixed unit vector
   corners: THREE.Vector3[];
   radius: number;
@@ -299,6 +326,7 @@ export class TileLayer {
         mesh: null,
         texture: null,
         lights: null,
+        waterTex: null,
         center,
         corners,
         radius: Math.max(...corners.map((c) => c.distanceTo(center))) * 1.05,
@@ -330,11 +358,19 @@ export class TileLayer {
       const src = this.source;
       this.inflight++;
       const lightsP = src.lights ? this.lightsFor(t.z, t.x, t.y) : Promise.resolve(null);
+      const waterP: Promise<THREE.Texture | null> = src.water
+        ? new Promise((resolve) => this.loader.load(src.water!(t.z, t.x, t.y), resolve, undefined, () => resolve(null)))
+        : Promise.resolve(null);
       this.loader.load(
         src.url(t.z, t.x, t.y),
         async (tex) => {
-          const lights = await lightsP;
+          const [lights, water] = await Promise.all([lightsP, waterP]);
           this.inflight--;
+          if (water) {
+            water.colorSpace = THREE.NoColorSpace; // raw grays: the mask thresholds in the shader
+            water.anisotropy = Math.min(8, this.maxAnisotropy);
+          }
+          t.waterTex = water;
           tex.colorSpace = src.srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
           tex.anisotropy = Math.min(8, this.maxAnisotropy);
           t.texture = tex;
@@ -353,6 +389,8 @@ export class TileLayer {
               uLights: { value: lights },
               uLightsUv: { value: lightsUv },
               uHasLights: { value: lights ? 1 : 0 },
+              uWaterTile: { value: water },
+              uHasWaterTile: { value: water ? 1 : 0 },
             },
             transparent: true,
           });
@@ -500,6 +538,7 @@ export class TileLayer {
       (t.mesh.material as THREE.Material).dispose();
     }
     t.texture?.dispose();
+    t.waterTex?.dispose();
   }
 
   dispose() {
