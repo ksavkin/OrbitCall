@@ -93,7 +93,7 @@ export async function writeMemory(assistantId: string, item: BackboardMemoryItem
   return { memoryId };
 }
 
-function toEntry(hit: unknown, companyId: string): BackboardMemoryEntry | null {
+function toEntry(hit: unknown, companyId: string, demoRunId: string): BackboardMemoryEntry | null {
   if (!isRecord(hit) || !nonEmpty(hit.id) || typeof hit.content !== "string") return null;
   if (typeof hit.created_at !== "string" || !Number.isFinite(Date.parse(hit.created_at))) return null;
   const at = hit.content.lastIndexOf(META_MARKER);
@@ -104,22 +104,26 @@ function toEntry(hit: unknown, companyId: string): BackboardMemoryEntry | null {
   } catch {
     return null;
   }
-  if (!isRecord(meta) || meta.companyId !== companyId || !nonEmpty(meta.sourceEventId) || !isStringArray(meta.sourceMessageIds)) return null;
+  if (!isRecord(meta) || meta.companyId !== companyId || meta.demoRunId !== demoRunId || !nonEmpty(meta.sourceEventId) || !isStringArray(meta.sourceMessageIds)) return null;
   return {
     memoryId: hit.id, text: hit.content.slice(0, at), companyId,
     sourceEventId: meta.sourceEventId, sourceMessageIds: meta.sourceMessageIds, createdAt: hit.created_at,
   };
 }
 
-export async function recallMemory(assistantId: string, input: { companyId: string; query: string; limit?: number }): Promise<BackboardRecall> {
+export async function recallMemory(
+  assistantId: string, input: { companyId: string; demoRunId: string; query: string; limit?: number },
+): Promise<BackboardRecall> {
   try {
     const limit = input.limit ?? 3;
     const path = `${assistantPath(assistantId)}/memories/search`;
-    if (!nonEmpty(input.companyId) || !nonEmpty(input.query)) throw invalid("Memory recall needs a company and a query.");
+    if (!nonEmpty(input.companyId) || !nonEmpty(input.demoRunId) || !nonEmpty(input.query)) {
+      throw invalid("Memory recall needs a company, a demo run, and a query.");
+    }
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_SEARCH_LIMIT) throw invalid(`The memory limit must be an integer from 1 to ${MAX_SEARCH_LIMIT}.`);
     const data = await request("POST", path, { query: input.query, limit });
     if (!isRecord(data) || !Array.isArray(data.memories)) throw badResponse();
-    const entries = data.memories.map(hit => toEntry(hit, input.companyId)).filter(entry => entry !== null);
+    const entries = data.memories.map(hit => toEntry(hit, input.companyId, input.demoRunId)).filter(entry => entry !== null);
     return { status: "available", entries: entries.slice(0, limit) };
   } catch (error) {
     const { code, message } = safeBackboardFailure(error);

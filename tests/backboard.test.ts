@@ -141,7 +141,7 @@ describe("recallMemory", () => {
     const fetch = stubFetch(json({
       memories: [searchHit("mem_1", stored("Prefers scheduling after the imaging pass.", meta()))], total_count: 1,
     }));
-    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", query: "imaging pass" });
+    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: "imaging pass" });
     expect(fetch).toHaveBeenCalledTimes(1);
     const { url, options, body } = call(fetch);
     expect(url).toBe(`${BASE}/assistants/${ASSISTANT}/memories/search`);
@@ -165,23 +165,33 @@ describe("recallMemory", () => {
       { content: stored("No ID.", meta()), created_at: "2026-10-24T10:30:00Z" },
       searchHit("mem_ok", stored("Kept.", meta())),
     ] }));
-    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", query: "preferences", limit: 10 });
+    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: "preferences", limit: 10 });
     expect(recall.status).toBe("available");
     if (recall.status !== "available") return;
     expect(recall.entries.map(entry => entry.memoryId)).toEqual(["mem_ok"]);
     expect(recall.entries.every(entry => entry.companyId === "company-a")).toBe(true);
   });
 
+  it("drops entries tagged with another demo run", async () => {
+    stubFetch(json({ memories: [
+      searchHit("mem_old", stored("Old run preference.", { ...meta(), demoRunId: "run-OLD" })),
+      searchHit("mem_no_run", stored("No run.", { v: 1, companyId: "company-a", sourceEventId: "event-1", sourceMessageIds: ["msg-1"] })),
+      searchHit("mem_current", stored("Current run preference.", meta())),
+    ] }));
+    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: "q" });
+    expect(recall.status === "available" && recall.entries.map(entry => entry.memoryId)).toEqual(["mem_current"]);
+  });
+
   it("keeps the full text when the text itself contains the metadata marker", async () => {
     const text = "Quoted [orbitcall-memory] marker.\n\n[orbitcall-memory] {}";
     stubFetch(json({ memories: [searchHit("mem_1", stored(text, meta()))] }));
-    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", query: "q" });
+    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: "q" });
     expect(recall.status === "available" && recall.entries[0].text).toBe(text);
   });
 
   it("caps results at the limit", async () => {
     const fetch = stubFetch(json({ memories: [1, 2, 3, 4].map(n => searchHit(`mem_${n}`, stored(`Entry ${n}.`, meta()))) }));
-    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", query: "q", limit: 2 });
+    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: "q", limit: 2 });
     expect(call(fetch).body.limit).toBe(2);
     expect(recall.status === "available" && recall.entries.map(entry => entry.memoryId)).toEqual(["mem_1", "mem_2"]);
   });
@@ -202,7 +212,7 @@ describe("recallMemory", () => {
     ["socket failure while reading the body", () => stubFetch(bodyFailure(new TypeError(`terminated ${SECRET}`))), "UPSTREAM_UNAVAILABLE"],
   ])("never throws and reports unavailable on %s", async (_, arrange, code) => {
     arrange();
-    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", query: "q" });
+    const recall = await recallMemory(ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: "q" });
     expect(recall.status).toBe("unavailable");
     if (recall.status !== "unavailable") return;
     expect(recall.reason.startsWith(`${code}: `)).toBe(true);
@@ -213,11 +223,12 @@ describe("recallMemory", () => {
   it("reports invalid input as unavailable without a request", async () => {
     const fetch = stubFetch();
     for (const [assistantId, input] of [
-      ["", { companyId: "company-a", query: "q" }],
-      [ASSISTANT, { companyId: "", query: "q" }],
-      [ASSISTANT, { companyId: "company-a", query: " " }],
-      [ASSISTANT, { companyId: "company-a", query: "q", limit: 0 }],
-      [ASSISTANT, { companyId: "company-a", query: "q", limit: 51 }],
+      ["", { companyId: "company-a", demoRunId: "run-7", query: "q" }],
+      [ASSISTANT, { companyId: "", demoRunId: "run-7", query: "q" }],
+      [ASSISTANT, { companyId: "company-a", demoRunId: " ", query: "q" }],
+      [ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: " " }],
+      [ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: "q", limit: 0 }],
+      [ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: "q", limit: 51 }],
     ] as const) {
       const recall = await recallMemory(assistantId, input);
       expect(recall.status === "unavailable" && recall.reason.startsWith("INVALID_INPUT: ")).toBe(true);
@@ -284,7 +295,7 @@ describe("Backboard failures", () => {
       vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => new Promise((_, reject) => {
         options.signal!.addEventListener("abort", () => reject(new DOMException(SECRET, "AbortError")));
       })));
-      const pending = recallMemory(ASSISTANT, { companyId: "company-a", query: "q" });
+      const pending = recallMemory(ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: "q" });
       await vi.advanceTimersByTimeAsync(14_999);
       await vi.advanceTimersByTimeAsync(1);
       expect(await pending).toEqual({ status: "unavailable", reason: expect.stringMatching(/^UPSTREAM_UNAVAILABLE: /) });
@@ -311,7 +322,7 @@ describe("approval boundary", () => {
 
   it("returns a failed recall as data the advocate shows as memory unavailable", async () => {
     stubFetch(json({ detail: SECRET }, 503));
-    const recall: BackboardRecall = await recallMemory(ASSISTANT, { companyId: "company-a", query: "q" });
+    const recall: BackboardRecall = await recallMemory(ASSISTANT, { companyId: "company-a", demoRunId: "run-7", query: "q" });
     expect(recall).toEqual({ status: "unavailable", reason: expect.any(String) });
     expect(Object.keys(recall).sort()).toEqual(["reason", "status"]);
   });
