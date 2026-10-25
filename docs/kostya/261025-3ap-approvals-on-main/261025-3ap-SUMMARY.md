@@ -2,7 +2,7 @@
 quick_id: 261025-3ap
 status: complete
 completed: 2026-10-25
-branch: claude/r2-approvals-on-main (stacked on claude/r2-rooms-on-main, PR #35)
+branch: claude/r2-approvals-on-main (merged with current main)
 key-files:
   created:
     - convex/lib/approvals.ts
@@ -33,13 +33,14 @@ The port replaces the old branch `claude/r2-approvals-chain-a21926`, which must 
 - **Cards from candidates** (`lib/proposals.ts` `syncProposals`, called inside `candidates.publish`).
   - One `proposals` row per event and candidate, and one `proposalRevisions` row per immutable candidate revision.
   - Publishing classifies an unclassified event and moves `new` or `agents` to `proposal`.
-  - A new revision of the selected card moves the selection to that revision and resets approvals (`revision_changed`). A withdrawn card clears the selection (`proposal_withdrawn`).
+  - A new revision of the selected card moves the selection to that revision and resets approvals (`revision_changed`). A withdrawn card clears the selection (`proposal_withdrawn`). Any other candidate-set change also resets the approval generation (`candidate_set_changed`).
+  - Identical publication repairs missing proposal records for existing candidate sets without duplicate negotiation or a fresh approval generation.
 - **Classification** (`lib/approvals.ts` `classifyIfUnset`).
   - Writes the workflow, required sides and rule version 1 only when they are unset, from ownership: one company owning both objects is `internal_review`, anything else `bilateral`.
   - It never infers debris and never overwrites a stored value. Confirmed debris comes from a trusted classifier, which can be ingestion or the demo seed.
 - **One reset path** (`advanceSelection`).
   - Every current approval row gets `current: false`, and the selection generation advances.
-  - When rows were reset, or on a veto, it writes `selections.lastReset` and posts "Both approvals reset." (or "Approval reset." for debris) into the open room.
+  - Resets write `selections.lastReset`, an `approvals_reset` audit record, and "Both approvals reset." (or "Approval reset." for debris) into an open linked room when one exists.
   - Switching back never revives an approval.
 - **`proposals.list`** returns the cards of the current set, with `isSelected` and `revisionCount`.
 - **`proposals.select`** is the spec's `rooms.select`, hosted in `proposals.ts` per the issue #6 precedent.
@@ -54,8 +55,8 @@ The port replaces the old branch `claude/r2-approvals-chain-a21926`, which must 
   - It resets approvals and stores a `vetoed` history row with its reason.
   - The card stays selected at a new generation, and the event returns to `agents`. The next publish brings it back to `proposal`.
 - **`approvals.status`** returns the event-keyed "P2 · R2 · A approved · waiting for B" view: the spec's `SideApproval` per required side, `turn`, `deciding`, `myTurn`, `canAct`, `lastReset`, `selected` and `selectionGeneration`.
-  - Parties and the observer can read it. The observer gets `mySide: null` and no control.
-- **`countingApprovals`** decides whether a row counts. It applies the same rules as `hostContext.recordedApprovals`: current, exact selection, rule version, demo run, a required side, the owner's operator, and an active assignment.
+  - Party operators and heads of operations can read it. Observers use only the run-authorized `observer.publicView` projection, which excludes operator identities and private state.
+- **`countingApprovals`** is shared by decision turns, status and approval completion. It requires current candidate evidence, no pending review, the exact selection and rule version, the same open demo run, a required side, current ownership and assignment, and valid shared-plan references.
   - A test proves that the Coordination Host context reports an approval written here.
 
 ## Tests
@@ -63,12 +64,12 @@ The port replaces the old branch `claude/r2-approvals-chain-a21926`, which must 
 - `tests/proposals.test.ts`: 7 tests.
 - `tests/approvals.test.ts`: 11 tests.
 - The seed is shared in `tests/decision.ts`.
-- `npm run check` passes: 26 files, 900 tests (882 on the PR #35 tip + 18).
+- Review regressions are in `tests/approvalInvalidation.test.ts`, `tests/operatorAccessHardening.test.ts` and `tests/proposalHardening.test.ts`. The final PR description records the full merged test result.
 
 ## Decisions and deviations
 
 - **Selection is a turn action.** While a decision is open, only the side in turn may change the selection (user-flow points 6-7: voice selects). Changing it resets that side's earlier approval.
-- **No silent republish after consensus.** `candidates.publish` refuses with INVALID_STATE once the event is `approved` or later (spec §4.1: a change after authorization goes to review).
+- **No silent replacement after consensus.** Changed candidate publication is refused once the event is `approved` or later. Identical publication may backfill missing card records without altering approval state. A material policy, assignment or evidence change permanently invalidates approvals; an unscheduled decision can be reviewed again, while prepared or committed artifacts stay flagged for review.
 
 - **Turns versus spec §4.1.** The spec still says "independent Approve"; Adil's user flow says turns. Turns are implemented, and the spec sentence needs the doc fix.
 - **Status gate.** Spec step 2 requires `proposal` or `communication`. `candidates.publish` is the writer of `proposal`. `communication` is left to `rooms.startWorkflow` as a seam; approving already works in `proposal`.
@@ -77,10 +78,10 @@ The port replaces the old branch `claude/r2-approvals-chain-a21926`, which must 
 
 ## Known limits and seams
 
-- **Revoke then re-assign.** Revoking an approver's assignment stops their row from counting. Re-assigning them makes it count again, because the row stores no assignment version. The scheduler's pinned `assignmentVersions` on `maneuvers` is the guard at commit time.
-- **`decisionTurn`** uses the looser rule: current, exact selection and rule version. `countingApprovals` adds owner and assignment. If an approver loses their assignment, the turn moves to B while A is not counted. A newly assigned A operator can still approve, because a null turn is allowed.
+- **Responsibility changes are permanent resets.** Assignment, role and ownership writers invalidate affected approvals in the same transaction. Restoring access requires a fresh human checkmark; previous rows remain historical.
+- **One validity rule for turns and agreement.** A replacement operator gets the first outstanding required side's turn. A stale or revoked approval cannot advance the turn while appearing pending in status.
 - **Not wired yet:**
-  - the `log` audit rows for select, approve, veto and reset;
+  - the `log` audit rows for select, approve and veto (reset audit rows are implemented);
   - scheduling the agents' revision after a veto;
   - `rooms.startWorkflow` setting `communication`;
   - the hand-copied `approvalStatus` and `proposalCard` types in `web/src/lib/backend/types.ts` for Adil.
