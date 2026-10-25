@@ -3,6 +3,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { CheckCheck, Languages, Mic, MicOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLive, useRealMode } from "@/lib/backend/live";
+import type { ApprovalStatus } from "@/lib/backend/types";
 import { fmtWhen } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent, DecisionOption, Party, Reply } from "@/lib/ops/types";
@@ -18,6 +20,7 @@ import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 // Then the room: waiting for the other side, their reply with its translation, the result.
 
 type Mode = "decide" | "waiting" | "reply" | "done";
+type RoomState = { mode: Mode; mine?: Reply; theirs?: Reply };
 
 /** "Raise STARLINK-3741" plus the burn details on a second line, so similar options never read the same. */
 export function optionText(e: ConjunctionEvent, o: Pick<DecisionOption, "mover" | "action" | "dvMs" | "burnAt">) {
@@ -34,15 +37,22 @@ function partyOf(e: ConjunctionEvent, side: "a" | "b"): Party | undefined {
   return e.parties?.find((p) => p.role === side);
 }
 
-/** Where the room stands for the person at this screen: deciding, waiting, reading a reply, or done. */
+/**
+ * Where the room stands for the person at this screen: deciding, waiting, reading a reply, or done. In real mode the
+ * side and the turn come from approvals.status, never from the simulator's prompts and replies.
+ */
 export function useRoomState(e: ConjunctionEvent | undefined, now: number) {
+  const real = useRealMode();
+  const status = useLive((s) => (e && s.approvals?.eventId === e.id ? s.approvals : undefined));
   const actAs = useOps((s) => s.actAs);
   const humans = useOps((s) => s.humans);
   const replies = useOps((s) => s.replies);
-  const viewer: "a" | "b" = actAs ?? "a";
+  const mySide = real ? status?.mySide : null;
+  const viewer: "a" | "b" = mySide ? (mySide === "A" ? "a" : "b") : (actAs ?? "a");
   const other: "a" | "b" = viewer === "a" ? "b" : "a";
-  const state = useMemo(() => {
+  const state = useMemo((): RoomState | null => {
     if (!e) return null;
+    if (real) return status ? liveRoomState(status, viewer) : null;
     const prompt = humans.find((h) => h.eventId === e.id && h.side === viewer);
     const mine = [...replies].reverse().find((r) => r.eventId === e.id && r.side === viewer);
     const theirs = [...replies].reverse().find((r) => r.eventId === e.id && r.side === other);
@@ -54,8 +64,19 @@ export function useRoomState(e: ConjunctionEvent | undefined, now: number) {
       mode = "waiting";
     else if (mine && ["approved", "scheduled"].includes(e.status) && now - Math.max(mine.t, theirs?.t ?? 0) < 9000) mode = "done";
     return mode ? { mode, mine, theirs } : null;
-  }, [e, humans, replies, viewer, other, now]);
+  }, [e, real, status, humans, replies, viewer, other, now]);
   return { state, viewer, other };
+}
+
+/** Real mode: decide on my turn, wait once my side approved, done once every required side approved. */
+function liveRoomState(s: ApprovalStatus, viewer: "a" | "b"): RoomState | null {
+  if (s.allRequiredApproved) return { mode: "done" };
+  if (!s.selected) return null;
+  if (s.myTurn) return { mode: "decide" };
+  const mine = s.mySide ? s.approvals[s.mySide] : undefined;
+  if (!s.deciding || mine?.status !== "approved" || !mine.at) return null;
+  const t = Date.parse(mine.at);
+  return { mode: "waiting", mine: { eventId: s.eventId, side: viewer, decision: "approved", via: "approve", label: s.selected.label, version: s.selected.revision, t } };
 }
 
 export function DecisionDock() {
@@ -285,7 +306,18 @@ export function TheirReply({ e, r }: { e: ConjunctionEvent; r: Reply }) {
   );
 }
 
+/** Real mode: what follows agreement, from the event status. Scheduling is never execution. */
+function agreedNote(status: ConjunctionEvent["status"]) {
+  if (status === "scheduled") return "Scheduled. Not evidence of execution.";
+  if (status === "monitoring") return "Agreed to wait; monitoring continues.";
+  return "Agreed. The case shows the scheduling status.";
+}
+
 export function Done({ e }: { e: ConjunctionEvent }) {
+  const real = useRealMode();
+  // one required side (debris) is "Approved", never "Both approved"
+  const sides = useLive((s) => (s.approvals?.eventId === e.id ? s.approvals.requiredApprovalSides.length : 0));
+  const title = real && sides < 2 ? "Approved" : "Both approved";
   return (
     <div className="flex items-center gap-3 px-4 py-3.5">
       <motion.span
@@ -297,9 +329,13 @@ export function Done({ e }: { e: ConjunctionEvent }) {
         <CheckCheck size={18} />
       </motion.span>
       <div className="min-w-0 flex-1">
-        <div className="text-[13.5px] font-semibold tracking-[-0.01em] text-green">Both approved</div>
+        <div className="text-[13.5px] font-semibold tracking-[-0.01em] text-green">{title}</div>
         <div className="text-[11px] text-muted">
-          {e.status === "scheduled" ? "Scheduled and checked against the catalog. No new conjunctions." : "Writing the maneuver and re-screening the whole catalog…"}
+          {real
+            ? agreedNote(e.status)
+            : e.status === "scheduled"
+              ? "Scheduled and checked against the catalog. No new conjunctions."
+              : "Writing the maneuver and re-screening the whole catalog…"}
         </div>
       </div>
     </div>
