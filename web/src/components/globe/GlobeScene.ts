@@ -12,6 +12,7 @@ import { WeatherLayers, llToVec } from "./weather";
 import { DensityLayers, type AltitudeBin } from "./density";
 import { HeroSatellite } from "./hero";
 import { ConjunctionLayer } from "./conjunctions";
+import { kepler } from "@/lib/ops/encounter";
 import { lineMaterial } from "./lines";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
@@ -33,6 +34,10 @@ import {
 
 const MU = MU_EARTH / EARTH_RADIUS_KM ** 3; // earth radii^3 / s^2
 const TEX = "/textures/";
+/** Lowest camera distance from Earth's center, in Earth radii: 3 km above the surface, under the terrain zoom limit. */
+const MIN_CAMERA_R = 1 + 3 / EARTH_RADIUS_KM;
+/** Past this many simulated seconds since the last sample, positions use an exact two-body step. */
+const KEPLER_AFTER_S = 20;
 
 export interface ScreenPoint {
   x: number;
@@ -234,6 +239,8 @@ export class GlobeScene {
   private textures = new Map<string, THREE.Texture>();
   private tmp = new THREE.Vector3();
   private tmp2 = new THREE.Vector3();
+  private tmp3 = new THREE.Vector3();
+  private followTurn = new THREE.Quaternion();
   private projV = new THREE.Vector3();
 
   constructor(container: HTMLElement, events: SceneEvents) {
@@ -719,6 +726,14 @@ export class GlobeScene {
       py = this.samplePos[o + 1],
       pz = this.samplePos[o + 2];
     const dt = this.dtSec();
+    // The second-order step is exact enough for seconds. At fast playback the gap to the next sample is a
+    // large part of an orbit, where it runs away (ISS "at 40,000 km", the follow camera flying off to NaN),
+    // so longer gaps take an exact two-body step instead.
+    if (Math.abs(dt) > KEPLER_AFTER_S) {
+      const R = EARTH_RADIUS_KM;
+      const { r } = kepler([px * R, py * R, pz * R], [this.sampleVel[o] * R, this.sampleVel[o + 1] * R, this.sampleVel[o + 2] * R], dt);
+      if (r.every(Number.isFinite)) return out.set(r[0] / R, r[1] / R, r[2] / R);
+    }
     const r = Math.hypot(px, py, pz) || 1;
     const k = (-MU / (r * r * r)) * 0.5 * dt * dt;
     return out.set(
@@ -739,9 +754,15 @@ export class GlobeScene {
     const o = i * 3;
     const dt = this.dtSec();
     const r = p.length();
-    const vx = this.sampleVel[o] - (MU / r ** 3) * p.x * dt;
-    const vy = this.sampleVel[o + 1] - (MU / r ** 3) * p.y * dt;
-    const vz = this.sampleVel[o + 2] - (MU / r ** 3) * p.z * dt;
+    let vx = this.sampleVel[o] - (MU / r ** 3) * p.x * dt;
+    let vy = this.sampleVel[o + 1] - (MU / r ** 3) * p.y * dt;
+    let vz = this.sampleVel[o + 2] - (MU / r ** 3) * p.z * dt;
+    if (Math.abs(dt) > KEPLER_AFTER_S) {
+      const R = EARTH_RADIUS_KM;
+      const s0 = this.samplePos;
+      const v = kepler([s0[o] * R, s0[o + 1] * R, s0[o + 2] * R], [this.sampleVel[o] * R, this.sampleVel[o + 1] * R, this.sampleVel[o + 2] * R], dt).v;
+      if (v.every(Number.isFinite)) [vx, vy, vz] = [v[0] / R, v[1] / R, v[2] / R];
+    }
     const sun = this.satMat.uniforms.uSunDir.value as THREE.Vector3;
     const along = p.dot(sun);
     const perp = this.tmp2.copy(sun).multiplyScalar(along).sub(p).length();
@@ -1295,7 +1316,8 @@ export class GlobeScene {
     if (!d) return;
     const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
     if (moved > 5 || performance.now() - d.t > 600) return;
-    if (this.hovered !== null) this.select(this.hovered, { fly: false });
+    // a click does what picking from search does: fly to the satellite and keep it centered
+    if (this.hovered !== null) this.select(this.hovered, { fly: true });
     else if (!this.following) this.select(null);
   };
 
@@ -1598,9 +1620,13 @@ export class GlobeScene {
     }
 
     if (satPos && this.following) {
-      // carry the camera along with the satellite
-      const delta = this.tmp2.copy(satPos).sub(this.followPrev);
-      if (this.followPrev.lengthSq() > 0) this.camera.position.add(delta);
+      // Carry the camera in the satellite's own frame: move it with the satellite and turn the offset by the
+      // same angle the satellite turned around Earth. A plain translation keeps the offset fixed in space, so
+      // a quarter orbit later "above and behind" points at the ground and the camera ends up inside Earth.
+      if (this.followPrev.lengthSq() > 0) {
+        const turn = this.followTurn.setFromUnitVectors(this.tmp2.copy(this.followPrev).normalize(), this.tmp3.copy(satPos).normalize());
+        this.camera.position.sub(this.followPrev).applyQuaternion(turn).add(satPos);
+      }
       target.copy(satPos);
       this.followPrev.copy(satPos);
     } else if (satPos) {
@@ -1621,6 +1647,8 @@ export class GlobeScene {
     const next = floor + nextAlt;
     offset.setLength(next);
     this.camera.position.copy(target).add(offset);
+    // never below the ground, whatever the mode or the drag: inside the sphere Earth is culled and vanishes
+    if (this.camera.position.length() < MIN_CAMERA_R) this.camera.position.setLength(MIN_CAMERA_R);
     // drag speed proportional to altitude, so the ground moves with the cursor
     // Orbiting an inspected satellite is angular, so it keeps full speed at any distance.
     this.controls.rotateSpeed = centered ? 0.75 : THREE.MathUtils.clamp(nextAlt * 0.35, 0.00015, 0.6);

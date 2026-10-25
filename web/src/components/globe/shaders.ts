@@ -233,7 +233,9 @@ export const atmosphereFragment = /* glsl */ `
   void main() {
     // Impact parameter of the view ray: how close it passes to Earth's center.
     vec3 d = normalize(vPosW - uCamPos);
-    vec3 closest = uCamPos - dot(uCamPos, d) * d;
+    // only ahead of the camera: from inside the atmosphere a ray looking up never comes closer to Earth than
+    // the camera itself, so the sky above stays dark instead of glowing as if it were at the ground
+    vec3 closest = uCamPos + max(-dot(uCamPos, d), 0.0) * d;
     float h = length(closest);
     float glow = exp(-max(h - 1.0, 0.0) / uScaleHeight);
     float sun = smoothstep(-0.35, 0.45, dot(normalize(closest), uSunDir));
