@@ -55,7 +55,7 @@ The flow:
 9. **Playback.** It plays on `host:<lang>` from a second LiveKit connection with identity `host` (name "Coordination Host", attribute `role=host`), because `web/src/call/tracks.ts` accepts `host:<lang>` only from `host` / `host-*`. The connection:
    - is minted in the worker with the LiveKit key it already has (publish the microphone source only, `canSubscribe: false`, no data, no room configuration, not hidden);
    - connects on the first host line and is reused;
-   - leaves when the last human leaves, so the empty room can close, and reconnects for a later line; a connection generation keeps a late `idle()` from closing a connection a newer line opened;
+   - leaves when the last human leaves, so the empty room can close, and reconnects for a later line. Connecting and leaving are decided on the humans present at that moment, under one lock: it never connects for an empty room, leaves again if the last human left during the connect, and a late `idle()` never closes a connection a returning human's line uses;
    - is closed with the job.
 
    Lines are handled one at a time, so their order holds on every track, and playback never blocks the next line.
@@ -85,7 +85,7 @@ Applied in this branch: `docs/specification.md` §5 steps 3 and 4 and a §3.4 ro
   - a deleted run (`not_found`); a failing hash or key import is `failed`, never a throw;
   - `disabled` with the LiveKit env cleared explicitly, `ws://` to `http://`, `failed` on 404 and on a network error;
   - no table written.
-- `services/voice/tests/test_host_speech.py`, 45 cases, with fakes:
+- `services/voice/tests/test_host_speech.py`, 47 cases, with fakes:
   - packet authenticity: a participant-sent packet and other topics are ignored;
   - `/health` is degraded only by faults, as for phrases, not by a missing voice id or a rejected translation;
   - 16 validation cases;
@@ -96,10 +96,10 @@ Applied in this branch: `docs/specification.md` §5 steps 3 and 4 and a §3.4 ro
   - line order;
   - track names `host:<lang>` and unchanged `tr:` names;
   - the host token's identity and grants;
-  - lazy connect, reuse, reconnect after a drop, a stale `idle()` ignored, idle and close;
-  - the room job: host tracks never subscribed or transcribed, `data_received` wired, the last human leaving releases `host`.
-- `npm run check` (r3-node-speech): 1044 → 1055 passed on 6107f3b; after the fast-forward to dc68b32 and the review fixes, 1095 passed (13 of them in `tests/call/hostSpeech.test.ts`), typecheck clean.
-- `python -m pytest -q` (r3-py-speech): 130 → 175 passed.
+  - lazy connect, reuse, reconnect after a drop, no connect for an empty room, a human leaving during a slow connect (no `host` left behind), a late `idle()` while a human is back (connection kept), idle and close;
+  - the room job: host tracks never subscribed or transcribed, `data_received` wired, `on_gone` of the last human releases `host` (real publisher, fake room).
+- `npm run check` (r3-node-speech): 1044 → 1055 passed on 6107f3b; on the PR #59 base after the review fixes, 1245 passed (13 of them in `tests/call/hostSpeech.test.ts`), typecheck clean.
+- `python -m pytest -q` (r3-py-speech): 130 → 177 passed.
 
 ## Live check (local LiveKit v1.12.0, livekit python 1.1.21)
 

@@ -82,7 +82,7 @@ or voice ids in the answer. The Docker image runs as the unprivileged user `work
 | `MAX_ROOMS` | `20` | load = active rooms / MAX_ROOMS (threshold 0.95) |
 
 ## Tests
-`pip install -r requirements-dev.txt && python -m pytest -q` (175 cases, providers faked; no keys needed).
+`pip install -r requirements-dev.txt && python -m pytest -q` (177 cases, providers faked; no keys needed).
 
 ## Measured (2026-10-24, recorded clips, local LiveKit)
 STT final 1.2–2.2 s after speech end; translation into two languages 2.4–4.2 s; voice first byte 0.8–1.5 s after the

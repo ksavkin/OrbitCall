@@ -31,7 +31,7 @@ Not edited. The "Gemini Host contract" line ("Generate canonical host text, then
 
 ## Applied in services/voice/README.md
 
-A "Host speech" section, the subscription rule naming `host` / `host-*`, and the test count (175).
+A "Host speech" section, the subscription rule naming `host` / `host-*`, and the test count (177).
 
 ## Issue #6, Round 3 (Kostya)
 
