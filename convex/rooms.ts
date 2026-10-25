@@ -22,7 +22,9 @@ export async function linkedEvents(ctx: QueryCtx, event: Doc<"events">): Promise
   const range = (a: Id<"spaceObjects">, b: Id<"spaceObjects">) => ctx.db.query("events").withIndex("by_pair_tca", q =>
     q.eq("objectAId", a).eq("objectBId", b).gte("tcaMs", event.tcaMs - TCA_MATCH_MS).lte("tcaMs", event.tcaMs + TCA_MATCH_MS)).collect();
   const [forward, reversed] = await Promise.all([range(event.objectAId, event.objectBId), range(event.objectBId, event.objectAId)]);
-  const all = new Map([...forward, ...reversed, event].map(e => [e._id, e]));
+  // A demo run's rows never share a room with real rows or another run's (roadmap §14).
+  const run = event.demoRunId ?? null;
+  const all = new Map([...forward, ...reversed, event].filter(e => (e.demoRunId ?? null) === run).map(e => [e._id, e]));
   return [...all.values()].sort((x, y) => x.tcaMs - y.tcaMs || (x._id < y._id ? -1 : x._id > y._id ? 1 : 0));
 }
 
@@ -230,7 +232,7 @@ export const startWorkflow = mutation({
   handler: async (ctx, { eventId }) => {
     const { scope, event } = await requirePartyScope(ctx, eventId);
     if (scope.user.role !== "operator") throw new ConvexError({ code: "FORBIDDEN", message: "Operators start a workflow." });
-    if (!event.active) throw new ConvexError({ code: "INVALID_STATE", message: "This incident is no longer active." });
+    if (isResolved(event)) throw new ConvexError({ code: "INVALID_STATE", message: "This incident is already resolved." });
     const linked = await linkedEvents(ctx, event);
     const existing = await roomOfEvent(ctx, event);
     const now = Date.now();
@@ -351,8 +353,10 @@ export async function closeRoomIfResolved(ctx: MutationCtx, eventId: Id<"events"
   const event = await ctx.db.get(eventId);
   const room = event && await roomOfEvent(ctx, event);
   if (!room) return null;
-  const pairs = await roomPairs(ctx, room._id);
-  if (!pairs.every(({ event: e }) => isResolved(e))) return null;
+  // Every linked row counts, including one whose objects can no longer be read.
+  const links = await ctx.db.query("roomEvents").withIndex("by_room", q => q.eq("roomId", room._id)).collect();
+  const linked = await Promise.all(links.map(l => ctx.db.get(l.eventId)));
+  if (!linked.every(e => e !== null && isResolved(e))) return null;
   const now = Date.now();
   await ctx.db.patch(room._id, { state: "closed", closedAt: now });
   await ctx.db.insert("messages", {

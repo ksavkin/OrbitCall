@@ -167,6 +167,8 @@ describe("messages", () => {
     }));
     expect(await code(as(t, "ana").mutation(send, { roomId, text: "more" }))).toBe("INVALID_STATE");
     await as(t, "bo").mutation(send, { roomId, text: "B decides" });
+    // The turn is per incident: a line filed under a decided incident's sibling still needs that incident's turn.
+    expect(await code(as(t, "ana").mutation(send, { roomId, eventId: crossId, text: "about cross" }))).toBe("INVALID_STATE");
     expect(await texts(t, { roomId })).toEqual(["before", "A decides", "B decides"]);
   });
 

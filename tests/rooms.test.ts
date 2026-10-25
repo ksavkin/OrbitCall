@@ -286,6 +286,8 @@ describe("rooms close on resolution", () => {
     expect(await as(t, "ana").query(get, { eventId: ids.cross })).toBeNull();
     expect(await as(t, "ana").query(listMine, {})).toEqual([]);
 
+    expect(await code(as(t, "ana").mutation(startWorkflow, { eventId: ids.cross }))).toBe("INVALID_STATE");   // resolved
+    await t.run(ctx => ctx.db.patch(ids.cross, { status: "communication" }));   // the incident flares up again
     const again = await as(t, "ana").mutation(startWorkflow, { eventId: ids.cross });
     expect(again.created).toBe(true);
     expect(again.roomId).not.toBe(roomId);
