@@ -3,7 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { AnalystError, inputKey, isRed, validateFacts, type EventFacts } from "./analyst";
 import { supersede } from "./runs";
-import { invalidateEventApprovals, invalidateObjectApprovals } from "./approvalState";
+import { expireUndecidedApprovals, invalidateEventApprovals, invalidateObjectApprovals } from "./approvalState";
 import type { objectInput, sourceRef } from "./validators";
 
 type ObjectInput = Infer<typeof objectInput>;
@@ -141,8 +141,12 @@ export async function ingestEncounter(ctx: MutationCtx, { snapshotId, objectA, o
     if (changed) await ctx.db.patch(eventId, { ...row, updatedAt: now });
     else if (!same) await ctx.db.patch(eventId, row);
   }
-  if (previous && !changed && (previous.snapshotId !== snapshotId || previous.active !== row.active)) {
-    await invalidateEventApprovals(ctx, (await ctx.db.get(eventId))!, "evidence_changed");
+  if (previous && !changed) {
+    if (previous.snapshotId !== snapshotId || (!previous.active && row.active)) {
+      await invalidateEventApprovals(ctx, (await ctx.db.get(eventId))!, "evidence_changed");
+    } else if (previous.active && !row.active) {
+      await expireUndecidedApprovals(ctx, (await ctx.db.get(eventId))!);
+    }
   }
   // Publishing a changed input also invalidates any result still being computed for it.
   if (changed && previous) {

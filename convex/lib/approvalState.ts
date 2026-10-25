@@ -6,7 +6,7 @@ import { LEGACY_ASSIGNMENT_VERSION } from "./accounts";
 
 type Side = "A" | "B";
 export type ResetReason = "selection_changed" | "revision_changed" | "proposal_withdrawn" | "vetoed" |
-  "policy_changed" | "assignment_revoked" | "evidence_changed" | "assignment_changed" | "authorization_changed" | "candidate_set_changed";
+  "event_expired" | "policy_changed" | "assignment_revoked" | "evidence_changed" | "assignment_changed" | "authorization_changed" | "candidate_set_changed";
 type Next = { proposalId: Id<"proposals">; revision: number } | null;
 
 export const RESOLVED_STATUSES = new Set(["approved", "scheduled", "monitoring", "awaiting_verification_data", "verified", "no_action_needed"]);
@@ -145,6 +145,26 @@ export async function invalidateEventApprovals(ctx: MutationCtx, supplied: Doc<"
   if (!decided && event.active) {
     await ctx.db.patch(event._id, { status: reason === "evidence_changed" ? "agents" : "proposal", situation: undefined });
   }
+}
+
+/** Clock expiry closes an undecided authorization, not the evidence for an already committed maneuver. */
+export async function expireUndecidedApprovals(ctx: MutationCtx, supplied: Doc<"events">) {
+  const event = await ctx.db.get(supplied._id);
+  if (!event || event.active || RESOLVED_STATUSES.has(event.status ?? "new")) return;
+  if (event.demoRunId) {
+    const run = await ctx.db.get(event.demoRunId);
+    if (!run || run.state !== "open" || run.closedAt !== null) return;
+  }
+  // Verification can flag a committed plan for a mismatch; ordinary time expiry must still preserve that history.
+  for (const link of await ctx.db.query("maneuverEvents").withIndex("by_event", q => q.eq("eventId", event._id)).collect()) {
+    const maneuver = await ctx.db.get(link.maneuverId);
+    if (maneuver?.status === "committed" && maneuver.demoRunId === (event.demoRunId ?? null)) return;
+  }
+  const selection = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
+  const current = await ctx.db.query("approvals").withIndex("by_event_current", q => q.eq("eventId", event._id).eq("current", true)).collect();
+  if (!selection?.proposalId && !current.length) return;
+  await advanceSelection(ctx, event, selection?.proposalId && selection.revision !== null ?
+    { proposalId: selection.proposalId, revision: selection.revision } : null, { kind: "agents" }, "event_expired");
 }
 
 /** Compatibility entry point: retain decided plans, retire signatures and flag review in the same transaction. */

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeFunctionReference } from "convex/server";
 import { api, internal } from "../convex/_generated/api";
 import { FIXTURE_NOW } from "../fixtures/events";
 import { advocateCandidates, advocateEvent, policyA } from "../fixtures/policies";
@@ -133,12 +134,61 @@ describe("material approval invalidation", () => {
     await expectReset(test, "evidence_changed");
   });
 
-  it("retires approvals when the monitor deactivates an event", async () => {
+  it.each(["monitor", "ingestion"] as const)("retires undecided approvals on ordinary %s expiry", async writer => {
     const test = await approvedA();
     vi.setSystemTime((await event(test))!.tcaMs + 1);
-    await test.t.mutation(internal.riskMonitor.recolor, {});
+    if (writer === "monitor") await test.t.mutation(internal.riskMonitor.recolor, {});
+    else await test.t.mutation(internal.events.ingest, ingestArgs((await event(test))!.snapshotId, advocateEvent));
     expect((await approvals(test)).every(a => !a.current)).toBe(true);
-    expect((await selection(test.t, test.eventId))!.lastReset?.reason).toBe("evidence_changed");
+    expect((await selection(test.t, test.eventId))!.lastReset?.reason).toBe("event_expired");
+    expect(await set(test)).toMatchObject({ reviewRequired: false });
+  });
+
+  it.each([
+    ["monitor", "scheduled"], ["monitor", "awaiting_verification_data"],
+    ["ingestion", "scheduled"], ["ingestion", "awaiting_verification_data"],
+  ] as const)("keeps %s expiry from blocking verification of a %s maneuver", async (writer, state) => {
+    const test = await approvedA();
+    await as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId));
+    const ref = await tick(test.t, test.eventId);
+    const artifactId = await test.t.run(async ctx => {
+      const { approvalRuleVersion: _rule, ...signed } = ref;
+      await ctx.db.patch(test.eventId, { status: state });
+      const current = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", test.eventId)).unique();
+      await ctx.db.patch(current!._id, { state: "scheduled" });
+      const id = await ctx.db.insert("maneuvers", { refs: [signed], trajectoryPlanId: null, trajectoryPlanVersion: null,
+        pinned: { snapshotId: "catalog", evidenceKeys: [], policyRevisions: [], assignmentVersions: [] }, intentKey: "expiry-test",
+        status: "committed", filePath: "schedule.json", diff: "immutable diff", commitSha: "immutable-sha", writtenBy: "droid",
+        rescreenJobId: null, rescreen: null, error: null, reviewRequired: false, demoRunId: null, updatedAt: Date.now() });
+      await ctx.db.insert("maneuverEvents", { maneuverId: id, eventId: test.eventId });
+      return id;
+    });
+    const reserve = makeFunctionReference<"mutation">("verifications:reserve");
+    const store = makeFunctionReference<"mutation">("verifications:storeResult");
+    const before = await as(test.t, "a").mutation(reserve, { eventId: test.eventId, requestId: "in-flight" });
+    const signed = await selection(test.t, test.eventId);
+    const artifact = await test.t.run(ctx => ctx.db.get(artifactId));
+    const e = (await event(test))!;
+    vi.setSystemTime(e.tcaMs + 1);
+    if (writer === "monitor") await test.t.mutation(internal.riskMonitor.recolor, {});
+    else await test.t.mutation(internal.events.ingest, ingestArgs(e.snapshotId, advocateEvent));
+    expect(await event(test)).toMatchObject({ active: false, status: state });
+    expect(await test.t.run(ctx => ctx.db.get(artifactId))).toEqual(artifact);
+    expect(await set(test)).toMatchObject({ state: "scheduled", reviewRequired: false });
+    expect(await selection(test.t, test.eventId)).toEqual(signed);
+    const result = { kind: "live", result: "awaiting_data", label: "awaiting verification data",
+      expected: { deltaAKm: 0.5, sign: 1 }, observed: null, elementSetCount: 0, series: [],
+      thresholds: { z: 5, minDeltaAKm: 0.05, sizeTolerance: 0.5, minSets: 8 }, method: "robust baseline",
+      limitations: [], missing: ["eight element sets"], sources: [], simulated: true };
+    await as(test.t, "a").mutation(store, { eventId: test.eventId, fingerprint: before.fingerprint, requestId: "in-flight", result });
+    const after = await as(test.t, "a").mutation(reserve, { eventId: test.eventId, requestId: "later" });
+    expect(after.fingerprint).toBe(before.fingerprint);
+    await expect(as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId))).rejects.toThrow();
+    // A real evidence correction after expiry still fences this immutable schedule and any pending result.
+    await test.t.mutation(internal.events.ingest, ingestArgs(e.snapshotId, { ...advocateEvent, missKm: 0.28 }));
+    expect(await test.t.run(ctx => ctx.db.get(artifactId))).toMatchObject({ reviewRequired: true });
+    await expect(as(test.t, "a").mutation(reserve, { eventId: test.eventId, requestId: "changed" }))
+      .rejects.toMatchObject({ data: { code: "NOT_READY" } });
   });
 
   it("keeps committed artifacts and scheduled status while visibly requiring review", async () => {
