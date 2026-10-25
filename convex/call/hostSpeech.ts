@@ -113,8 +113,7 @@ export const speak = internalAction({
   handler: async (ctx, { roomId, hostRunId, text }): Promise<HostSpeechResult> => {
     // Never throws: a scheduled caller gets a result, whatever fails (the query, hashing, signing or the network).
     let id: string | null = null;
-    const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), FETCH_TIMEOUT_MS);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const prepared = await ctx.runQuery(prepareRef, { roomId, hostRunId, text });
       if (!prepared.ok) return { status: "rejected", reason: prepared.reason };
@@ -125,6 +124,8 @@ export const speak = internalAction({
       id = await speechId(String(hostRunId), text);
       const payload = { v: HOST_SPEECH_VERSION, id, roomId: String(roomId), hostRunId: String(hostRunId), lang: "en", text };
       const token = await roomAdminToken(apiKey, apiSecret, room, Math.floor(Date.now() / 1000));
+      const abort = new AbortController();
+      timer = setTimeout(() => abort.abort(), FETCH_TIMEOUT_MS);
       const res = await fetch(`${httpBase(serverUrl)}/twirp/livekit.RoomService/SendData`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
@@ -142,7 +143,7 @@ export const speak = internalAction({
       console.warn(`host speech ${id ?? String(hostRunId)}: failed (${name})`);
       return { status: "failed", httpStatus: null, id, reason: name };
     } finally {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
     }
   },
 });
