@@ -15,8 +15,8 @@ Convex deploy separately (§13 Steps 5–6).
 | Service | Image | Network | Persistent state | Health check |
 |---|---|---|---|---|
 | `orbit` | `ghcr.io/ksavkin/orbitcall-orbit:$RELEASE_TAG`, built from `services/orbit/` | Port 8000 on the Compose network only, reached through Caddy | `orbit_snapshots` (read-only, pinned snapshots), `orbit_results` (numerical jobs and results) | `GET http://127.0.0.1:8000/health` inside the container, with Python's `urllib` |
-| `voice` | `ghcr.io/ksavkin/orbitcall-voice:$RELEASE_TAG`, built from `services/voice/` | Outbound only, to LiveKit Cloud, xAI, Anthropic, Cartesia and Convex. No published port, no Caddy route | None. Phrase buffers are short-lived; final phrases go to Convex | Process check: PID 1 is the Python worker |
-| `caddy` | `caddy:2` | Publishes 80 and 443 (TCP, plus UDP for HTTP/3) | `caddy_data` (certificates), `caddy_config` | None; check through the routes below |
+| `voice` | `ghcr.io/ksavkin/orbitcall-voice:$RELEASE_TAG`, built from `services/voice/` | Outbound only, to LiveKit Cloud, xAI, Anthropic, Cartesia and Convex. No published port, no Caddy route | None. Phrase buffers are short-lived; final phrases go to Convex | None yet; add one when `services/voice/` lands (see assumptions) |
+| `caddy` | `caddy:2.11.7` | Publishes 80 and 443 (TCP, plus UDP for HTTP/3) | `caddy_data` (certificates), `caddy_config` | None; check through the routes below |
 
 All three restart `unless-stopped` and log as JSON files rotated at 10 MB × 5. Compose uses the fixed project name
 `orbitcall`, so volumes are named `orbitcall_orbit_snapshots`, `orbitcall_orbit_results`, `orbitcall_caddy_data` and
@@ -88,7 +88,23 @@ Generate the two shared tokens on the host, for example `openssl rand -hex 32`, 
 
 ## Deploy
 
-Run from the checked-out release commit at the repository root (roadmap §13 Step 3):
+Run from the checked-out release commit at the repository root.
+
+### 1. Seed the snapshot volume (first deploy, or a new pinned snapshot)
+
+Snapshot folders are immutable, so copying all of `data/snapshots/` from the checkout is safe and repeatable:
+
+```sh
+docker run --rm \
+  -v orbitcall_orbit_snapshots:/dst \
+  -v "$PWD/data/snapshots:/src:ro" \
+  alpine cp -a /src/. /dst/
+```
+
+On the first deploy, create the volume before copying: `docker volume create orbitcall_orbit_snapshots`. For a new
+snapshot on a running host, copy it, then `docker compose ... restart orbit`.
+
+### 2. Start the services (roadmap §13 Step 3)
 
 ```sh
 docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.yml pull
@@ -99,20 +115,6 @@ docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.
 If the release images are not in the registry, build them on the host with the same tag, then pull only Caddy:
 `docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.yml build orbit voice` and
 `... pull caddy`, then `up -d` as above.
-
-### Seed the snapshot volume (first deploy, or a new pinned snapshot)
-
-Snapshot folders are immutable, so copying all of `data/snapshots/` from the checkout is safe and repeatable:
-
-```sh
-docker run --rm \
-  -v orbitcall_orbit_snapshots:/dst \
-  -v "$PWD/data/snapshots:/src:ro" \
-  alpine cp -a /src/. /dst/
-docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.yml restart orbit
-```
-
-The volume exists after the first `up -d`; or create it with `docker volume create orbitcall_orbit_snapshots`.
 
 ## Verify
 
@@ -142,13 +144,13 @@ different ones.
 
 Other assumptions about the services:
 
-- Each service has a `Dockerfile` at its directory root, and both images include `python` (used by the health checks).
+- Each service has a `Dockerfile` at its directory root, and the orbit image includes `python` (used by its health check).
 - The orbit service listens on port 8000 (Uvicorn), serves `/health` without the token, and checks
   `ORBIT_SERVICE_TOKEN` itself on every other route.
 - The orbit service only reads snapshots (the volume is mounted read-only) and writes jobs and results under
   `ORBIT_RESULTS_DIR`.
-- The voice worker exposes no HTTP route, so its health check only confirms the Python process is running. If it is
-  built on LiveKit Agents, the built-in worker health server (port 8081 by default) is a better check.
+- The voice worker exposes no HTTP route, so it has no health check yet. A process check would always pass while the
+  container runs. If it is built on LiveKit Agents, add a check against its worker health server (port 8081 by default).
 - The orbit service has no backend callback credential; roadmap §13 Step 4 adds one only if that path is implemented.
 
 ## Out of scope

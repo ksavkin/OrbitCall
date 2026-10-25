@@ -24,7 +24,7 @@ services:
     expose:
       - "8000"
     environment:
-      ORBIT_SERVICE_TOKEN: ${ORBIT_SERVICE_TOKEN}
+      ORBIT_SERVICE_TOKEN: ${ORBIT_SERVICE_TOKEN:?set ORBIT_SERVICE_TOKEN}
       ORBIT_SNAPSHOT_ID: ${ORBIT_SNAPSHOT_ID:-gp-20261024T2134Z}
       ORBIT_SNAPSHOT_DIR: /data/snapshots
       ORBIT_RESULTS_DIR: /data/results
@@ -63,23 +63,11 @@ services:
       CARTESIA_VOICE_ID_ZH: ${CARTESIA_VOICE_ID_ZH}
       XAI_TTS_VOICE_ID: ${XAI_TTS_VOICE_ID}
       CONVEX_SITE_URL: ${CONVEX_SITE_URL}
-      VOICE_CALLBACK_TOKEN: ${VOICE_CALLBACK_TOKEN}
-    # Outbound-only worker: no published ports and no Caddy route. This check only
-    # proves the worker process is PID 1, not that LiveKit or the providers answer.
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import sys; sys.exit(0 if b'python' in open('/proc/1/cmdline', 'rb').read() else 1)"
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+      VOICE_CALLBACK_TOKEN: ${VOICE_CALLBACK_TOKEN:?set VOICE_CALLBACK_TOKEN}
     logging: *logging
 
   caddy:
-    image: caddy:2
+    image: caddy:2.11.7
     restart: unless-stopped
     depends_on:
       - orbit
