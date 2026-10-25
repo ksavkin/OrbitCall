@@ -14,7 +14,7 @@
 
 ## Branches
 
-- Adil works on `adil`. Commit and push there. Merge into `main` only when Adil says it looks good.
+- Adil works on `adil`. Commit and push there, then merge `adil` into `main` and push `main`, so the UI on `main` stays current (Adil's rule since Oct 24). Fetch first. If `main` has new commits, merge `main` into `adil`, run `npx tsc --noEmit` and `npx eslint src` in `web/`, and only then merge back.
 - Before committing, check `git branch --show-current` and `git status`. Other sessions may work in this repo at the same time: never reset, rebase or force-push without asking.
 
 ## Where things are
