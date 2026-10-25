@@ -20,8 +20,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { advocatesRerunRef, agentsRerunRef } from "@/lib/backend/api";
+import { backendError } from "@/lib/backend/errors";
 import { useLive, useRealMode } from "@/lib/backend/live";
-import type { PublicSpan } from "@/lib/backend/types";
+import { mutate } from "@/lib/backend/run";
+import type { PublicSpan, Side } from "@/lib/backend/types";
 import { fmtMs, fmtTokens, fmtUsd } from "@/lib/ops/format";
 import { AGENTS, MODELS, nodeLabel, type AgentInfo } from "@/lib/ops/roster";
 import { isPatrolRoot } from "@/lib/ops/engine";
@@ -121,12 +124,86 @@ function RealGlyph({ s }: { s: Span }) {
 
 /** What a real span exposes: its run state and metadata. The backend keeps the model's output out of the trace. */
 function RealBody({ s, out }: { s: Span; out: RealOutput | null }) {
+  const retry = useRetry(s, out);
   return (
     <>
       {s.error && <div className="mb-1.5 rounded-[6px] bg-[rgba(255,90,79,0.08)] px-2 py-1 text-red">{s.error}</div>}
       {out && <RunFacts out={out} />}
       <p className="leading-[1.5] text-muted">Detailed output is not exposed in the trace.</p>
+      {retry && <RetryRun key={s.id} target={retry} />}
     </>
+  );
+}
+
+/* ---------------------------------------------------------------- retry */
+
+type RetryTarget = { kind: "analyst" | "host" | "advocate"; eventId: string };
+
+/** The run a span belongs to, for a retry: the Analyst's summary run, the Host, or an Advocate. Rationale steps have none. */
+function runKind(s: Span, out: RealOutput): RetryTarget["kind"] | null {
+  if (s.agent === "host" && out.trigger !== undefined) return "host";
+  // candidate explanations also run as the Analyst, but always carry an attempt; agents.rerun doesn't restart them
+  if (s.agent === "analyst" && out.attempt === undefined) return "analyst";
+  if (s.agent === "advocateA" || s.agent === "advocateB") return "advocate";
+  return null;
+}
+
+/** The caller's side in an incident, from whichever real-mode read has it. */
+function useMySide(eventId: string | null): Side | null {
+  const approvals = useLive((l) => l.approvals);
+  const inbox = useLive((l) => l.inbox);
+  const queue = useLive((l) => l.myQueue);
+  if (!eventId) return null;
+  if (approvals?.eventId === eventId && approvals.mySide) return approvals.mySide;
+  return inbox?.find((e) => e.eventId === eventId)?.mySide ?? queue?.find((r) => r.eventId === eventId)?.mySide ?? null;
+}
+
+/**
+ * Retry is offered on the newest run of its kind when that run failed or stalled: the Analyst or the Host
+ * (agents.rerun), or this side's own Advocate (advocates.rerun). An older failed run has nothing left to retry.
+ */
+function useRetry(s: Span, out: RealOutput | null): RetryTarget | null {
+  const spans = useOps((st) => st.spans);
+  const mySide = useMySide(s.eventId);
+  return useMemo(() => {
+    const kind = out ? runKind(s, out) : null;
+    if (!kind || !out || !s.eventId) return null;
+    if (out.runStatus !== "failed" && !(out.runStatus === "running" && out.stalled)) return null;
+    if (kind === "advocate" && s.agent !== (mySide === "A" ? "advocateA" : mySide === "B" ? "advocateB" : null)) return null;
+    const newer = spans.some((o) => {
+      const oo = o.id !== s.id && o.eventId === s.eventId && o.agent === s.agent && o.t0 > s.t0 ? realOutput(o) : null;
+      return oo !== null && runKind(o, oo) === kind;
+    });
+    return newer ? null : { kind, eventId: s.eventId };
+  }, [s, out, spans, mySide]);
+}
+
+function RetryRun({ target }: { target: RetryTarget }) {
+  const [state, setState] = useState<"idle" | "busy" | "sent">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    if (state !== "idle") return;
+    sfx.click();
+    setState("busy");
+    setError(null);
+    try {
+      if (target.kind === "advocate") await mutate(advocatesRerunRef, { eventId: target.eventId });
+      else await mutate(agentsRerunRef, { eventId: target.eventId, role: target.kind === "host" ? "coordination_host" : "incident_analyst" });
+      setState("sent");
+    } catch (e) {
+      // INVALID_STATE (still running, already queued, inputs changed), FORBIDDEN, RETRY_LIMIT: the message says which
+      setError(backendError(e).message);
+      setState("idle");
+    }
+  };
+  return (
+    <div className="mt-2 flex min-w-0 items-center gap-2">
+      <button className="btn btn-ghost-line h-6 shrink-0 px-2 text-[11px] disabled:opacity-40" disabled={state !== "idle"} onClick={() => void run()}>
+        {state === "busy" ? <Loader2 size={11} className="animate-spin" /> : state === "sent" ? <Check size={11} /> : <RotateCw size={11} />}
+        {state === "sent" ? "Retry requested" : "Retry"}
+      </button>
+      {error && <span className="min-w-0 text-[11px] leading-[1.4] text-orange">{error}</span>}
+    </div>
   );
 }
 
