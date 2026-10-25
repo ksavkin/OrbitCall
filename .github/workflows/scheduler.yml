@@ -20,6 +20,8 @@ jobs:
             package-lock.json
             services/scheduler/package-lock.json
       - run: npm ci --ignore-scripts
+      # Task branches leave generated bindings uncommitted, as in backend.yml.
+      - run: npx convex codegen --system-udfs --typecheck disable
       - run: npm run check
       - run: npm ci --ignore-scripts
         working-directory: services/scheduler
