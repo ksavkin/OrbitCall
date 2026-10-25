@@ -5,7 +5,7 @@ import type { AgentSummary, CatalogSnapshot, EventId, EventRow } from "./types";
 // Types are the ones declared in ./types.ts.
 type Query<Args extends Record<string, unknown>, Result> = FunctionReference<"query", "public", Args, Result>;
 
-/** Real catalog pairs, already in queue order (spec §3.2). */
+/** Every active real catalog pair, already in queue order (spec §3.2); the UI filters. */
 export const catalogPairsRef = anyApi.events.catalogPairs as unknown as Query<{ limit?: number }, EventRow[]>;
 
 /** Latest catalog snapshot, or null before the first one. */
@@ -13,6 +13,3 @@ export const catalogSnapshotRef = anyApi.catalog.snapshot as unknown as Query<Re
 
 /** Incident Analyst summary and run state for one event. Public in Phase 1. */
 export const agentSummaryRef = anyApi.agentSummaries.get as unknown as Query<{ eventId: EventId }, AgentSummary>;
-
-/** How many pairs the queue asks for (the backend default is 50). */
-export const QUEUE_LIMIT = 50;
