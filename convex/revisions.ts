@@ -325,7 +325,8 @@ export async function sharedBurn(ctx: QueryCtx, event: Doc<"events">, card: Burn
   if (!mover || mover.objectId !== card.movingObjectId || !Number.isFinite(lower)) return bad(code, UNDETERMINED);
   const run = event.demoRunId ?? null;
   const plans = await ctx.db.query("trajectoryPlans").withIndex("by_object_version", q => q.eq("objectId", mover.objectId)).collect();
-  if (plans.some(p => p.demoRunId === run && p.state !== "superseded" && p.affectedEventIds.includes(event._id))) return true;
+  // Same plans as maneuvers.ts context() reads: a live plan of more than one incident that lists this one.
+  if (plans.some(p => p.demoRunId === run && p.state !== "superseded" && p.affectedEventIds.length > 1 && p.affectedEventIds.includes(event._id))) return true;
   if (event.tcaMs < lower || event.tcaMs > upper) return false;
   const others = [
     ...await ctx.db.query("events").withIndex("by_pair_tca", q => q.eq("objectAId", mover._id)).collect(),
@@ -344,7 +345,8 @@ async function requireUnshared(ctx: QueryCtx, eventId: Id<"events">, candidates:
   const event = await ctx.db.get(eventId);
   const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
   const current = await Promise.all((set?.candidateRevisionIds ?? []).map(id => ctx.db.get(id)));
-  if (!event || !set) return bad("TRAJECTORY_PLAN_REQUIRED", UNDETERMINED);
+  // Without a set yet there is no current burn to keep: a shared card is refused below as a new burn.
+  if (!event) return bad("TRAJECTORY_PLAN_REQUIRED", UNDETERMINED);
   for (const card of candidates) {
     if (card.kind !== "maneuver") continue;
     if (current.some(c => !c)) return bad("TRAJECTORY_PLAN_REQUIRED", UNDETERMINED);
