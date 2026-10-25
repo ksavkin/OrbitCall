@@ -45,7 +45,7 @@ describe("approvals.approve: bilateral, side A then side B", () => {
     expect(await as(t, "a").mutation(fn.approve, await tick(t, eventId))).toEqual({ allRequiredApproved: false, requiredApprovalSides: ["A", "B"] });
     expect(await rows(t, eventId)).toHaveLength(1);
     expect(await as(t, "b").mutation(fn.approve, await tick(t, eventId))).toEqual({ allRequiredApproved: true, requiredApprovalSides: ["A", "B"] });
-    expect(await read(t, "eye", eventId)).toMatchObject({ allRequiredApproved: true, deciding: false, turn: null, lastReset: null,
+    expect(await read(t, "head", eventId)).toMatchObject({ allRequiredApproved: true, deciding: false, turn: null, lastReset: null,
       approvals: { A: { status: "approved" }, B: { status: "approved" } } });
     expect((await eventRow(t, eventId))!.status).toBe("approved");
     expect(await code(as(t, "a").mutation(fn.approve, await tick(t, eventId)))).toBe("ALREADY_DECIDED");
@@ -85,14 +85,14 @@ describe("approvals.approve: bilateral, side A then side B", () => {
     expect(await rows(t, eventId)).toEqual([]);
   });
 
-  it("lets a head of ops and the observer read status without control, and nobody else", async () => {
+  it("lets a head of ops read status without control and sends observers to their dedicated projection", async () => {
     const { t, eventId } = await selected();
     expect(await read(t, "head", eventId)).toMatchObject({ canAct: false, myTurn: false, mySide: "A", workflow: "bilateral" });
-    expect(await read(t, "eye", eventId)).toMatchObject({ canAct: false, myTurn: false, mySide: null, turn: "A" });
+    expect(await code(read(t, "eye", eventId))).toBe("FORBIDDEN");
     expect(await read(t, "unassigned", eventId)).toMatchObject({ canAct: false, mySide: "A" });
     expect(await code(read(t, "c", eventId))).toBe("FORBIDDEN");
     expect(await code(t.query(fn.status, { eventId }))).toBe("UNAUTHENTICATED");
-    const text = JSON.stringify([await read(t, "b", eventId), await read(t, "eye", eventId)]);
+    const text = JSON.stringify([await read(t, "b", eventId), await read(t, "head", eventId)]);
     expect(text).not.toContain("PRIVATE_A");
     expect(text).not.toContain("7.625");
   });

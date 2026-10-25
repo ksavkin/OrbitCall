@@ -2,7 +2,7 @@ import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { requireParty, requireReader } from "./lib/operatorAccess";
-import { advanceSelection, allApproved, classifyIfUnset, countingApprovals } from "./lib/approvals";
+import { advanceSelection, allApproved, classifyIfUnset, countingApprovals, decisionInputs } from "./lib/approvals";
 import { decisionTurn } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
@@ -42,6 +42,11 @@ async function checkDecision(ctx: MutationCtx, args: Args) {
   const stored = await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
     q.eq("proposalId", args.proposalId).eq("revision", args.revision)).unique();
   if (proposal?.latestRevision !== args.revision || !stored || !set.candidateRevisionIds.includes(stored.candidateRevisionId)) throw stale();
+  const inputs = await decisionInputs(ctx, event, selection);
+  if (!inputs) throw stale();
+  if (event.tcaMs <= Date.now() || (inputs.card.kind === "maneuver" && Date.parse(inputs.card.burnTimeUtc!) <= Date.now())) {
+    throw error("INVALID_STATE", "The encounter or selected burn is no longer in the future.");
+  }
   return { user, side, event, selection };
 }
 
@@ -147,12 +152,13 @@ export const status = query({
         approvalRuleVersion: ruleVersion ?? 0 };
     }
     const proposal = selection?.proposalId ? await ctx.db.get(selection.proposalId) : null;
+    const inputs = await decisionInputs(ctx, event, selection);
     const internal = event.workflow === "internal_review" || (!!owners[0] && owners[0].companyId === owners[1]?.companyId);
     const mySide = user.role === "demo_observer" || internal ? null
       : owners[0]?.companyId === user.companyId ? "A" as const : owners[1]?.companyId === user.companyId ? "B" as const : null;
     let canAct = false;
     const status = event.status ?? "new";
-    if (user.role === "operator" && mySide && required.includes(mySide) && proposal && set?.state === "open" && event.active
+    if (inputs && event.tcaMs > Date.now() && user.role === "operator" && mySide && required.includes(mySide) && proposal && set?.state === "open" && event.active
       && (event.workflow === "bilateral" || event.workflow === "unilateral_debris") && (status === "proposal" || status === "communication")) {
       const object = await ctx.db.get(mySide === "A" ? event.objectAId : event.objectBId);
       const assignment = object && await ctx.db.query("fleetAssignments").withIndex("by_user_object", q =>
