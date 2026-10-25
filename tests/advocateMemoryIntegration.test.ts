@@ -114,7 +114,7 @@ describe("Advocate memory integration", () => {
 const hostSchema = defineSchema({ ...schema.tables, hostRuns: defineTable({ ...schema.tables.hostRuns.validator.fields,
   output: v.union(v.null(), v.object({ ...hostOutputValidator.fields, understood: v.optional(v.array(v.object({
     kind: v.string(), hard: v.boolean(), text: v.string(), eventId: v.union(v.string(), v.null()), sourceMessageId: v.string(),
-    correctsId: v.optional(v.union(v.string(), v.null())),
+    correctsId: v.union(v.string(), v.null()),
   }))) })),
 }).index("by_room_input_trigger", ["roomId", "inputVersion", "trigger"]).index("by_room_created", ["roomId", "createdAt"]).index("by_demo_run", ["demoRunId"]) });
 async function hostSetup(voice = false) {
@@ -126,7 +126,7 @@ async function hostSetup(voice = false) {
       translations: {}, values: [], translationStatus: {}, errors: {}, startedAtMs: Date.now(), simulated: true,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) : messageId;
     const output = { inputVersion: "fixture", clarifications: [], requestedRevisions: [], summaries: [],
-      understood: [{ kind: "preference", hard: false, text: preference, eventId: previousId, sourceMessageId: sourceId }] };
+      understood: [{ kind: "preference" as const, hard: false, text: preference, eventId: previousId, sourceMessageId: sourceId, correctsId: null }] };
     const hostRunId = await ctx.db.insert("hostRuns", { roomId, trigger: "final_message", inputVersion: "fixture", attempt: 1,
       status: "succeeded", span: null, output, check: null, demoRunId, createdAt: Date.now(), finishedAt: Date.now() });
     const hostMessageId = await ctx.db.insert("messages", { roomId, eventId: previousId,
@@ -150,7 +150,7 @@ async function correctPreference(f: Awaited<ReturnType<typeof hostSetup>>, corre
     const { _id, _creationTime, ...original } = (await ctx.db.get(f.messageId))!;
     const messageId = await ctx.db.insert("messages", { ...original, originalText: text });
     const output = { inputVersion: "correction", clarifications: [], requestedRevisions: [], summaries: [],
-      understood: [{ kind: "correction", hard: false, text, eventId: f.previousId, sourceMessageId: messageId, correctsId }] };
+      understood: [{ kind: "correction" as const, hard: false, text, eventId: f.previousId, sourceMessageId: messageId, correctsId }] };
     const hostRunId = await ctx.db.insert("hostRuns", { roomId: f.roomId, trigger: "final_message", inputVersion: "correction", attempt: 1,
       status: "succeeded", span: null, output, check: null, demoRunId: f.demoRunId, createdAt: Date.now(), finishedAt: Date.now() });
     const hostMessageId = await ctx.db.insert("messages", { roomId: f.roomId, eventId: f.previousId,
