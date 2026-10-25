@@ -46,7 +46,9 @@ export async function runDroid(input: Parameters<Provider>[0], sessionFactory = 
     };
     await checkTools();
     let succeeded = false;
-    for await (const message of session.stream(`Write these exact UTF-8 bytes using write_schedule once:\n${input.expected}`, { abortSignal: AbortSignal.timeout(90_000) })) {
+    // JSON makes the final newline and all other significant whitespace explicit.
+    const prompt = `Call write_schedule once with this JSON argument object. Decode its string escapes; do not trim or reformat content:\n${JSON.stringify({ content: input.expected })}`;
+    for await (const message of session.stream(prompt, { abortSignal: AbortSignal.timeout(90_000) })) {
       if (message.type === DroidMessageType.Result) succeeded = message.success && message.subtype === "success";
     }
     await checkTools();

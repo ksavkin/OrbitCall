@@ -21,7 +21,9 @@ async function setup(mode = "write") {
       { id: "ToolSearch", ...(mode === "foreign-search" ? { source: "mcp" } : {}), allowed: true },
     ],
     updateSettings: async (settings: any) => { expect(settings.disabledToolIds).toEqual(["Execute", "ToolSearch"]); disabled = true; },
-    async *stream() { expect(disabled).toBe(true); if (["write", "with-source", "bad"].includes(mode)) await opts.mcpServers[0].tools[0].handler({ content: mode === "bad" ? "invented" : input.expected });
+    async *stream(prompt: string) { expect(disabled).toBe(true);
+      const args = JSON.parse(prompt.slice(prompt.indexOf("\n") + 1)); expect(args).toEqual({ content: input.expected });
+      if (["write", "with-source", "bad"].includes(mode)) await opts.mcpServers[0].tools[0].handler(mode === "bad" ? { content: "invented" } : args);
       yield { type: "result", success: true, subtype: "success" }; },
   }; });
   return { input, factory, close, options: () => opts };
