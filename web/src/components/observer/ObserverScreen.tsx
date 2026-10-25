@@ -3,6 +3,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Check, MonitorUp, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { CONVEX_AUTH } from "@/lib/backend/provider";
+import { useLocalhost } from "@/lib/localhost";
 import { fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent, Reply } from "@/lib/ops/types";
@@ -13,34 +15,67 @@ import { stepOf } from "@/components/ops/IncidentView";
 import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 import { roomCards } from "@/components/roomChat/model";
 import { CHANNEL, type PublicView } from "./feed";
+import { LiveObserver } from "./LiveObserver";
 import { Big, Note, RoomRecord, SimTag, Stepper, TopBar } from "./parts";
 
 // The large display (spec §3.1 `demo.publicView`, role demo_observer): the case, the plans, who approved what
 // and the result, for people watching the demo. Read only by construction: no approval, selection, policy,
 // agent trace or private message reaches this screen, and nothing on it has a control that acts.
+// With the backend and sign-in, it shows the observer's demo run (LiveObserver). The dev feed from an operator tab
+// of this browser takes over only while that tab runs Dev, or when this build has no sign-in.
 
 const clean = (s: string | undefined) => (s ?? "").replace(/\s*\(synthetic\)/i, "");
 
 export function ObserverScreen() {
-  const [view, setView] = useState<PublicView | null>(null);
   const now = useNow(1000);
+  const local = useLocalhost();
+  const { view, settled } = useFeed(local);
+  const fresh = !!view && now - view.at < 15_000;
+
+  if (CONVEX_AUTH && !(fresh && view.dev)) {
+    // until an operator tab could answer, neither the backend nor the feed is subscribed
+    return settled ? (
+      <LiveObserver now={now} />
+    ) : (
+      <div className="flex h-full flex-col bg-black text-neutral-200">
+        <TopBar now={now} link={{ text: "Connecting", on: false }} />
+      </div>
+    );
+  }
+  return <FeedScreen view={fresh ? view : null} now={now} local={local} />;
+}
+
+/** The dev feed from an operator tab of this browser (localhost only). Settled once a tab answered or had time to. */
+function useFeed(local: boolean | null) {
+  const [view, setView] = useState<PublicView | null>(null);
+  const [waited, setWaited] = useState(false);
 
   useEffect(() => {
-    if (typeof BroadcastChannel === "undefined") return;
+    if (!local) return;
+    // an open operator tab answers "hello" at once
+    const t = setTimeout(() => setWaited(true), 500);
+    if (typeof BroadcastChannel === "undefined") return () => clearTimeout(t);
     const ch = new BroadcastChannel(CHANNEL);
     ch.onmessage = (m) => {
       if (!m.data || m.data === "hello") return;
       const v = m.data as PublicView;
       setView(v);
       // the shared components read events from the store; this tab's store only ever holds the public copy
-      useOps.setState({ events: v.event ? [v.event] : [], replies: v.answers as Reply[], dev: true, autopilot: false });
+      if (v.dev) useOps.setState({ events: v.event ? [v.event] : [], replies: v.answers as Reply[], dev: true, autopilot: false });
     };
     ch.postMessage("hello");
-    return () => ch.close();
-  }, []);
+    return () => {
+      clearTimeout(t);
+      ch.close();
+    };
+  }, [local]);
 
-  const fresh = view && now - view.at < 15_000;
-  const e = fresh ? view.event : null;
+  return { view, settled: local === false || waited || view !== null };
+}
+
+/** The simulator's case as an operator tab of this browser publishes it. */
+function FeedScreen({ view, now, local }: { view: PublicView | null; now: number; local: boolean | null }) {
+  const e = view?.event ?? null;
 
   return (
     <div className="flex h-full flex-col bg-black text-neutral-200">
@@ -48,7 +83,7 @@ export function ObserverScreen() {
         head={e && <CaseNames e={e} />}
         tca={e?.tca}
         now={now}
-        link={{ text: fresh ? "Following the operator screen" : "Not connected", on: !!fresh }}
+        link={{ text: view ? "Following the operator screen" : "Not connected", on: !!view }}
       />
       <AnimatePresence mode="wait">
         {e ? (
@@ -74,7 +109,11 @@ export function ObserverScreen() {
             <Note
               icon={<MonitorUp size={18} />}
               title="Waiting for a case"
-              body="Open OrbitCall in another tab of this browser, turn on Dev and run a case. This screen follows it, read only. With the backend, the same screen reads the demo run's public view."
+              body={
+                local === false
+                  ? "This build has no sign-in, so it cannot read the demonstration run."
+                  : "Open OrbitCall in another tab of this browser, turn on Dev and run a case. This screen follows it, read only. With the backend and sign-in, the same screen reads the demo run's public view."
+              }
             />
           </motion.div>
         )}
