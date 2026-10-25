@@ -15,9 +15,18 @@ export const publish = internalMutation({
     if (!event) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
     const facts = await loadFacts(ctx, event);
     validateCandidates(candidates, facts);
-    const owners = await Promise.all([facts.objectA.objectId, facts.objectB.objectId].map(objectId =>
-      ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", objectId)).unique()));
-    if (!owners[0] || !owners[1] || owners[0].companyId === owners[1].companyId) {
+    const [companyAId, companyBId] = await Promise.all([facts.objectA.objectId, facts.objectB.objectId].map(async objectId =>
+      (await ctx.db.query("satelliteOwners").withIndex("by_object", q => q.eq("objectId", objectId)).unique())?.companyId ?? null));
+    // Only a server-confirmed debris event runs with one operator; a missing active counterpart stays bilateral (spec §1).
+    if (event.workflow === "unilateral_debris") {
+      const active = companyAId && !companyBId ? "A" : companyBId && !companyAId ? "B" : null;
+      if (!active || (event.requiredApprovalSides && event.requiredApprovalSides.join() !== active)) {
+        throw new ConvexError({ code: "INVALID_STATE", message: "Confirmed debris needs exactly one registered operator, on its active side." });
+      }
+      if (candidates.some(c => c.kind === "maneuver" && c.movingSide !== active)) {
+        throw new ConvexError({ code: "INVALID_STATE", message: "Only the active object can maneuver around debris." });
+      }
+    } else if (!companyAId || !companyBId || companyAId === companyBId) {
       throw new ConvexError({ code: "INVALID_STATE", message: "Coordination needs two distinct registered operators." });
     }
     const previous = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
@@ -40,7 +49,7 @@ export const publish = internalMutation({
     if (previous && previous.evidenceKey === evidenceKey && JSON.stringify(previous.candidateRevisionIds) === JSON.stringify(candidateRevisionIds)) {
       return { version: previous.version, changed: false };
     }
-    const value = { eventId, companyAId: owners[0].companyId, companyBId: owners[1].companyId,
+    const value = { eventId, companyAId, companyBId,
       version: (previous?.version ?? 0) + 1, evidenceKey, candidateRevisionIds, state: "open" as const, reviewRequired: false };
     if (previous) await ctx.db.replace(previous._id, value);
     else await ctx.db.insert("candidateSets", value);

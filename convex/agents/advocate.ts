@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import { side } from "../lib/policyValidators";
 import { advocatePrompt, checkRecommendation } from "../lib/advocate";
 import { callClaude, claudeConfig, safeFailure } from "../lib/claude";
+import type { Side } from "../lib/policies";
 
 export const start = internalAction({
   args: { eventId: v.id("events"), side }, returns: v.null(),
@@ -25,12 +26,14 @@ export const start = internalAction({
   },
 });
 
-// One bounded round. A's finish/fail transaction schedules B exactly once; retries of A
-// also refresh B. B failures remain explicit retries and never restart A.
+// One bounded round. For a pair, A's finish/fail transaction schedules B exactly once; retries of A
+// also refresh B. B failures remain explicit retries and never restart A. Debris runs its one active
+// side, which may be canonical A or B, and hands off to nobody.
 export const negotiate = internalAction({
   args: { eventId: v.id("events") }, returns: v.null(),
   handler: async (ctx, { eventId }): Promise<null> => {
-    await ctx.runAction(internal.agents.advocate.start, { eventId, side: "A" });
+    const opening: Side | null = await ctx.runQuery(internal.advocates.openingSide, { eventId });
+    if (opening) await ctx.runAction(internal.agents.advocate.start, { eventId, side: opening });
     return null;
   },
 });

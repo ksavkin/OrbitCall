@@ -1,10 +1,10 @@
-import { internalMutation, query, mutation } from "./_generated/server";
+import { internalMutation, internalQuery, query, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v, ConvexError } from "convex/values";
 import { side } from "./lib/policyValidators";
 import { STALLED_AFTER_MS, inputKey } from "./lib/analyst";
 import { loadFacts } from "./lib/events";
-import { advocateKey, companyOf, currentAssessment, currentEvidenceKey, latestAdvocate, loadCandidates } from "./lib/coordination";
+import { advocateKey, companyOf, currentAssessment, currentEvidenceKey, latestAdvocate, loadCandidates, requiredSides } from "./lib/coordination";
 import { checkRecommendation, evaluateCandidates, shareEvaluations } from "./lib/advocate";
 import { requireParty } from "./lib/operatorAccess";
 import { runFlags, stageOf, supersede } from "./lib/runs";
@@ -90,7 +90,17 @@ export const fail = internalMutation({
     await ctx.db.patch(runId, { status: "failed", stage: undefined, finishedAt: Date.now(), stalled: false,
       errorCode: code, errorMessage: message });
     const context = await ctx.db.query("advocateContexts").withIndex("by_run", q => q.eq("runId", runId)).unique();
-    if (context?.side === "A") await ctx.scheduler.runAfter(0, internal.agents.advocate.start, { eventId: run.eventId, side: "B" });
+    const set = context && await ctx.db.get(context.candidateSetId);
+    if (context?.side === "A" && set?.companyBId) await ctx.scheduler.runAfter(0, internal.agents.advocate.start, { eventId: run.eventId, side: "B" });
+  },
+});
+
+// The side that opens a round: A for a pair, the only registered side for debris; null without a candidate set.
+export const openingSide = internalQuery({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, { eventId }) => {
+    const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
+    return set ? requiredSides(set)[0] ?? null : null;
   },
 });
 
@@ -100,14 +110,17 @@ export const list = query({
     const { candidateSet: set } = await requireParty(ctx, eventId);
     const key = await currentEvidenceKey(ctx, set);
     const [a, b] = await Promise.all([currentAssessment(ctx, set, "A", key ?? ""), currentAssessment(ctx, set, "B", key ?? "")]);
+    // Only the workflow's required sides decide: debris has one Advocate and no assessment for the debris side.
+    const required = requiredSides(set).map(s => s === "A" ? a : b);
     const candidates = await loadCandidates(ctx, set);
-    const companies = await Promise.all([ctx.db.get(set.companyAId), set.companyBId ? ctx.db.get(set.companyBId) : null]);
+    const companies = await Promise.all(requiredSides(set).map(s => ctx.db.get(companyOf(set, s)!)));
     const accepted = (value: string) => value === "feasible" || value === "preferred";
-    const mutuallyAcceptable = candidates.filter(c => accepted(a?.entries.find(e => e.candidateId === c.candidateId)?.outcome ?? "") &&
-      accepted(b?.entries.find(e => e.candidateId === c.candidateId)?.outcome ?? "")).map(c => c.candidateId);
-    const reviewCandidates = candidates.filter(c => [a, b].every(m => m?.entries.some(e => e.candidateId === c.candidateId && e.outcome !== "infeasible"))).map(c => c.candidateId);
+    const mutuallyAcceptable = candidates.filter(c => required.every(m => accepted(m?.entries.find(e => e.candidateId === c.candidateId)?.outcome ?? "")))
+      .map(c => c.candidateId);
+    const reviewCandidates = candidates.filter(c => required.every(m => m?.entries.some(e => e.candidateId === c.candidateId && e.outcome !== "infeasible"))).map(c => c.candidateId);
     const messages = await ctx.db.query("negotiationMessages").withIndex("by_event", q => q.eq("eventId", eventId)).order("desc").take(50);
-    const runStates = await Promise.all([set.companyAId, set.companyBId].map(async companyId => {
+    const runStates = await Promise.all((["A", "B"] as const).map(async s => {
+      const companyId = companyOf(set, s);
       const run = companyId && await latestAdvocate(ctx, eventId, companyId);
       return run ? { status: run.status, stage: stageOf(run), startedAt: new Date(run._creationTime).toISOString(),
         lastProgressAt: new Date(run.lastProgressAt).toISOString(), errorCode: run.errorCode ?? null, errorMessage: run.errorMessage ?? null } : null;
@@ -117,7 +130,7 @@ export const list = query({
       simulated: companies.some(c => c?.simulated) || candidates.some(c => c.simulated),
       candidates, assessments: { A: a?.entries ?? [], B: b?.entries ?? [] }, mutuallyAcceptable, reviewCandidates,
       runs: { A: runStates[0], B: runStates[1] },
-      situation: set.reviewRequired ? "scheduled_review_required" : key !== set.evidenceKey ? "stale_candidates" : candidates.length === 0 ? "no_candidates" : !a || !b ? "awaiting_advocates" : mutuallyAcceptable.length ? "needs_operator_decision" : reviewCandidates.length ? "needs_more_data" : "no_mutually_acceptable_option",
+      situation: set.reviewRequired ? "scheduled_review_required" : key !== set.evidenceKey ? "stale_candidates" : candidates.length === 0 ? "no_candidates" : required.some(m => !m) ? "awaiting_advocates" : mutuallyAcceptable.length ? "needs_operator_decision" : reviewCandidates.length ? "needs_more_data" : "no_mutually_acceptable_option",
       ...await runFlags(ctx, eventId),
       messages: messages.reverse().map(m => ({ messageId: m._id, side: m.side, kind: m.kind, entries: m.entries, categories: m.categories,
         createdAt: new Date(m._creationTime).toISOString(), current: m._id === a?._id || m._id === b?._id })),

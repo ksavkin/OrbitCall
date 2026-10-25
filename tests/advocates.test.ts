@@ -41,6 +41,25 @@ async function setup() {
   return { t, eventId, companyAId, companyBId };
 }
 const finish = (t: Backend) => t.finishAllScheduledFunctions(vi.runAllTimers);
+const pendingAdvocateStarts = (t: Backend) => t.run(async ctx =>
+  (await ctx.db.system.query("_scheduled_functions").collect()).filter(f => f.name === "agents/advocate:start" && f.state.kind === "pending"));
+const nullRecommendation = { raw: '{"preferredCandidateId":null}', model: "test-model", usage: { inputTokens: 1, outputTokens: 1 } };
+
+// Confirmed debris on the other canonical side: one registered operator, one Advocate, the active object moves.
+async function setupDebris(active: "A" | "B") {
+  const t = backend(); const eventId = await insertEvent(t, advocateEvent);
+  const policy = active === "A" ? policyA : policyB; const name = active.toLowerCase();
+  await t.mutation(internal.operators.provision, {
+    key: `debris-${name}`, name: active, simulated: true, objectIds: [policy.objectId],
+    members: [{ tokenIdentifier: `https://fixture.invalid|${name}`, role: "operator", assignedObjectIds: [policy.objectId] }],
+  });
+  await identity(t, name).mutation(api.policies.update, { satellites: [{ ...policy, acceptablePc: 0.001 }] });
+  await t.run(ctx => ctx.db.patch(eventId, { workflow: "unilateral_debris", requiredApprovalSides: [active] }));
+  const candidates = advocateCandidates.filter(c => c.movingSide === null || c.movingSide === active);
+  await t.mutation(internal.candidates.publish, { eventId, baseVersion: null, candidates, start: false });
+  const set = await t.run(ctx => ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique());
+  return { t, eventId, set: set! };
+}
 
 describe("Operator Advocate v1", () => {
   it("seeds an opt-in synthetic fixture without model calls and preserves later policy edits", async () => {
@@ -62,6 +81,55 @@ describe("Operator Advocate v1", () => {
     await t.mutation(internal.operators.provision, { key: "only-a", name: "A", simulated: true, objectIds: [policyA.objectId], members: [] });
     await expect(t.mutation(internal.candidates.publish, { eventId, baseVersion: null, candidates: advocateCandidates })).rejects.toThrow("INVALID_STATE");
     expect(await t.run(ctx => ctx.db.query("companies").collect())).toHaveLength(1);
+    expect(await t.run(ctx => ctx.db.query("candidateSets").collect())).toHaveLength(0);
+  });
+
+  it("runs only side A for debris without side B and reports a decision from A alone", async () => {
+    const { t, eventId, set } = await setupDebris("A");
+    expect(set.companyAId).not.toBeNull(); expect(set.companyBId).toBeNull();
+    expect(await t.mutation(internal.advocates.begin, { eventId, side: "B" })).toBeNull();
+    const claimed = await t.mutation(internal.advocates.begin, { eventId, side: "A" });
+    expect((await t.mutation(internal.advocates.finish, { runId: claimed!.runId, ...nullRecommendation })).published).toBe(true);
+    expect(await pendingAdvocateStarts(t)).toHaveLength(0);
+    const shared = await identity(t, "a").query(api.advocates.list, { eventId });
+    expect(shared.situation).toBe("needs_operator_decision");
+    expect(shared.mutuallyAcceptable).toContain("P3");
+    expect(shared.reviewCandidates).toContain("P3");
+    expect(shared.runs.A?.status).toBe("succeeded"); expect(shared.runs.B).toBeNull();
+    expect(shared.assessments.B).toEqual([]);
+  });
+
+  it("lets the operator of canonical side B act alone when side A is debris", async () => {
+    const { t, eventId, set } = await setupDebris("B");
+    expect(set.companyAId).toBeNull(); expect(set.companyBId).not.toBeNull();
+    expect(await t.mutation(internal.advocates.begin, { eventId, side: "A" })).toBeNull();
+    await t.action(internal.agents.advocate.negotiate, { eventId }); await finish(t);
+    expect(callClaude).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(vi.mocked(callClaude).mock.calls[0][0].user).side).toBe("B");
+    const shared = await identity(t, "b").query(api.advocates.list, { eventId });
+    expect(shared.runs.A).toBeNull(); expect(shared.runs.B?.status).toBe("succeeded");
+    expect(shared.situation).toBe("needs_operator_decision");
+    expect(shared.mutuallyAcceptable).toEqual(["P3"]);
+  });
+
+  it("publishes debris only for a confirmed debris event whose active object is the mover", async () => {
+    const t = backend(); const eventId = await insertEvent(t, advocateEvent);
+    await t.mutation(internal.operators.provision, { key: "only-b", name: "B", simulated: true, objectIds: [policyB.objectId], members: [] });
+    const waitOnly = advocateCandidates.filter(c => c.kind === "wait");
+    await t.run(ctx => ctx.db.patch(eventId, { workflow: "unilateral_debris", requiredApprovalSides: ["A"] }));
+    await expect(t.mutation(internal.candidates.publish, { eventId, baseVersion: null, candidates: waitOnly })).rejects.toThrow("INVALID_STATE");
+    await t.run(ctx => ctx.db.patch(eventId, { requiredApprovalSides: ["B"] }));
+    await expect(t.mutation(internal.candidates.publish, { eventId, baseVersion: null, candidates: advocateCandidates })).rejects.toThrow("INVALID_STATE");
+    expect((await t.mutation(internal.candidates.publish, { eventId, baseVersion: null, candidates: waitOnly, start: false })).changed).toBe(true);
+  });
+
+  it("rejects two objects of one company and a debris event with no registered operator", async () => {
+    const t = backend(); const eventId = await insertEvent(t, advocateEvent);
+    await t.run(ctx => ctx.db.patch(eventId, { workflow: "unilateral_debris", requiredApprovalSides: ["A"] }));
+    await expect(t.mutation(internal.candidates.publish, { eventId, baseVersion: null, candidates: advocateCandidates })).rejects.toThrow("INVALID_STATE");
+    await t.mutation(internal.operators.provision, { key: "both", name: "Both", simulated: true, objectIds: [policyA.objectId, policyB.objectId], members: [] });
+    await t.run(ctx => ctx.db.patch(eventId, { workflow: "bilateral", requiredApprovalSides: ["A", "B"] }));
+    await expect(t.mutation(internal.candidates.publish, { eventId, baseVersion: null, candidates: advocateCandidates })).rejects.toThrow("INVALID_STATE");
     expect(await t.run(ctx => ctx.db.query("candidateSets").collect())).toHaveLength(0);
   });
 

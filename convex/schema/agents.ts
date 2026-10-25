@@ -40,9 +40,12 @@ export const agentTables = {
     .index("by_user_object", ["userId", "objectId"]),
   policies: defineTable({ companyId: v.id("companies"), revision: v.number(), satellites: v.array(satellitePolicy), updatedAt: v.number() })
     .index("by_company", ["companyId"]),
-  // companyBId is null for confirmed debris: one active operator, one Advocate, no side B (spec §4.1).
+  // Sides keep the event's canonical object order, so confirmed debris may sit on either side: that side's company
+  // is null and the other side has the one active operator and Advocate (spec §4.1). At least one is non-null;
+  // candidates.publish enforces it. Widened from a required companyAId; existing rows stay valid.
   candidateSets: defineTable({
-    eventId: v.id("events"), companyAId: v.id("companies"), companyBId: v.union(v.id("companies"), v.null()),
+    eventId: v.id("events"),
+    companyAId: v.union(v.id("companies"), v.null()), companyBId: v.union(v.id("companies"), v.null()),
     version: v.number(), evidenceKey: v.string(), candidateRevisionIds: v.array(v.id("candidateRevisions")),
     state: v.union(v.literal("open"), v.literal("scheduled"), v.literal("closed")), reviewRequired: v.boolean(),
   }).index("by_event", ["eventId"]).index("by_company_a", ["companyAId"]).index("by_company_b", ["companyBId"]),

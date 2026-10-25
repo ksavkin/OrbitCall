@@ -19,8 +19,11 @@ export function latestAdvocate(ctx: QueryCtx, eventId: Id<"events">, companyId: 
     .eq("role", "operator_advocate").eq("companyId", companyId)).order("desc").first();
 }
 
-/** The company acting for a side; null for side B of confirmed debris. */
+/** The company acting for a side; null for the debris side of confirmed debris, which may be either canonical side. */
 export const companyOf = (set: Doc<"candidateSets">, side: Side) => side === "A" ? set.companyAId : set.companyBId;
+
+/** The sides whose Advocate and approval the workflow needs: both for a pair, the active side alone for debris. */
+export const requiredSides = (set: Doc<"candidateSets">): Side[] => (["A", "B"] as const).filter(s => companyOf(set, s) !== null);
 
 // Public-data references and a revision counter only: never include raw policy in the shared run key.
 export const advocateKey = (set: Doc<"candidateSets">, side: Side, policyRevision: number) => JSON.stringify({
