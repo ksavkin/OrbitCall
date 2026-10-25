@@ -26,8 +26,11 @@ tle="$repo/web/data/snapshot"
 # The target is built here and partly replaced on every run: never inside the repo checkout itself.
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
-case "$out/" in "$repo/"*) rmdir "$out" 2>/dev/null || true
-  echo "target $out is inside the repo checkout; choose another folder" >&2; exit 64;; esac
+# The package's own data/ (services/orbit/data, git-ignored) is the one place inside the checkout that is allowed.
+if [ "$out" != "$here/data" ]; then
+  case "$out/" in "$repo/"*) rmdir "$out" 2>/dev/null || true
+    echo "target $out is inside the repo checkout; choose another folder" >&2; exit 64;; esac
+fi
 
 # Inputs: TLE groups, at least one SOCRATES run, and the GP snapshot its newest catalog-pairs.json names.
 ls "$tle"/*.tle >/dev/null 2>&1 || { echo "no TLE groups in $tle" >&2; exit 65; }
@@ -62,7 +65,11 @@ cp "$newest/manifest.json" "$out/snapshot/socrates-manifest.json"
 
 # What this package ships (skipped when filling ./data in place).
 if [ "$out" != "$here/data" ]; then
-  for d in omm replay validation; do mkdir -p "$out/$d"; cp -R "$here/data/$d/." "$out/$d/"; done
+  # omm/ (the service's own fetch) is not in git, so a fresh clone has none: copy it only when present.
+  for d in omm replay validation; do
+    [ -d "$here/data/$d" ] || continue
+    mkdir -p "$out/$d"; cp -R "$here/data/$d/." "$out/$d/"
+  done
 fi
 
-echo "$out: OMM snapshot $sid (as recorded in $(basename "$newest")/catalog-pairs.json) | snapshots: $(ls "$out/snapshots" | tr '\n' ' ')| snapshot: $(ls "$out"/snapshot/*.tle | wc -l | tr -d ' ') TLE groups | omm: $(ls "$out/omm" | tr '\n' ' ')"
+echo "$out: OMM snapshot $sid (as recorded in $(basename "$newest")/catalog-pairs.json) | snapshots: $(ls "$out/snapshots" | tr '\n' ' ')| snapshot: $(ls "$out"/snapshot/*.tle | wc -l | tr -d ' ') TLE groups | omm: $(ls "$out/omm" 2>/dev/null | tr '\n' ' ')"

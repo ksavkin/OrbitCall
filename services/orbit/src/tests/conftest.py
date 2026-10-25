@@ -28,5 +28,15 @@ def pair():
 
 
 @pytest.fixture
+def lane_dir():
+    """The service's own CelesTrak OMM fetch (data/omm/<fetch>/). It is not in git: the tests that read it skip
+    without it. Unpack it from the delivery archive into data/omm/ to run them."""
+    dirs = sorted(p for p in (DATA / "omm").glob("*") if p.is_dir())
+    if not dirs:
+        pytest.skip("the service's own OMM fetch is not in data/omm (not committed)")
+    return dirs[-1]
+
+
+@pytest.fixture
 def fresh_catalog():
     return load_snapshot(DATA, "omm")

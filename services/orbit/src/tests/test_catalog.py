@@ -19,14 +19,16 @@ def test_alpha5_ids_decode_to_decimal_strings():
     assert decode_catnum("Z9999") == "339999"
 
 
-def test_real_mode_uses_the_team_snapshot_and_its_id(catalog, tle_catalog, monkeypatch):
-    data = Path(__file__).resolve().parents[2] / "data"
+def test_real_mode_uses_the_team_snapshot_and_its_id(catalog, tle_catalog):
     # Default: the team's pinned GP snapshot (scripts/fetch_gp.py), the one Convex and the web use — same snapshotId.
     assert catalog.format == "omm" and catalog.snapshot_id == "gp-20261024T2134Z" and catalog.manifest["layout"] == "team"
     assert len(catalog.objects) == catalog.manifest["uniqueObjects"] and catalog.get("25544").name.startswith("ISS")
     assert tle_catalog.format == "tle" and tle_catalog.snapshot_id.startswith("celestrak-gp-2026-10-24T08:02:43Z-")
-    # The lane's own fetch stays selectable.
-    lane = sorted((data / "omm").glob("*"))[-1]
+
+
+def test_the_lane_fetch_stays_selectable(lane_dir, monkeypatch):
+    data = Path(__file__).resolve().parents[2] / "data"
+    lane = lane_dir
     monkeypatch.setenv("ORBIT_SNAPSHOT_DIR", str(lane))
     own = load_snapshot(data, "omm")
     assert own.snapshot_id.startswith("celestrak-omm-") and own.manifest["layout"] == "lane"
@@ -129,11 +131,10 @@ def test_the_snapshot_is_the_one_convex_uses_not_the_newest(tmp_path, monkeypatc
         load_snapshot(root, "omm")
 
 
-def test_no_silent_switch_to_the_lane_fetch(tmp_path, monkeypatch):
+def test_no_silent_switch_to_the_lane_fetch(tmp_path, monkeypatch, lane_dir):
     from orbit.catalog import SnapshotMissing
     monkeypatch.delenv("ORBIT_SNAPSHOT_DIR", raising=False)
-    data = Path(__file__).resolve().parents[2] / "data"
-    lane = sorted((data / "omm").glob("*"))[-1]
+    lane = lane_dir
     shutil.copytree(lane, tmp_path / "data" / "omm" / lane.name)
     with pytest.raises(SnapshotMissing, match="no team OMM snapshot"):
         load_snapshot(tmp_path / "data", "omm")
