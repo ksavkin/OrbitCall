@@ -1,0 +1,158 @@
+{
+  "collection": "Simple Icons",
+  "version": "16.35.0",
+  "license": "CC0-1.0",
+  "package": "https://registry.npmjs.org/simple-icons/-/simple-icons-16.35.0.tgz",
+  "icons": [
+    {
+      "file": "convex.svg",
+      "slug": "convex",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/convex.svg"
+    },
+    {
+      "file": "claude.svg",
+      "slug": "claude",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/claude.svg"
+    },
+    {
+      "file": "auth0.svg",
+      "slug": "auth0",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/auth0.svg"
+    },
+    {
+      "file": "digitalocean.svg",
+      "slug": "digitalocean",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/digitalocean.svg"
+    },
+    {
+      "file": "livekit.svg",
+      "slug": "livekit",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/livekit.svg"
+    },
+    {
+      "file": "vercel.svg",
+      "slug": "vercel",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/vercel.svg"
+    },
+    {
+      "file": "nextjs.svg",
+      "slug": "nextdotjs",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/nextdotjs.svg"
+    },
+    {
+      "file": "react.svg",
+      "slug": "react",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/react.svg"
+    },
+    {
+      "file": "typescript.svg",
+      "slug": "typescript",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/typescript.svg"
+    },
+    {
+      "file": "threejs.svg",
+      "slug": "threedotjs",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/threedotjs.svg"
+    },
+    {
+      "file": "tailwind.svg",
+      "slug": "tailwindcss",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/tailwindcss.svg"
+    },
+    {
+      "file": "python.svg",
+      "slug": "python",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/python.svg"
+    },
+    {
+      "file": "fastapi.svg",
+      "slug": "fastapi",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/fastapi.svg"
+    },
+    {
+      "file": "docker.svg",
+      "slug": "docker",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/docker.svg"
+    },
+    {
+      "file": "postgresql.svg",
+      "slug": "postgresql",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/postgresql.svg"
+    },
+    {
+      "file": "cursor.svg",
+      "slug": "cursor",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/cursor.svg"
+    },
+    {
+      "file": "caddy.svg",
+      "slug": "caddy",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/caddy.svg"
+    },
+    {
+      "file": "github.svg",
+      "slug": "github",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/github.svg"
+    },
+    {
+      "file": "nasa.svg",
+      "slug": "nasa",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/nasa.svg"
+    },
+    {
+      "file": "esri.svg",
+      "slug": "esri",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/esri.svg"
+    },
+    {
+      "file": "numpy.svg",
+      "slug": "numpy",
+      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/numpy.svg"
+    }
+  ],
+  "vendorAssets": [
+    {
+      "file": "factory.svg",
+      "source": "https://factory.com/favicon.svg",
+      "bytes": 6348
+    },
+    {
+      "file": "cartesia.svg",
+      "source": "https://www.cartesia.ai/favicon.svg",
+      "bytes": 968
+    },
+    {
+      "file": "backboard.png",
+      "source": "https://framerusercontent.com/images/otbwQxAitW4nwtZcjxI0eyylX3I.png",
+      "bytes": 3027
+    },
+    {
+      "file": "gemini.png",
+      "source": "https://www.gstatic.com/lamda/images/gemini_sparkle_4g_512_lt_f94943af3be039176192d.png",
+      "bytes": 61823
+    },
+    {
+      "file": "celestrak.png",
+      "source": "https://celestrak.org/images/CT-icon-256-t.png",
+      "bytes": 4779
+    },
+    {
+      "file": "tigerdata.svg",
+      "source": "https://assets.tigerdata.com/timescale-web/brand/tiger-data/flat-logos/logo-badge-black.svg",
+      "bytes": 2494
+    },
+    {
+      "file": "grok.png",
+      "source": "https://grok.com/images/android-chrome-512x512.png",
+      "bytes": 8332
+    }
+  ],
+  "roleIcons": {
+    "collection": "Lucide",
+    "source": "https://lucide.dev/",
+    "package": "lucide-react",
+    "version": "1.61.0",
+    "license": "ISC, with MIT notices for Feather-derived icons",
+    "licenseFile": "icons/roles/LICENSE.txt"
+  }
+}
