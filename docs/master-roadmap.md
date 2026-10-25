@@ -464,6 +464,8 @@ The selected libraries provide OMM ingestion: Python `sgp4.omm.initialize` and s
 - Missing/stale evidence has a separate always-visible Data needs review section.
 - Scheduled, monitoring, and awaiting-verification events remain in follow-up. Completed records stay in history/inbox.
 - Show GP/SupGP differences as source disagreement with epochs, not a calibrated uncertainty band.
+- My Incidents holds only our own fleet-scan events. Each is checked against SOCRATES and labeled Matched, Data differs or Not in SOCRATES, with both sets of numbers (decision of October 25, 2026; spec `ReferenceCheck`). SOCRATES pairs never form the queue.
+- Display probability as a decimal with two significant digits from 0.0001 up and in scientific notation below, with "1 in N" in the tooltip.
 
 These thresholds and ordering are OrbitCall demo rules, not a general operational standard. TCA means Time of Closest Approach. Use plain interface labels such as Time until closest approach.
 

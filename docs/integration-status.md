@@ -22,6 +22,10 @@ The [assigned-fleet user flow](user-flow.md) is the starting point. The [specifi
 | Demo identities | Three dispatcher laptops, four assigned spacecraft each, and a read-only observer display. Group rooms support 2-4 operators. Assignments are simulated; country is not authorization |
 | Run Scan | Server-resolved assigned fleet versus every other usable object in the pinned catalog, next 72 hours; explicit progress and coverage |
 | Priority | Severity first, then earliest closest approach. Missing/stale evidence in a separate visible review section. No Pc/time score |
+| Queue source (Oct 25) | My Incidents lists only events from our own fleet scan (`scans.startMine`, which calls the orbital service's `POST /screen`). Before the first scan the queue is empty and asks for Run Scan. SOCRATES pairs are never the queue |
+| Reference check (Oct 25) | Every scan event is checked against the SOCRATES reference list: "Matched in SOCRATES", "Data differs" or "Not in SOCRATES", with their TCA, miss and probability side by side with ours. Provenance, not a confidence score. Validation (`GET /validation`) uses the full eligible list, not a top-N subset |
+| Run Scan access (Oct 25) | Shown on Orbit and Conjunctions. Signed out or without assignments: visible, not runnable, and it says why. Only provisioned accounts start paid work |
+| Probability display (Oct 25) | A decimal with two significant digits at 0.0001 and above (`0.0013`), scientific below (`1.3 × 10⁻⁷`), "1 in N" in the tooltip. SOCRATES values keep the `max_prob` label |
 | TCA | Time of Closest Approach; display "Time until closest approach" / "До ближайшего сближения" |
 | Proposals | Up to four computed candidates. Show fewer if fewer exist |
 | Selection | Shared selected candidate, separate from each human's Approve. Selecting an alternative is not a counter |
@@ -41,6 +45,8 @@ The [assigned-fleet user flow](user-flow.md) is the starting point. The [specifi
 **Dev off:** Convex names the pinned OMM catalog index through `catalog.snapshot.ommUrl`. The browser loads the index and group files from `web/public/snapshots/`, checks their hashes in a secure context, and propagates OMM directly through the shared worker. Missing or invalid OMM keeps a waiting/error state. Real mode never calls the development `/api/catalog` TLE loader or silently substitutes local synthetic incidents. The loader and renderer are merged. The target backend demo run may separately process explicitly labeled simulated encounters through the real services.
 
 Current queue geometry is supplied by SOCRATES. Restricting those rows to catalog object IDs does not re-screen them numerically against the newer GP elements. Assigned-fleet scanning remains a separate implementation task. See [data preparation](../data/README.md) for the pinned sources, publication scripts and static catalog path.
+
+**Decision, October 25, 2026 (Adil; Kostya and Andrew to confirm):** the frontend stops presenting `events.catalogPairs` as the working queue. My Incidents shows the signed-in fleet's scan results (`events.myQueue`) and stays empty until a scan has run. SOCRATES becomes the reference each scan event is checked against (`EventRow.reference`, spec §2.2). `catalogPairs` remains available for a separate Explore view. Owners: `convex/scans.ts` (Kostya, round 2 in #6), the queue UI under `web/src/components/queue/` (Adil, round 2).
 
 Both modes live in both Git branches. `main` is a branch, not a runtime switch. CelesTrak remains the source in either format. OMM supports larger catalog IDs and structured exchange, but changing serialization alone does not guarantee better orbit accuracy. See [CelesTrak's format documentation](https://celestrak.org/NORAD/documentation/gp-data-formats.php).
 
