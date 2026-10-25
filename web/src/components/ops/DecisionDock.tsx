@@ -1,19 +1,19 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Check, CheckCheck, Languages, Mic, MicOff, Send, Sparkles } from "lucide-react";
+import { CheckCheck, Languages, Mic, MicOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { engine } from "@/lib/ops/engine";
-import { fmtCountdown, fmtMiss, fmtWhen } from "@/lib/ops/format";
+import { fmtWhen } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent, DecisionOption, Party, Reply } from "@/lib/ops/types";
 import { sfx } from "@/lib/sound";
 import { useNow } from "@/lib/useNow";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { Brief, ObjectChip } from "./Entity";
+import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 
-// The dispatcher's decision, in the middle of the screen (ROOM-5, ROOM-7): the summary,
+// The dispatcher's decision, in the middle of the screen (ROOM-5, ROOM-7): the plan cards live in
+// components/proposals; this file keeps the room states around them. Originally: the summary,
 // four options with the agents' pick marked, and a free answer by text or voice.
 // Then the room: waiting for the other side, their reply with its translation, the result.
 
@@ -104,140 +104,7 @@ export function DecisionDock() {
 /* ---------------------------------------------------------------- decide */
 
 export function Decide({ e, viewer, now, embedded = false }: { e: ConjunctionEvent; viewer: "a" | "b"; now: number; embedded?: boolean }) {
-  const autopilot = useOps((s) => s.autopilot && s.actAs !== viewer);
-  const options = e.options ?? [];
-  const rec = options.find((o) => o.recommended) ?? options[0];
-  const [pick, setPick] = useState<string | undefined>(rec?.id);
-  const [text, setText] = useState("");
-  const me = partyOf(e, viewer);
-  const chosen = options.find((o) => o.id === pick) ?? rec;
-  const isRec = chosen?.recommended ?? true;
-
-  const submit = (kind: "approve" | "reject") => {
-    const note = text.trim() || undefined;
-    if (kind === "reject") {
-      sfx.click();
-      engine.decide(e.id, viewer, { decision: "vetoed", note: note ?? "rejected by the dispatcher" });
-      return;
-    }
-    sfx.chime();
-    if (isRec && !note) engine.decide(e.id, viewer, { decision: "approved" });
-    else if (isRec) engine.decide(e.id, viewer, { decision: "countered", note });
-    else engine.decide(e.id, viewer, { decision: "countered", note, preferred: { mover: chosen!.mover, action: chosen!.action } });
-  };
-
-  const primaryLabel = !isRec ? "Send this plan" : text.trim() ? "Send counter" : "Approve plan";
-  const recText = rec ? optionText(e, rec) : null;
-
-  return (
-    <div className="text-fg">
-      {/* header: the question, who asks it, how long there is */}
-      <div className="flex items-start gap-3 px-5 pb-4 pt-5">
-        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
-          {me?.country ? <Flag code={me.country} h={36} /> : null}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 text-[11px] font-medium text-orange">
-            <span className="pulse-dot" style={{ width: 5, height: 5 }} /> Your decision · plan v{e.proposal?.version ?? 1}
-          </div>
-          <div className="mt-1 text-[19px] font-semibold leading-tight tracking-[-0.02em] text-white">Choose a plan for {me?.operator.replace(/\s*\(synthetic\)/i, "") ?? "your side"}</div>
-          {recText && (
-            <div className="mt-1 text-[13px] leading-snug text-neutral-400">
-              The agents recommend: <span className="text-neutral-200">{recText.verb.toLowerCase()} {recText.who ? <ObjectChip e={e} side={recText.who} size="sm" /> : "for the next CDM"}</span>
-            </div>
-          )}
-        </div>
-        <div className="shrink-0 text-right">
-          <div className="tnum text-[20px] font-semibold leading-none tracking-[-0.02em] text-white">{now ? fmtCountdown(e.tca - now).replace("T−", "") : ""}</div>
-          <div className="mt-1 text-[11px] text-neutral-500">until closest approach</div>
-        </div>
-      </div>
-
-      {!embedded && e.summary && (
-        <div className="mx-5 mb-3 rounded-[12px] bg-white/[0.03] p-3.5">
-          <Brief e={e} lines={e.summary} skipOptions />
-        </div>
-      )}
-
-      {/* plans as full-width rows: what you do, what it costs, what you get */}
-      <div className="mx-5 overflow-hidden rounded-[14px] bg-white/[0.02] shadow-[0_0_0_1px_rgba(255,255,255,0.07)]">
-        {options.map((o, i) => (
-          <OptionRow key={o.id} e={e} o={o} active={chosen?.id === o.id} index={i} last={i === options.length - 1} onPick={() => setPick(o.id)} />
-        ))}
-      </div>
-
-      <div className="px-5 pt-3">
-        <VoiceInput value={text} onChange={setText} onEnter={() => submit("approve")} lang={me?.language ?? "English"} />
-      </div>
-
-      <div className="mt-4 flex items-center gap-2 border-t border-white/[0.07] px-5 py-3">
-        {autopilot ? (
-          <span className="flex items-center gap-1.5 text-[12px] text-neutral-500">
-            <Sparkles size={12} className="text-blue" /> Autopilot answers in a few seconds
-          </span>
-        ) : (
-          <span className="text-[12px] text-neutral-500">{e.b.kind === "debris" ? "Only your approval is needed: debris has no operator." : "Both sides must approve the same plan."}</span>
-        )}
-        <button className="btn ml-auto h-9 px-3.5 text-[13px] text-neutral-300 hover:text-red" onClick={() => submit("reject")}>
-          Reject
-        </button>
-        <button className="btn btn-primary h-9 px-4 text-[13px]" onClick={() => submit("approve")}>
-          {isRec && !text.trim() ? <Check size={14} /> : <Send size={13} />}
-          {primaryLabel}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** One plan as a row: the action in words, the cost underneath, the result on the right. */
-function OptionRow({ e, o, active, index, last, onPick }: { e: ConjunctionEvent; o: DecisionOption; active: boolean; index: number; last: boolean; onPick: () => void }) {
-  const t = optionText(e, o);
-  const lead = o.burnAt ? Math.round((e.tca - o.burnAt) / 3600_000) : null;
-  const meta =
-    o.action === "wait"
-      ? "No burn. The next conjunction message decides."
-      : `Burn ${fmtWhen(o.burnAt!)}${lead !== null ? `, ${lead} h before closest approach` : ""} · ${(o.fuelKg * 1000).toFixed(1)} g fuel`;
-  const after = o.missAfterM;
-  return (
-    <motion.button
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.05 + index * 0.05, duration: 0.25 }}
-      onClick={() => {
-        sfx.click();
-        onPick();
-      }}
-      onPointerEnter={() => sfx.hover()}
-      className={`relative flex w-full items-start gap-3.5 px-4 py-3.5 text-left transition-colors duration-200 ${last ? "" : "border-b border-white/[0.06]"} ${active ? "bg-white/[0.06]" : "hover:bg-white/[0.03]"}`}
-    >
-      {active && <motion.span layoutId={`plan-sel-${e.id}`} className="absolute inset-y-0 left-0 w-[3px] bg-white" transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
-      <span
-        className="mt-[3px] grid h-4 w-4 shrink-0 place-items-center rounded-full transition-colors"
-        style={{ boxShadow: `inset 0 0 0 1.5px ${active ? "#fff" : "rgba(255,255,255,0.28)"}`, background: active ? "#fff" : "transparent" }}
-      >
-        {active && <span className="h-1.5 w-1.5 rounded-full bg-black" />}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[14.5px] font-semibold leading-snug text-white">
-          {t.verb}
-          {t.who ? <ObjectChip e={e} side={t.who} size="sm" /> : <span>for the next CDM</span>}
-          {o.action !== "wait" && <span className="tnum font-normal text-neutral-400">by {o.dvMs} m/s</span>}
-          {o.recommended && (
-            <span className="ml-1 rounded-full bg-white px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-[0.06em] text-black">Recommended</span>
-          )}
-        </span>
-        <span className="tnum mt-1 block text-[12.5px] text-neutral-400">{meta}</span>
-        <span className="mt-1 block text-[12.5px] leading-[1.5] text-neutral-500">{o.why}</span>
-      </span>
-      <span className="shrink-0 pt-0.5 text-right">
-        <span className="tnum block text-[18px] font-semibold leading-none tracking-[-0.02em]" style={{ color: o.action === "wait" ? "var(--red)" : "#fff" }}>
-          {fmtMiss(after)}
-        </span>
-        <span className="tnum mt-1 block text-[11px] text-neutral-500">from {fmtMiss(e.missM)}</span>
-      </span>
-    </motion.button>
-  );
+  return <ProposalPanel e={e} viewer={viewer} now={now} embedded={embedded} />;
 }
 
 /* ----------------------------------------------------------------- voice */
@@ -254,7 +121,7 @@ type Recognition = {
 };
 
 /** Free answer by text or by voice (Web Speech API where the browser has it). */
-function VoiceInput({ value, onChange, onEnter, lang }: { value: string; onChange: (v: string) => void; onEnter: () => void; lang: string }) {
+export function VoiceInput({ value, onChange, onEnter, lang }: { value: string; onChange: (v: string) => void; onEnter: () => void; lang: string }) {
   const [listening, setListening] = useState(false);
   const rec = useRef<Recognition | null>(null);
   const [supported, setSupported] = useState(true);
@@ -332,7 +199,7 @@ function VoiceInput({ value, onChange, onEnter, lang }: { value: string; onChang
 
 export function Waiting({ e, other, mine, now }: { e: ConjunctionEvent; other: "a" | "b"; mine: Reply; now: number }) {
   const them = partyOf(e, other);
-  const verb = mine.decision === "approved" ? "You approved" : mine.decision === "vetoed" ? "You rejected" : "You sent a counter";
+  const verb = answerVerb(mine, "You");
   return (
     <div className="flex items-center gap-3 px-4 py-3.5">
       <span className="relative grid h-11 w-11 shrink-0 place-items-center">
@@ -347,7 +214,7 @@ export function Waiting({ e, other, mine, now }: { e: ConjunctionEvent; other: "
           <WaitingDots />
         </div>
         <div className="mt-0.5 text-[11px] text-muted">
-          {verb} v{e.proposal?.version}
+          {verb}
           {mine.note ? ` · “${mine.note}”` : ""}
           {them?.language && them.language !== "English" ? ` · translated to ${them.language}` : ""}
         </div>
@@ -375,6 +242,14 @@ function WaitingDots() {
   );
 }
 
+/** "You approved P1", "Polar Sat selected P3 for review": how an answer was given, in plain words. */
+function answerVerb(r: Reply, who: string) {
+  if (r.via === "select") return `${who} selected ${r.label ?? "another plan"} for review`;
+  if (r.decision === "approved") return `${who} approved${r.label ? ` ${r.label}` : ""}`;
+  if (r.decision === "vetoed") return `${who} vetoed${r.label ? ` ${r.label}` : ""}`;
+  return `${who} sent a message`;
+}
+
 export function TheirReply({ e, r }: { e: ConjunctionEvent; r: Reply }) {
   const them = partyOf(e, r.side);
   const ok = r.decision === "approved";
@@ -387,9 +262,11 @@ export function TheirReply({ e, r }: { e: ConjunctionEvent; r: Reply }) {
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-semibold tracking-[-0.01em]" style={{ color }}>
-            {them?.operator.replace(/\s*\(synthetic\)/i, "") ?? "Other side"} {ok ? "approved" : r.decision === "vetoed" ? "rejected" : "sent a counter"}
+            {answerVerb(r, them?.operator.replace(/\s*\(synthetic\)/i, "") ?? "Other side")}
           </div>
-          <div className="text-[11px] text-muted">{ok ? "Both sides agree on this version." : "The agents take this as a new constraint and re-plan."}</div>
+          <div className="text-[11px] text-muted">
+            {ok ? "Both sides agree on this version." : r.via === "select" ? "Both sides review it now. Every approval was reset." : "The agents take this as a new constraint and re-plan."}
+          </div>
         </div>
       </div>
       {r.note && (
