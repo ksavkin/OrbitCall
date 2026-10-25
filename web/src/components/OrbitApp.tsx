@@ -28,6 +28,7 @@ import { DecisionDock } from "@/components/ops/DecisionDock";
 import { ResolutionOverlay } from "@/components/ops/Resolution";
 import { IncidentView, setIncidentView } from "@/components/ops/IncidentView";
 import { RoomsScreen } from "@/components/rooms/RoomsScreen";
+import { ObserverFeed } from "@/components/observer/feed";
 import { ScenarioBar } from "@/components/ops/ScenarioBar";
 import { useOps } from "@/lib/ops/store";
 import { sceneRef } from "@/lib/sceneRef";
@@ -52,6 +53,7 @@ export function OrbitApp() {
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/50 to-transparent" />
       <WeatherSync />
       <OpsSync />
+      <ObserverFeed />
       <Director />
       {/* backend half of the Dev Switch: only with a Convex client, and never in synthetic mode */}
       {!dev && CONVEX_ENABLED && <BackendSync />}

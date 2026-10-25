@@ -21,9 +21,9 @@ import { ObjectChip, RichLine } from "./Entity";
 // Left: the case. Center: what is happening now, or the dispatcher's decision. Right: the agents.
 // It collapses to a bar so the globe (and the cinematic camera) can be watched, and expands back.
 
-const STEPS = ["Detected", "Analysis", "Negotiation", "Decision", "Scheduling", "Verification"];
+export const STEPS = ["Detected", "Analysis", "Negotiation", "Decision", "Scheduling", "Verification"];
 
-function stepOf(e: ConjunctionEvent) {
+export function stepOf(e: ConjunctionEvent) {
   switch (e.status) {
     case "new":
       return 0;

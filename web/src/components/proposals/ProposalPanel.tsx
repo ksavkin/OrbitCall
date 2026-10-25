@@ -73,9 +73,11 @@ export function ProposalPanel({
   return (
     <div className="text-fg">
       <div className="flex items-start gap-3 px-5 pb-3 pt-5">
-        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
-          {me?.country ? <Flag code={me.country} h={36} /> : null}
-        </span>
+        {!readOnly && (
+          <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
+            {me?.country ? <Flag code={me.country} h={36} /> : null}
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           <div className={`flex items-center gap-2 text-[11px] font-medium ${readOnly ? "text-neutral-500" : "text-orange"}`}>
             {!readOnly && <span className="pulse-dot" style={{ width: 5, height: 5 }} />}
