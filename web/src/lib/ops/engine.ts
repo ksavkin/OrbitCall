@@ -36,8 +36,10 @@ export interface SpanSpec {
 export interface Decision {
   decision: Exclude<Approval, "pending">;
   note?: string;
-  /** Counter as a structured choice (spec §2 #4). */
+  /** Another plan selected for shared review (spec §4.1: not a counter, not an approval). */
   preferred?: { mover: "a" | "b" | "none"; action: "raise" | "lower" | "wait" };
+  via?: "approve" | "veto" | "select" | "message";
+  label?: string;
   /** Original wording before translation. */
   original?: string;
   lang?: string;
@@ -277,9 +279,10 @@ export class Engine {
     useOps.setState((s) => ({ humans: s.humans.filter((h) => !(h.eventId === eventId && h.side === side)) }));
     this.update(eventId, (e) => ({ approvals: { ...e.approvals, [side]: d.decision } }));
     useOps.setState((s) => ({
-      replies: [...s.replies.slice(-30), { eventId, side, decision: d.decision, version, note: d.note, original: d.original, lang: d.lang, t: Date.now() }],
+      replies: [...s.replies.slice(-30), { eventId, side, decision: d.decision, via: d.via, label: d.label, version, note: d.note, original: d.original, lang: d.lang, t: Date.now() }],
     }));
-    this.log(side === "a" ? "humanA" : "humanB", `${d.decision === "approved" ? "Approved" : d.decision === "vetoed" ? "Vetoed" : "Countered"} proposal${d.note ? ` · “${d.note}”` : ""}`, d.decision === "approved" ? "info" : "warn", { eventId });
+    const verb = d.via === "select" ? `Selected ${d.label ?? "another plan"} for review` : d.decision === "approved" ? "Approved" : d.decision === "vetoed" ? "Vetoed" : "Sent a message on";
+    this.log(side === "a" ? "humanA" : "humanB", `${verb}${d.via === "select" ? "" : " proposal"}${d.note ? ` · “${d.note}”` : ""}`, d.decision === "approved" ? "info" : "warn", { eventId });
     fn(d);
   }
 

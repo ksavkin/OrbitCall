@@ -89,6 +89,10 @@ export interface Reply {
   eventId: string;
   side: "a" | "b";
   decision: Exclude<Approval, "pending">;
+  /** How the answer was given: an explicit approve or veto, a shared selection of another plan, or a message (counter). */
+  via?: "approve" | "veto" | "select" | "message";
+  /** Plan label for a selection ("P3"). */
+  label?: string;
   /** Proposal version the answer was about. */
   version?: number;
   note?: string;
@@ -133,6 +137,15 @@ export interface ConjunctionEvent {
   outcome?: { checks: { label: string; detail: string; ok: boolean }[]; next: string[]; resolvedAt: number | null };
   /** Options shown to the dispatcher; exactly one has `recommended` (AGT-2). */
   options?: DecisionOption[];
+  /**
+   * The plan both sides review now (spec §2.3 `selected`, §4.1). Selecting is shared and is not approval:
+   * every new selection or revision bumps `generation` and resets the required approvals.
+   */
+  selection?: { optionId: string; generation: number; by: "a" | "b" | "agents"; at: number };
+  /** The agents' own pick, kept apart from the selection so a human's choice never reads as the agents'. */
+  agentPick?: { mover: "a" | "b" | "none"; action: Action };
+  /** Why approvals were last reset, for the room ("P2 · R2 created, both approvals reset"). */
+  lastReset?: { at: number; reason: string };
   createdAt: number;
   scenario?: string;
 }

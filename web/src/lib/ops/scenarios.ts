@@ -359,8 +359,12 @@ async function check(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal
   }
 }
 
-/** Four options for the dispatcher from the fixed set (raise, lower, wait), the agents' pick marked. */
-function optionsFor(e: ConjunctionEvent, pr: Proposal): DecisionOption[] {
+/**
+ * Up to four plan cards from the fixed set (raise, lower, wait). The current proposal is always one of them
+ * with its exact numbers; `pick` (the agents' own choice) is marked recommended, so a plan a person selected
+ * never reads as the agents' (spec §2.3 `recommendedBy`, §4.1).
+ */
+function optionsFor(e: ConjunctionEvent, pr: Proposal, pick: { mover: "a" | "b" | "none"; action: "raise" | "lower" | "wait" }): DecisionOption[] {
   const debris = e.b.kind === "debris";
   const dv = pr.dvMs || 0.05;
   const shapes: { mover: "a" | "b" | "none"; action: "raise" | "lower" | "wait"; leadH: number }[] = debris
@@ -376,7 +380,7 @@ function optionsFor(e: ConjunctionEvent, pr: Proposal): DecisionOption[] {
         { mover: "a", action: "lower", leadH: 6 },
         { mover: "none", action: "wait", leadH: 0 },
       ];
-  const out = shapes.map((sh, i) => {
+  const out: DecisionOption[] = shapes.map((sh) => {
     const p = proposal(e, { version: 0, mover: sh.mover, action: sh.action, dvMs: sh.action === "wait" ? 0 : dv, leadH: sh.leadH, crossDeg: crossOf(e), rationale: "" });
     const g = (p.fuelKg * 1000).toFixed(1);
     const why =
@@ -389,27 +393,40 @@ function optionsFor(e: ConjunctionEvent, pr: Proposal): DecisionOption[] {
             : sh.action === "lower"
               ? `Same cost as raising (${g} g); ends below the original shell.`
               : `Uses A's electric thruster: ${g} g of krypton.`;
-    return { id: `opt${i}`, mover: p.mover, action: p.action, dvMs: p.dvMs, burnAt: p.burnAt, fuelKg: p.fuelKg, missAfterM: p.missAfterM, recommended: false, why };
+    return { id: `${sh.mover}-${sh.action}-${sh.leadH}`, mover: p.mover, action: p.action, dvMs: p.dvMs, burnAt: p.burnAt, fuelKg: p.fuelKg, missAfterM: p.missAfterM, recommended: false, why };
   });
-  const rec = out.findIndex((o) => o.mover === pr.mover && o.action === pr.action);
-  const pick: DecisionOption = { id: "rec", mover: pr.mover, action: pr.action, dvMs: pr.dvMs, burnAt: pr.burnAt, fuelKg: pr.fuelKg, missAfterM: pr.missAfterM, recommended: true, why: pr.rationale };
-  if (rec >= 0) out[rec] = { ...pick, id: out[rec].id };
-  else out[0] = pick;
-  // recommended first
+  // the current proposal replaces the card with the same move, with its exact numbers and reasoning
+  const cur = out.findIndex((o) => o.mover === pr.mover && o.action === pr.action);
+  const live: DecisionOption = { id: cur >= 0 ? out[cur].id : `${pr.mover}-${pr.action}-v${pr.version}`, mover: pr.mover, action: pr.action, dvMs: pr.dvMs, burnAt: pr.burnAt, fuelKg: pr.fuelKg, missAfterM: pr.missAfterM, recommended: false, why: pr.rationale };
+  if (cur >= 0) out[cur] = live;
+  else out[out.length - 2] = live;
+  for (const o of out) o.recommended = o.mover === pick.mover && o.action === pick.action;
+  // the agents' pick first, the rest in a fixed order so card labels stay put between revisions
   return out.sort((x, y) => Number(y.recommended) - Number(x.recommended));
 }
 
-async function openRoom(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal) {
+/** Publish a revision: it becomes the shared selection and every required approval resets (ROOM-11). */
+async function openRoom(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal, by: "a" | "b" | "agents" = "agents") {
   const id = e.id;
+  const prev = eng.event(id);
+  // the agents' pick changes only when the agents revise, never because a person selected a plan
+  const pick = by === "agents" || !prev?.agentPick ? { mover: pr.mover, action: pr.action } : prev.agentPick;
+  const options = optionsFor(e, pr, pick);
+  const selected = options.find((o) => o.mover === pr.mover && o.action === pr.action)!;
+  const label = `P${options.indexOf(selected) + 1}`;
+  const revision = (prev?.proposals ?? []).filter((x) => x.mover === pr.mover && x.action === pr.action && x.version !== pr.version).length + 1;
   eng.update(id, (ev) => ({
     proposals: [...(ev.proposals ?? []).filter((x) => x.version !== pr.version), pr],
   }));
-  eng.update(id, {
+  eng.update(id, (ev) => ({
     proposal: pr,
-    options: optionsFor(e, pr),
+    options,
+    agentPick: pick,
+    selection: { optionId: selected.id, generation: (ev.selection?.generation ?? 0) + 1, by, at: Date.now() },
+    lastReset: pr.version > 1 ? { at: Date.now(), reason: `${label} · R${revision} ${by === "agents" ? "created by the agents" : "selected for review"}, ${e.b.kind === "debris" ? "approval reset" : "both approvals reset"}` } : ev.lastReset,
     status: "proposal",
     approvals: { a: "pending", b: e.b.kind === "debris" ? "approved" : "pending" },
-  });
+  }));
   await eng.span({ agent: "analyst", target: "host", kind: "handoff", name: `Proposal v${pr.version} ready`, eventId: id }, 300, gen);
   await eng.span({ agent: "host", target: "room", kind: "tool", name: "open_room", eventId: id, output: { room: `room_${id.toLowerCase()}`, languages: ["en", "ru"] } }, 420, gen);
   await eng.span(
@@ -463,7 +480,7 @@ async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Propo
     eng.update(e.id, { status: "agents", agentsWorking: true, approvals: { a: "pending", b: "pending" } });
     const target = no.side === "A" ? "advocateA" : "advocateB";
     await eng.span(
-      { agent: "host", target, kind: "handoff", name: `${no.d.decision === "countered" ? "Counter" : "Veto"} from Operator ${no.side}`, eventId: e.id, input: { note: no.d.note ?? "", proposal: pr.version } },
+      { agent: "host", target, kind: "handoff", name: `${no.d.via === "select" ? `${no.d.label ?? "Plan"} selected by` : no.d.decision === "countered" ? "Message from" : "Veto from"} Operator ${no.side}`, eventId: e.id, input: { note: no.d.note ?? "", proposal: pr.version } },
       320,
       gen,
     );
@@ -478,8 +495,8 @@ async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Propo
           dvMs: pref.action === "wait" ? 0 : pr.dvMs || 0.05,
           leadH: pref.action === "wait" ? 0 : pref.mover === "b" ? 8 : 6,
           crossDeg: crossOf(e),
-          rationale: `${partyName(e, no.side === "A" ? "a" : "b")} picked “${planWords(e, { mover: pref.mover, action: pref.action, dvMs: pref.action === "wait" ? 0 : pr.dvMs || 0.05 })}” instead of the agents' “${planWords(e, pr)}”${no.d.note ? ` and said: “${no.d.note}”` : ""}. SGP4 recomputed the new plan before it went back to both sides.`,
-          reason: `${partyName(e, no.side === "A" ? "a" : "b")} picked a different plan`,
+          rationale: `${partyName(e, no.side === "A" ? "a" : "b")} selected “${planWords(e, { mover: pref.mover, action: pref.action, dvMs: pref.action === "wait" ? 0 : pr.dvMs || 0.05 })}” for review instead of “${planWords(e, pr)}”${no.d.note ? ` and said: “${no.d.note}”` : ""}. SGP4 recomputed it before it went back to both sides. Selecting is not approving: both sides approve it again.`,
+          reason: `${partyName(e, no.side === "A" ? "a" : "b")} selected ${no.d.label ?? "another plan"} for review`,
         })
       : proposal(eng.event(e.id)!, {
       version: pr.version + 1,
@@ -509,7 +526,7 @@ async function agree(eng: Engine, gen: number, e: ConjunctionEvent, first: Propo
       gen,
     );
     await check(eng, gen, eng.event(e.id)!, next);
-    await openRoom(eng, gen, eng.event(e.id)!, next);
+    await openRoom(eng, gen, eng.event(e.id)!, next, pref ? (no.side === "A" ? "a" : "b") : "agents");
     pr = next;
   }
   // four rounds without agreement: hand it to the people, never schedule a rejected plan (AGT-10)
