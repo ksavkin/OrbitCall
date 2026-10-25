@@ -17,14 +17,21 @@ export interface MemoryItemDraft { companyId: string; demoRunId: string; text: s
 const MAX_TEXT = 280, MAX_SOURCE_MESSAGES = 20;
 // Source event IDs reach shareable text, so they must be opaque identifiers, never prose.
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_:.-]{0,127}$/;
-const APPROVAL = /approv|authori[sz]|\bsign(?:ed|s|ing)?[\s-]*off\b|signoff|veto|consent|agree|\bgreen[\s-]*light|\bgo[\s-]*ahead\b|\bcleared to\b/i;
+// "acceptable" describes risk, not a decision, so only accept/accepted/acceptance count.
+const APPROVAL = new RegExp([
+  "approv", "authori[sz]", "\\bsign(?:ed|s|ing)?[\\s-]*off\\b", "signoff", "\\bsign(?:ed|s)?\\b", "veto", "consent", "\\bagree",
+  "accept(?!ab)", "\\bokay(?:ed|s)?\\b", "\\bok['’]?d\\b", "\\bgreen[\\s-]*li(?:ght|t)", "\\bgo-ahead\\b", "\\bthe go ahead\\b",
+  "\\bcleared to\\b", "permi(?:t|ssion)", "\\bselect(?:ed|ion)?\\b", "ratif", "endors",
+  "одобр", "соглас", "утвержд", "разреш", "批准", "同意", "授权", "核准",
+].join("|"), "iu");
 // Fuel masses and protected window times are private policy values (§6); memory keeps the preference, not the number.
 const PRIVATE_VALUES = [
-  /\d\s*(?:kg|kilograms?|g|grams?)\b/i,
+  /\d\s*(?:kg|kilo(?:gram)?s?|g|grams?|кг)(?!\p{L})/iu,
   /\b(?:fuel|reserve|propellant)\b[^.;]{0,24}\d/i,
   /\d{4}-\d{2}-\d{2}/,
   /\d:\d{2}/,
-  /\b\d{3,4}\s*(?:z|utc|gmt)\b/i,
+  /\b\d{1,2}[h.]\d{2}\b/i,
+  /\b\d{3,4}\s*(?:z|utc|gmt|hours?|hrs?)\b/i,
   /\b\d{1,2}\s*(?:am|pm)\b/i,
 ];
 
@@ -41,8 +48,10 @@ function textProblem(value: unknown): AnalystError | null {
   if (typeof value !== "string" || !value.trim() || value.trim().length > MAX_TEXT || /[\u0000-\u001f\u007f]/.test(value)) {
     return new AnalystError("INVALID_OUTPUT", `Memory text must be a single line of 1 to ${MAX_TEXT} characters.`);
   }
-  if (APPROVAL.test(value)) return new AnalystError("CONSTRAINT_CHECK_FAILED", "Memory cannot record or carry over an approval.");
-  if (PRIVATE_VALUES.some(pattern => pattern.test(value))) {
+  // Fullwidth letters and digits must not slip past the ASCII patterns.
+  const normalized = value.normalize("NFKC");
+  if (APPROVAL.test(normalized)) return new AnalystError("CONSTRAINT_CHECK_FAILED", "Memory cannot record or carry over an approval.");
+  if (PRIVATE_VALUES.some(pattern => pattern.test(normalized))) {
     return new AnalystError("CONSTRAINT_CHECK_FAILED", "Memory cannot store raw private values such as fuel mass or protected window times.");
   }
   return null;
