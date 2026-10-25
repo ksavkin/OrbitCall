@@ -102,6 +102,7 @@ function Controls({ assigned }: { assigned: string[] }) {
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 12 }}
       transition={{ duration: 0.3, ease: EASE }}
       className="pointer-events-auto absolute bottom-[48px] left-1/2 z-30 -translate-x-1/2"
     >
