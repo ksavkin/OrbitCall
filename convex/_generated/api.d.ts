@@ -9,6 +9,7 @@
  */
 
 import type * as advocates from "../advocates.js";
+import type * as agentLogs from "../agentLogs.js";
 import type * as agentRuns from "../agentRuns.js";
 import type * as agentSummaries from "../agentSummaries.js";
 import type * as agents from "../agents.js";
@@ -52,6 +53,7 @@ import type * as lib_decision from "../lib/decision.js";
 import type * as lib_events from "../lib/events.js";
 import type * as lib_host from "../lib/host.js";
 import type * as lib_hostContext from "../lib/hostContext.js";
+import type * as lib_hostPublish from "../lib/hostPublish.js";
 import type * as lib_incident from "../lib/incident.js";
 import type * as lib_operatorAccess from "../lib/operatorAccess.js";
 import type * as lib_orbitClient from "../lib/orbitClient.js";
@@ -61,6 +63,7 @@ import type * as lib_proposals from "../lib/proposals.js";
 import type * as lib_publishCandidates from "../lib/publishCandidates.js";
 import type * as lib_queue from "../lib/queue.js";
 import type * as lib_runs from "../lib/runs.js";
+import type * as lib_scheduleClient from "../lib/scheduleClient.js";
 import type * as lib_tiger from "../lib/tiger.js";
 import type * as lib_tigerExport from "../lib/tigerExport.js";
 import type * as lib_validators from "../lib/validators.js";
@@ -72,6 +75,7 @@ import type * as operators from "../operators.js";
 import type * as ops from "../ops.js";
 import type * as policies from "../policies.js";
 import type * as proposals from "../proposals.js";
+import type * as providerReadiness from "../providerReadiness.js";
 import type * as rationaleCheck from "../rationaleCheck.js";
 import type * as reports from "../reports.js";
 import type * as riskMonitor from "../riskMonitor.js";
@@ -86,6 +90,7 @@ import type * as schema_rooms from "../schema/rooms.js";
 import type * as schema_scans from "../schema/scans.js";
 import type * as schema_schedule from "../schema/schedule.js";
 import type * as session from "../session.js";
+import type * as spans from "../spans.js";
 import type * as verifications from "../verifications.js";
 
 import type {
@@ -96,6 +101,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   advocates: typeof advocates;
+  agentLogs: typeof agentLogs;
   agentRuns: typeof agentRuns;
   agentSummaries: typeof agentSummaries;
   agents: typeof agents;
@@ -139,6 +145,7 @@ declare const fullApi: ApiFromModules<{
   "lib/events": typeof lib_events;
   "lib/host": typeof lib_host;
   "lib/hostContext": typeof lib_hostContext;
+  "lib/hostPublish": typeof lib_hostPublish;
   "lib/incident": typeof lib_incident;
   "lib/operatorAccess": typeof lib_operatorAccess;
   "lib/orbitClient": typeof lib_orbitClient;
@@ -148,6 +155,7 @@ declare const fullApi: ApiFromModules<{
   "lib/publishCandidates": typeof lib_publishCandidates;
   "lib/queue": typeof lib_queue;
   "lib/runs": typeof lib_runs;
+  "lib/scheduleClient": typeof lib_scheduleClient;
   "lib/tiger": typeof lib_tiger;
   "lib/tigerExport": typeof lib_tigerExport;
   "lib/validators": typeof lib_validators;
@@ -159,6 +167,7 @@ declare const fullApi: ApiFromModules<{
   ops: typeof ops;
   policies: typeof policies;
   proposals: typeof proposals;
+  providerReadiness: typeof providerReadiness;
   rationaleCheck: typeof rationaleCheck;
   reports: typeof reports;
   riskMonitor: typeof riskMonitor;
@@ -173,6 +182,7 @@ declare const fullApi: ApiFromModules<{
   "schema/scans": typeof schema_scans;
   "schema/schedule": typeof schema_schedule;
   session: typeof session;
+  spans: typeof spans;
   verifications: typeof verifications;
 }>;
 
