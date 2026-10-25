@@ -12,6 +12,9 @@ import { requireUser } from "./session";
 // in historyActions.ts, because `pg` needs the Node runtime and a "use node" file cannot hold mutations or queries.
 
 export const MAX_EXPORT_ATTEMPTS = 3;
+// A pending export not settled within this time is taken as lost (its action died) and may be queued again.
+// One attempt is bounded by the Tiger client's connect and statement timeouts, far below this.
+export const EXPORT_LEASE_MS = 5 * 60_000;
 // Delay before the second and third attempt.
 const RETRY_DELAYS_MS = [30_000, 120_000];
 // Only these can succeed on a later attempt; configuration, access and rejected statements need a person.
@@ -21,12 +24,16 @@ const RETRYABLE = new Set(["UPSTREAM_UNAVAILABLE", "RATE_LIMITED"]);
 const failureText = (code: string, message: string) => `${code}: ${message}`;
 const retryPending = (row: Doc<"observationExports">) => row.exportState === "failed" && row.attempts < MAX_EXPORT_ATTEMPTS
   && RETRYABLE.has(row.lastError?.split(":")[0] ?? "");
+// A new bounded round: retries ran out, the failure cannot be retried, or a pending export outlived its lease.
+const canRequeue = (row: Doc<"observationExports">, now: number) =>
+  (row.exportState === "failed" && !retryPending(row)) || (row.exportState === "pending" && now - row.updatedAt > EXPORT_LEASE_MS);
 
 /**
  * Queues one committed observation for export. The key is built from the event, demo run, source, metric, evidence
- * version and canonical time. The same observation again is a no-op; different content under an existing key is
- * rejected and never overwrites the stored row. An export whose retries ran out (or that cannot be retried) is
- * queued again for a new bounded round.
+ * version and canonical time. Simulated evidence must carry the event's current demo run (null outside a run) and
+ * real evidence no run, so old runs never reappear and one real observation has one key. The same observation
+ * again is a no-op; different content under an existing key is rejected and never overwrites the stored row.
+ * A failed export that will not be retried, or a pending one past its lease, is queued again for a new bounded round.
  */
 export const recordObservation = internalMutation({
   args: {
@@ -40,16 +47,25 @@ export const recordObservation = internalMutation({
     observationKey: v.string(), status: v.union(v.literal("queued"), v.literal("unchanged"), v.literal("retried")),
   }),
   handler: async (ctx, { eventId, observation }) => {
-    if (!await ctx.db.get(eventId)) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
+    const event = await ctx.db.get(eventId);
+    if (!event) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
     const fields = exportFields(eventId, observation);
+    const expectedRun = observation.simulated ? event.demoRunId ?? null : null;
+    if (observation.runId !== expectedRun) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message: observation.simulated ? "Simulated evidence must carry the event's current demo run." : "Real evidence carries no demo run.",
+      });
+    }
     const { observationKey } = fields;
     const existing = await ctx.db.query("observationExports").withIndex("by_key", q => q.eq("observationKey", observationKey)).unique();
     if (existing) {
       if (!sameContent(existing, fields)) {
         throw new ConvexError({ code: "INVALID_STATE", message: "This observation is already recorded with different content. Record it under a new evidence version." });
       }
-      if (existing.exportState !== "failed" || retryPending(existing)) return { observationKey, status: "unchanged" as const };
-      await ctx.db.patch(existing._id, { exportState: "pending", attempts: 0, updatedAt: Date.now() });
+      const now = Date.now();
+      if (!canRequeue(existing, now)) return { observationKey, status: "unchanged" as const };
+      await ctx.db.patch(existing._id, { exportState: "pending", attempts: 0, updatedAt: now });
       await ctx.scheduler.runAfter(0, internal.historyActions.exportObservation, { exportId: existing._id });
       return { observationKey, status: "retried" as const };
     }
@@ -121,8 +137,9 @@ async function markStale(ctx: MutationCtx, eventId: Id<"events">, error: string)
 
 /**
  * Publishes one Tiger read as the next cache version. `fetchedAt` is when the read started; a read that started
- * before the cached one is dropped. The cache stays stale while any of the event's exports is failed, because
- * Tiger then lacks an observation that Convex holds.
+ * before the cached one is dropped. The cache stays stale while any of the event's exports is failed or still
+ * pending, because Tiger may then lack an observation that Convex holds; the chart never shows fresh while a point
+ * is missing.
  */
 export const storeSeries = internalMutation({
   args: { eventId: v.id("events"), points: v.array(historyPoint), fetchedAt: v.number() },
@@ -130,10 +147,13 @@ export const storeSeries = internalMutation({
   handler: async (ctx, { eventId, points, fetchedAt }) => {
     const cache = await ctx.db.query("historySeries").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     if (cache && cache.seriesVersion > 0 && cache.fetchedAt > fetchedAt) return { stored: false };
-    const failed = await ctx.db.query("observationExports").withIndex("by_event", q => q.eq("eventId", eventId))
-      .filter(q => q.eq(q.field("exportState"), "failed")).first();
+    const unsettled = (state: "failed" | "pending") => ctx.db.query("observationExports").withIndex("by_event", q => q.eq("eventId", eventId))
+      .filter(q => q.eq(q.field("exportState"), state)).first();
+    const failed = await unsettled("failed");
+    const pending = failed ? null : await unsettled("pending");
     const row = {
-      seriesVersion: (cache?.seriesVersion ?? 0) + 1, points, stale: failed !== null, error: failed?.lastError ?? null, fetchedAt,
+      seriesVersion: (cache?.seriesVersion ?? 0) + 1, points, stale: failed !== null || pending !== null,
+      error: failed?.lastError ?? null, fetchedAt,
     };
     if (cache) await ctx.db.patch(cache._id, row);
     else await ctx.db.insert("historySeries", { eventId, ...row });
