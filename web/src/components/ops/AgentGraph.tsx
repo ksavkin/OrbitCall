@@ -1,8 +1,20 @@
 "use client";
 
 import { motion } from "motion/react";
-import { Check, User, X } from "lucide-react";
+import { Bot, Check, User, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRealMode } from "@/lib/backend/live";
+import {
+  backendName,
+  isLiveSpan,
+  isOther,
+  OTHER,
+  stageLabel,
+  VENDOR_LABEL,
+  vendorOf,
+  type LiveSpan,
+  type Vendor,
+} from "@/lib/backend/spans";
 import { fmtMs, fmtUsd } from "@/lib/ops/format";
 import { AGENTS, HUMANS, MODELS, TOOLS } from "@/lib/ops/roster";
 import { useOps } from "@/lib/ops/store";
@@ -11,21 +23,27 @@ import { Flag } from "@/components/ui/OwnerBadge";
 import { sfx } from "@/lib/sound";
 import { useNow } from "@/lib/useNow";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { NodeGlyph } from "./Glyphs";
+import { ClaudeGlyph, GrokGlyph, NodeGlyph } from "./Glyphs";
 import { EDGE } from "./meta";
 
 // Agent graph: the pipeline from docs/plan-v1.md §5 laid out top to bottom, data
 // sources on top, tools at the sides. Edges light up from live spans: a blue pulse
 // travels out while a call runs, a green one comes back with the answer.
+// Real mode draws backend runs (lib/backend/spans.ts): each run lights its own node, a checker's run its edge to the
+// run it checked, and an agent this build does not know gets the generic "other" node.
 
 export const GW = 400;
 export const GH = 540;
 
-const POS: Record<NodeId, [number, number]> = {
+type GraphId = NodeId | typeof OTHER;
+
+const POS: Record<GraphId, [number, number]> = {
   celestrak: [110, 34],
   socrates: [200, 34],
   spacetrack: [290, 34],
   monitor: [200, 108],
+  // only drawn when a span lands on it
+  other: [348, 108],
   keeptrack: [52, 190],
   analyst: [200, 190],
   sgp4: [348, 190],
@@ -59,7 +77,7 @@ const SKELETON: [NodeId, NodeId][] = [
 ];
 
 /** Orthogonal route with rounded corners, like the reference graph. */
-function route(a: NodeId, b: NodeId, k = 1) {
+function route(a: GraphId, b: GraphId, k = 1) {
   const [ax, ay0] = POS[a];
   const [bx, by0] = POS[b];
   const ay = ay0 * k;
@@ -80,9 +98,22 @@ function route(a: NodeId, b: NodeId, k = 1) {
   ].join("");
 }
 
-const edgeKey = (a: NodeId, b: NodeId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+const edgeKey = (a: GraphId, b: GraphId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 type EdgeState = "idle" | "used" | "call" | "human" | "failed";
+
+interface NodeStat {
+  running: number;
+  ok: number;
+  err: number;
+  cost: number;
+  calls: number;
+  ms: number;
+  /** Real mode: the node's newest backend run, and the newest model it recorded. */
+  last?: LiveSpan;
+  model?: string;
+  vendor?: Vendor;
+}
 
 /** With `fill`, the graph takes its container's full height and spreads the rows over it (never tighter than the base layout). */
 export function AgentGraph({ big = false, fill = false }: { big?: boolean; fill?: boolean }) {
@@ -108,43 +139,60 @@ export function AgentGraph({ big = false, fill = false }: { big?: boolean; fill?
   const humans = useOps((s) => s.humans);
   const focusAgent = useOps((s) => s.focusAgent);
   const parties = useOps((s) => s.events.find((e) => e.id === s.focusEvent)?.parties);
+  const real = useRealMode();
   const now = useNow(250);
 
-  const { edges, answers, nodeState } = useMemo(() => {
-    const edges = new Map<string, { a: NodeId; b: NodeId; state: EdgeState; from: NodeId }>();
+  const { edges, answers, nodeState, others } = useMemo(() => {
+    const edges = new Map<string, { a: GraphId; b: GraphId; state: EdgeState; from: GraphId }>();
     for (const [a, b] of SKELETON) edges.set(edgeKey(a, b), { a, b, state: "idle", from: a });
     const answers: { id: string; d: string; color: string }[] = [];
-    const nodeState = new Map<NodeId, { running: number; ok: number; err: number; cost: number; calls: number; ms: number }>();
-    const bump = (id: NodeId, k: "running" | "ok" | "err", s: Span) => {
-      const st = nodeState.get(id) ?? { running: 0, ok: 0, err: 0, cost: 0, calls: 0, ms: 0 };
-      st[k]++;
+    const nodeState = new Map<GraphId, NodeStat>();
+    // the backend names behind the generic node, for its tooltip
+    const others = new Set<string>();
+    const bump = (id: GraphId, k: "running" | "ok" | "err" | null, s: Span) => {
+      const st: NodeStat = nodeState.get(id) ?? { running: 0, ok: 0, err: 0, cost: 0, calls: 0, ms: 0 };
+      if (k) st[k]++;
       st.calls++;
       st.cost += s.costUsd ?? 0;
       st.ms += s.ms ?? 0;
       nodeState.set(id, st);
+      return st;
     };
     const rank: Record<EdgeState, number> = { idle: 0, used: 1, call: 3, human: 2, failed: 4 };
     for (const s of spans) {
-      const key = edgeKey(s.agent, s.target);
-      const prev = edges.get(key);
-      // a finished call keeps its line for a few seconds, then only the skeleton remains
-      // (all of a focused agent's lines stay, so its reach is readable)
-      const fresh = s.status === "running" || now - (s.t1 ?? s.t0) < 10_000 || s.agent === focusAgent || s.target === focusAgent;
-      let state: EdgeState = fresh ? "used" : "idle";
-      if (!fresh && !prev) continue;
-      if (s.status === "running") state = s.kind === "human" ? "human" : "call";
-      else if (s.status === "error" && now - (s.t1 ?? 0) < 6000) state = "failed";
-      if (!prev || rank[state] >= rank[prev.state]) edges.set(key, { a: s.agent, b: s.target, state, from: s.agent });
-      bump(s.agent, s.status === "running" ? "running" : s.status === "error" ? "err" : "ok", s);
-      if (s.status === "running") bump(s.target, "running", s);
-      if (s.status === "ok" && s.t1 && now - s.t1 < 900) answers.push({ id: s.id, d: route(s.agent, s.target, k), color: EDGE.answer });
+      const a: GraphId = s.agent;
+      const b: GraphId = s.target;
+      // a backend run names itself as its target: it lights its node, there is no edge to draw
+      if (a !== b) {
+        const key = edgeKey(a, b);
+        const prev = edges.get(key);
+        // a finished call keeps its line for a few seconds, then only the skeleton remains
+        // (all of a focused agent's lines stay, so its reach is readable)
+        const fresh = s.status === "running" || now - (s.t1 ?? s.t0) < 10_000 || s.agent === focusAgent || s.target === focusAgent;
+        if (fresh || prev) {
+          let state: EdgeState = fresh ? "used" : "idle";
+          if (s.status === "running") state = s.kind === "human" ? "human" : "call";
+          else if (s.status === "error" && now - (s.t1 ?? 0) < 6000) state = "failed";
+          if (!prev || rank[state] >= rank[prev.state]) edges.set(key, { a, b, state, from: a });
+        } else if (!real) continue; // a backend run still counts on its node after its line is gone
+      }
+      // a stalled or superseded backend run ("waiting") is neither an answer nor a failure
+      const st = bump(a, s.status === "running" ? "running" : s.status === "error" ? "err" : s.status === "waiting" ? null : "ok", s);
+      if (s.status === "running" && a !== b) bump(b, "running", s);
+      if (s.status === "ok" && s.t1 && now - s.t1 < 900 && a !== b) answers.push({ id: s.id, d: route(a, b, k), color: EDGE.answer });
+      if (isLiveSpan(s)) {
+        st.last = s;
+        st.model = s.model ?? st.model;
+        st.vendor = vendorOf(s) ?? st.vendor;
+        if (isOther(a)) others.add(backendName(s.backendAgent));
+      }
     }
     for (const h of humans) {
       const id: NodeId = h.side === "a" ? "humanA" : "humanB";
       edges.set(edgeKey("host", id), { a: "host", b: id, state: "human", from: "host" });
     }
-    return { edges, answers, nodeState };
-  }, [spans, humans, now, focusAgent, k]);
+    return { edges, answers, nodeState, others: [...others] };
+  }, [spans, humans, now, focusAgent, k, real]);
 
   const waitingHuman = new Set<NodeId>(humans.map((h) => (h.side === "a" ? "humanA" : "humanB")));
   // people come from the focused event: two deciding operators plus anyone the fix affects
@@ -153,7 +201,10 @@ export function AgentGraph({ big = false, fill = false }: { big?: boolean; fill?
     { id: "humanB", role: "b", operator: "Operator B", owner: "", country: null, language: null },
   ];
   const partyById = new Map(shownParties.map((p) => [p.id, p]));
-  const nodes = (Object.keys(POS) as NodeId[]).filter((id) => !id.startsWith("human") || partyById.has(id as HumanId));
+  const showOther = nodeState.has(OTHER) || [...edges.values()].some((e) => isOther(e.a) || isOther(e.b));
+  const nodes = (Object.keys(POS) as GraphId[]).filter((id) =>
+    isOther(id) ? showOther : !id.startsWith("human") || partyById.has(id as HumanId),
+  );
 
   return (
     <div ref={box} className="relative w-full select-none" style={{ aspectRatio: `${GW} / ${H}` }}>
@@ -204,18 +255,31 @@ export function AgentGraph({ big = false, fill = false }: { big?: boolean; fill?
         ))}
       </svg>
 
-      {nodes.map((id) => (
-        <GraphNode
-          key={id}
-          id={id}
-          big={big && (!fill || fit.roomy)}
-          st={nodeState.get(id)}
-          waiting={waitingHuman.has(id)}
-          dim={focusAgent !== null && id !== focusAgent}
-          focused={focusAgent === id}
-          party={partyById.get(id as HumanId)}
-        />
-      ))}
+      {nodes.map((id) => {
+        const node = (
+          <GraphNode
+            key={id}
+            id={id}
+            big={big && (!fill || fit.roomy)}
+            st={nodeState.get(id)}
+            real={real}
+            others={others}
+            waiting={waitingHuman.has(id as NodeId)}
+            dim={focusAgent !== null && id !== focusAgent}
+            focused={focusAgent === id}
+            party={partyById.get(id as HumanId)}
+          />
+        );
+        // the generic node comes with its runs, so it fades in instead of popping (opacity only: a transform here
+        // would become the containing block of the absolutely placed node)
+        return isOther(id) ? (
+          <motion.div key={id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}>
+            {node}
+          </motion.div>
+        ) : (
+          node
+        );
+      })}
     </div>
   );
 }
@@ -224,44 +288,65 @@ function GraphNode({
   id,
   big,
   st,
+  real,
+  others,
   waiting,
   dim,
   focused,
   party,
 }: {
-  id: NodeId;
+  id: GraphId;
   party?: Party;
   big: boolean;
-  st?: { running: number; ok: number; err: number; cost: number; calls: number; ms: number };
+  st?: NodeStat;
+  real: boolean;
+  /** The backend names behind the generic node. */
+  others: string[];
   waiting: boolean;
   dim: boolean;
   focused: boolean;
 }) {
+  const generic = isOther(id);
   const isAgent = id in AGENTS;
+  const agentLike = isAgent || generic;
   const isHuman = id.startsWith("human");
-  const size = isAgent ? (big ? 48 : 38) : isHuman ? (big ? 40 : 32) : big ? 34 : 28;
+  const size = agentLike ? (big ? 48 : 38) : isHuman ? (big ? 40 : 32) : big ? 34 : 28;
   const [x, y] = POS[id];
+  // real mode: the node's newest backend run says what it is doing; a stalled one glows orange without spinning
+  const last = real ? st?.last : undefined;
+  const stalled = last?.output.runStatus === "running" && last.output.stalled === true;
   const running = (st?.running ?? 0) > 0 || waiting;
   const ringColor = waiting ? EDGE.human : EDGE.call;
-  const label = isAgent
-    ? AGENTS[id as AgentId].short
-    : isHuman
-      ? shortOperator(party?.operator ?? HUMANS[id as HumanId].name)
-      : TOOLS[id as keyof typeof TOOLS].name;
-  const sub = isAgent
-    ? MODELS[AGENTS[id as AgentId].model].label
-    : isHuman && party
-      ? party.role === "affected"
-        ? "Affected · notice"
-        : `Side ${party.role.toUpperCase()}${party.language ? ` · ${party.language}` : ""}`
-      : null;
-  const info = isAgent
-    ? AGENTS[id as AgentId].role
-    : isHuman
-      ? party
-        ? `${party.operator}. ${party.role === "affected" ? "Satellite near the new path; notified before the burn." : `Decides for side ${party.role.toUpperCase()}.`}`
-        : HUMANS[id as HumanId].detail
-      : TOOLS[id as keyof typeof TOOLS].detail;
+  const glow = running ? ringColor : stalled ? EDGE.human : null;
+  const failed = real ? last?.status === "error" : (st?.err ?? 0) > 0;
+  const answered = real ? last?.status === "ok" : (st?.ok ?? 0) > 0 && !(st?.err ?? 0);
+  const label = generic
+    ? "Other"
+    : isAgent
+      ? AGENTS[id as AgentId].short
+      : isHuman
+        ? shortOperator(party?.operator ?? HUMANS[id as HumanId].name)
+        : TOOLS[id as keyof typeof TOOLS].name;
+  const sub =
+    agentLike && real
+      ? runLine(st, last, stalled)
+      : isAgent
+        ? MODELS[AGENTS[id as AgentId].model].label
+        : isHuman && party
+          ? party.role === "affected"
+            ? "Affected · notice"
+            : `Side ${party.role.toUpperCase()}${party.language ? ` · ${party.language}` : ""}`
+          : null;
+  const info = generic
+    ? `Runs from agents this view does not place: ${others.join(", ")}.`
+    : isAgent
+      ? AGENTS[id as AgentId].role
+      : isHuman
+        ? party
+          ? `${party.operator}. ${party.role === "affected" ? "Satellite near the new path; notified before the burn." : `Decides for side ${party.role.toUpperCase()}.`}`
+          : HUMANS[id as HumanId].detail
+        : TOOLS[id as keyof typeof TOOLS].detail;
+  const glyph = agentLike ? (big ? 20 : 17) : big ? 15 : 13;
 
   return (
     <div
@@ -272,11 +357,19 @@ function GraphNode({
         side="bottom"
         label={
           <span className="block max-w-[220px]">
-            <span className="block font-medium text-fg">{isAgent ? AGENTS[id as AgentId].name : label}</span>
+            <span className="block font-medium text-fg">{generic ? "Other agents" : isAgent ? AGENTS[id as AgentId].name : label}</span>
             <span className="block text-muted">{info}</span>
+            {last && (
+              <span className="mono mt-1 block text-[10px] text-fg-2">
+                {[last.output.stage && stageLabel(last.output.stage), stalled ? "stalled" : last.output.runStatus, st?.model]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            )}
             {st && st.calls > 0 && (
               <span className="mono mt-1 block text-[10px] text-fg-2">
-                {st.calls} steps{isAgent && ` · ${fmtUsd(st.cost)}`}
+                {st.calls} {real ? "runs" : "steps"}
+                {agentLike && ` · ${fmtUsd(real ? null : st.cost)}`}
                 {st.ms > 0 && ` · ${fmtMs(st.ms / Math.max(st.ok + st.err, 1))} avg`}
               </span>
             )}
@@ -299,24 +392,26 @@ function GraphNode({
             style={{
               width: size,
               height: size,
-              borderRadius: isAgent ? (big ? 14 : 12) : 9,
-              background: isAgent ? "linear-gradient(180deg,#1d1f24,#141518)" : "#121316",
-              boxShadow: `inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 0 1px rgba(255,255,255,${focused ? 0.28 : 0.09}), 0 6px 16px -6px rgba(0,0,0,0.7)${running ? `, 0 0 22px -4px ${ringColor}` : ""}`,
+              borderRadius: agentLike ? (big ? 14 : 12) : 9,
+              background: agentLike ? "linear-gradient(180deg,#1d1f24,#141518)" : "#121316",
+              boxShadow: `inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 0 1px rgba(255,255,255,${focused ? 0.28 : 0.09}), 0 6px 16px -6px rgba(0,0,0,0.7)${glow ? `, 0 0 22px -4px ${glow}` : ""}`,
               color: isHuman ? (waiting ? EDGE.human : "var(--fg-2)") : "var(--fg-2)",
             }}
           >
-            {running && <span className="node-ring" style={{ borderRadius: isAgent ? (big ? 16 : 14) : 11, ["--ring" as string]: ringColor }} />}
+            {running && <span className="node-ring" style={{ borderRadius: agentLike ? (big ? 16 : 14) : 11, ["--ring" as string]: ringColor }} />}
             {isHuman && party?.country ? (
               <PartyFace country={party.country} size={size} />
+            ) : agentLike && (real || generic) ? (
+              <VendorGlyph vendor={st?.vendor} size={glyph} />
             ) : (
-              <NodeGlyph id={id} size={isAgent ? (big ? 20 : 17) : big ? 15 : 13} />
+              <NodeGlyph id={id as NodeId} size={glyph} />
             )}
-            {isAgent && !running && (st?.err ?? 0) > 0 && (
+            {agentLike && !running && failed && (
               <Badge color={EDGE.failed}>
                 <X size={8} strokeWidth={3} />
               </Badge>
             )}
-            {isAgent && !running && (st?.ok ?? 0) > 0 && !(st?.err ?? 0) && (
+            {agentLike && !running && answered && (
               <Badge color={EDGE.answer}>
                 <Check size={8} strokeWidth={3} />
               </Badge>
@@ -324,15 +419,34 @@ function GraphNode({
           </span>
           {/* labels sit on a knockout so edges passing underneath don't cut through the text */}
           <span className="mt-[3px] flex flex-col items-center rounded-[5px] bg-[#0d0e10]/85 px-1 py-[2px]">
-            <span className={`whitespace-nowrap font-medium leading-none ${isAgent ? (big ? "text-[11.5px]" : "text-[10.5px]") : "text-[9.5px] text-muted"}`}>
+            <span className={`whitespace-nowrap font-medium leading-none ${agentLike ? (big ? "text-[11.5px]" : "text-[10.5px]") : "text-[9.5px] text-muted"}`}>
               {label}
             </span>
-            {sub && <span className={`mt-[3px] whitespace-nowrap leading-none text-muted ${big ? "text-[10px]" : "text-[9px]"}`}>{sub}</span>}
+            {sub && (
+              <span className={`mt-[3px] whitespace-nowrap leading-none ${stalled ? "text-orange" : "text-muted"} ${big ? "text-[10px]" : "text-[9px]"}`}>
+                {sub}
+              </span>
+            )}
           </span>
         </button>
       </Tooltip>
     </div>
   );
+}
+
+/** Real mode, under an agent: "Stalled", the running stage, else the recorded model (or its vendor). Nothing before a run. */
+function runLine(st: NodeStat | undefined, last: LiveSpan | undefined, stalled: boolean): string | null {
+  if (stalled) return "Stalled";
+  if (last?.status === "running" && last.output.stage) return stageLabel(last.output.stage);
+  if (st?.model && MODELS[st.model]) return MODELS[st.model].label;
+  return st?.vendor ? VENDOR_LABEL[st.vendor] : null;
+}
+
+/** Real mode: the mark of the provider a run recorded; a neutral one before any run or for a provider without a mark. */
+function VendorGlyph({ vendor, size }: { vendor?: Vendor; size: number }) {
+  if (vendor === "anthropic") return <ClaudeGlyph size={size} />;
+  if (vendor === "xai") return <GrokGlyph size={size} />;
+  return <Bot size={size - 2} strokeWidth={1.8} />;
 }
 
 function Badge({ color, children }: { color: string; children: React.ReactNode }) {
