@@ -12,7 +12,7 @@ import { fmtUtc } from "@/lib/format";
 import { useOps } from "@/lib/ops/store";
 import { sfx } from "@/lib/sound";
 import { AUDIT_ACTION, auditEntries, defaultPeriod, periodBounds, type AuditEntry } from "./fromEvents";
-import { LiveLog } from "./LiveAudit";
+import { LiveLog, LiveReport } from "./LiveAudit";
 import { Empty, Missing, Stat } from "./parts";
 
 const PAGE = 50;
@@ -193,7 +193,7 @@ function AuditBody({ companyName }: { companyName: string }) {
           )}
         </div>
       </div>
-      <Report companyName={companyName} period={period} setPeriod={setPeriod} dev={dev} simulatedInPeriod={simulatedInPeriod} rangeOk={!!bounds} />
+      <Report companyName={companyName} period={period} setPeriod={setPeriod} dev={dev} real={real} simulatedInPeriod={simulatedInPeriod} rangeOk={!!bounds} />
     </div>
   );
 }
@@ -236,6 +236,7 @@ function Report({
   period,
   setPeriod,
   dev,
+  real,
   simulatedInPeriod,
   rangeOk,
 }: {
@@ -243,6 +244,7 @@ function Report({
   period: { start: string; end: string } | null;
   setPeriod: (p: { start: string; end: string }) => void;
   dev: boolean;
+  real: boolean;
   simulatedInPeriod: number;
   rangeOk: boolean;
 }) {
@@ -272,32 +274,38 @@ function Report({
         </label>
       </div>
       {!rangeOk && period && <p className="mt-2 text-[11.5px] text-red">The period has to be a real UTC range.</p>}
-      <dl className="mt-4 grid grid-cols-2 gap-2">
-        <Stat label="Unique cases" />
-        <Stat label="With coordination" />
-        <Stat label="Scheduled" />
-        <Stat label="Observed execution" />
-        <Stat label="Unresolved" />
-        <Stat label="FCC fields" value="To verify" />
-      </dl>
-      <p className="mt-3 text-[12px] leading-[1.5] text-neutral-500">
-        Counts stay blank until the report query is on this deployment. Filling them with zero would claim a measurement this screen does not have.
-      </p>
-      {dev && simulatedInPeriod > 0 && (
-        <p className="mt-2 text-[12px] leading-[1.5] text-orange">
-          {simulatedInPeriod} simulated {simulatedInPeriod === 1 ? "case" : "cases"} in this period {simulatedInPeriod === 1 ? "is" : "are"} on screen and {simulatedInPeriod === 1 ? "is" : "are"} left out of the draft.
-        </p>
+      {real ? (
+        <LiveReport period={period} />
+      ) : (
+        <>
+          <dl className="mt-4 grid grid-cols-2 gap-2">
+            <Stat label="Unique cases" />
+            <Stat label="With coordination" />
+            <Stat label="Scheduled" />
+            <Stat label="Observed execution" />
+            <Stat label="Unresolved" />
+            <Stat label="FCC fields" value="To verify" />
+          </dl>
+          <p className="mt-3 text-[12px] leading-[1.5] text-neutral-500">
+            Counts stay blank until the report query is on this deployment. Filling them with zero would claim a measurement this screen does not have.
+          </p>
+          {dev && simulatedInPeriod > 0 && (
+            <p className="mt-2 text-[12px] leading-[1.5] text-orange">
+              {simulatedInPeriod} simulated {simulatedInPeriod === 1 ? "case" : "cases"} in this period {simulatedInPeriod === 1 ? "is" : "are"} on screen and {simulatedInPeriod === 1 ? "is" : "are"} left out of the draft.
+            </p>
+          )}
+          <div className="mt-4 space-y-2 border-t border-white/[0.06] pt-3">
+            <div className="text-[12px] font-medium text-neutral-300">Not in this draft</div>
+            <Missing field="Source coverage" note="Not measured on this screen." />
+            <Missing field="Observed execution" note="Promised and observed stay separate. Approval is not execution." />
+            <Missing field="FCC mapping" note="Fields outside OrbitCall are marked to verify. Nothing here is a filing." />
+          </div>
+          <button className="btn mt-4 h-8 w-full gap-1.5 text-[12px] opacity-50" disabled>
+            <Download size={13} /> Download CSV
+          </button>
+          <p className="mt-2 text-[11.5px] leading-[1.45] text-neutral-500">CSV export arrives with the report action. It leaves out policy values and simulated cases. Review the draft before anyone uses it for a report.</p>
+        </>
       )}
-      <div className="mt-4 space-y-2 border-t border-white/[0.06] pt-3">
-        <div className="text-[12px] font-medium text-neutral-300">Not in this draft</div>
-        <Missing field="Source coverage" note="Not measured on this screen." />
-        <Missing field="Observed execution" note="Promised and observed stay separate. Approval is not execution." />
-        <Missing field="FCC mapping" note="Fields outside OrbitCall are marked to verify. Nothing here is a filing." />
-      </div>
-      <button className="btn mt-4 h-8 w-full gap-1.5 text-[12px] opacity-50" disabled>
-        <Download size={13} /> Download CSV
-      </button>
-      <p className="mt-2 text-[11.5px] leading-[1.45] text-neutral-500">CSV export arrives with the report action. It leaves out policy values and simulated cases. Review the draft before anyone uses it for a report.</p>
     </aside>
   );
 }
