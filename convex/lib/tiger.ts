@@ -10,7 +10,9 @@ import { AnalystError } from "./analyst";
 // export or read is reported as a sanitized error and changes nothing else.
 
 export const OBSERVATION_TABLE = "observations";
-export const TIGER_SOURCES = ["celestrak_gp", "celestrak_supgp", "celestrak_satcat", "socrates", "simulated"] as const;
+export const TIGER_SOURCES = [
+  "celestrak_gp", "celestrak_supgp", "socrates", "cdm_public", "gp_history", "keeptrack", "simulated", "celestrak_satcat",
+] as const;
 export type TigerSource = typeof TIGER_SOURCES[number];
 export const MAX_WRITE_BATCH = 500;
 export const MAX_SERIES_POINTS = 5_000;

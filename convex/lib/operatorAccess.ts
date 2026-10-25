@@ -13,10 +13,9 @@ export async function requireOperator(ctx: QueryCtx) {
 export async function requireParty(ctx: QueryCtx, eventId: Id<"events">) {
   const user = await requireOperator(ctx);
   const candidateSet = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
-  if (!candidateSet || ![candidateSet.companyAId, candidateSet.companyBId].includes(user.companyId)) {
-    throw new ConvexError({ code: "FORBIDDEN", message: "You are not an operator in this incident." });
-  }
-  const side = candidateSet.companyAId === user.companyId ? "A" as const : "B" as const;
+  // Either company may be null for debris; the caller's side is the one whose registered company matches.
+  const side = candidateSet?.companyAId === user.companyId ? "A" as const : candidateSet?.companyBId === user.companyId ? "B" as const : null;
+  if (!candidateSet || !side) throw new ConvexError({ code: "FORBIDDEN", message: "You are not an operator in this incident." });
   const event = await ctx.db.get(eventId);
   const object = event && await ctx.db.get(side === "A" ? event.objectAId : event.objectBId);
   const assignment = object && await ctx.db.query("fleetAssignments").withIndex("by_user_object", q =>

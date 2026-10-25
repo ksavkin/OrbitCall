@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 
-// Stored values.
+// Stored values. sourceName is the full spec §2.1 SourceName.
 export const sourceName = v.union(
-  v.literal("celestrak_gp"), v.literal("celestrak_supgp"), v.literal("celestrak_satcat"),
-  v.literal("socrates"), v.literal("simulated"),
+  v.literal("celestrak_gp"), v.literal("celestrak_supgp"), v.literal("socrates"), v.literal("cdm_public"),
+  v.literal("gp_history"), v.literal("keeptrack"), v.literal("simulated"), v.literal("celestrak_satcat"),
 );
 export const sourceRef = v.object({
   name: sourceName,
@@ -12,6 +12,14 @@ export const sourceRef = v.object({
   fetchedAt: v.union(v.string(), v.null()),
 });
 export const color = v.union(v.literal("red"), v.literal("yellow"), v.literal("none"));
+// Spec §2.1 EventStatus and Situation, §2.2 EventRow.workflow.
+export const eventStatus = v.union(
+  v.literal("new"), v.literal("agents"), v.literal("proposal"), v.literal("communication"), v.literal("approved"),
+  v.literal("scheduled"), v.literal("monitoring"), v.literal("awaiting_verification_data"),
+  v.literal("verified"), v.literal("flagged"), v.literal("no_action_needed"),
+);
+export const situation = v.union(v.literal("needs_operator_decision"), v.literal("waiting_for_operator"), v.null());
+export const workflow = v.union(v.literal("bilateral"), v.literal("unilateral_debris"), v.literal("internal_review"));
 export const runStatus = v.union(
   v.literal("running"), v.literal("succeeded"),
   v.literal("failed"), v.literal("superseded"),
