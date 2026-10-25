@@ -1,0 +1,98 @@
+{
+  "roomId": "ops-voice-20261025T093102",
+  "syntheticSpeech": true,
+  "directions": [
+    {
+      "from": "en",
+      "to": "ru",
+      "audioReceived": true,
+      "firstAudioAfterClipMs": 5279,
+      "nonSilentAudioSeconds": 4.13
+    },
+    {
+      "from": "en",
+      "to": "zh",
+      "audioReceived": true,
+      "firstAudioAfterClipMs": 5064,
+      "nonSilentAudioSeconds": 3.78
+    },
+    {
+      "from": "ru",
+      "to": "en",
+      "audioReceived": true,
+      "firstAudioAfterClipMs": 4558,
+      "nonSilentAudioSeconds": 2.76
+    },
+    {
+      "from": "ru",
+      "to": "zh",
+      "audioReceived": true,
+      "firstAudioAfterClipMs": 4668,
+      "nonSilentAudioSeconds": 3.34
+    },
+    {
+      "from": "zh",
+      "to": "en",
+      "audioReceived": true,
+      "firstAudioAfterClipMs": 5068,
+      "nonSilentAudioSeconds": 3.68
+    },
+    {
+      "from": "zh",
+      "to": "ru",
+      "audioReceived": true,
+      "firstAudioAfterClipMs": 5288,
+      "nonSilentAudioSeconds": 2.97
+    }
+  ],
+  "ok": true,
+  "livekitRoomClosed": true,
+  "voices": {
+    "en": {
+      "provider": "cartesia",
+      "voiceId": "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4",
+      "name": "Skylar",
+      "audioSeconds": 4.16,
+      "requestSeconds": 0.73,
+      "text": "This is an OrbitCall demo. Please review the proposed maneuver.",
+      "source": "synthetic provider-generated speech"
+    },
+    "zh": {
+      "provider": "cartesia",
+      "voiceId": "0f5ac064-30c7-4cf6-8748-d275f682a0d5",
+      "name": "Yu-Hsin",
+      "audioSeconds": 4.4,
+      "requestSeconds": 0.64,
+      "text": "这是一次通信测试。请检查建议的轨道调整方案。",
+      "source": "synthetic provider-generated speech"
+    },
+    "ru": {
+      "provider": "xai",
+      "voiceId": "eve",
+      "name": "Eve",
+      "audioSeconds": 4.15,
+      "requestSeconds": 0.89,
+      "text": "Это проверка связи. Пожалуйста, проверьте предложенный маневр.",
+      "source": "synthetic provider-generated speech"
+    }
+  },
+  "captions": {
+    "allFinalTranslationsOk": true,
+    "phrasesBySourceLanguage": {
+      "en": 1,
+      "ru": 1,
+      "zh": 1
+    }
+  },
+  "models": {
+    "stt": "grok-voice-transcribe-2.0",
+    "translation": "claude-sonnet-5-5",
+    "cartesia": "sonic-3.6-2026-08-27"
+  },
+  "health": {
+    "httpStatus": 200,
+    "ready": true,
+    "degraded": false,
+    "recentErrors": {}
+  }
+}

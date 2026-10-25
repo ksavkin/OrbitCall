@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  getCandidates, getRescreenJob, getScreenJob, ORBIT_TIMEOUTS, orbitConfigured, orbitFailure, OrbitServiceError, simulate,
+  getCandidates, getHealth, getRescreenJob, getScreenJob, ORBIT_TIMEOUTS, orbitConfigured, orbitFailure, OrbitServiceError, simulate,
   startRescreen, startScreen, verify, type CandidatesResponse, type ScreenRequest,
 } from "../convex/lib/orbitClient";
 
@@ -71,6 +71,28 @@ const doneJob = (result: unknown, over: Record<string, unknown> = {}) => job({
   counters: counts, coverage: fullCoverage, result, ...over,
 });
 const expectScreen = { scanId: "scan-1", snapshotId: SNAP, evidenceVersion: EV };
+
+describe("deployment health", () => {
+  it("checks the loaded catalog and returns only the public readiness fields", async () => {
+    mockFetch(json({ ok: true, snapshotId: SNAP, objects: 19468, diagnostic: TOKEN }));
+    expect(await getHealth(SNAP)).toEqual({ ok: true, snapshotId: SNAP, objects: 19468 });
+  });
+
+  it("rejects a healthy service with the wrong pinned snapshot", async () => {
+    mockFetch(json({ ok: true, snapshotId: "gp-other", objects: 19468 }));
+    expect(await codeOf(getHealth(SNAP))).toBe("SNAPSHOT_MISMATCH");
+  });
+
+  it.each([false, "true"])("does not treat ok=%s as ready", async ok => {
+    mockFetch(json({ ok, snapshotId: SNAP, objects: 19468 }));
+    expect(await codeOf(getHealth(SNAP))).toBe("INVALID_RESPONSE");
+  });
+
+  it.each([0, -1, 1.5, "19468"])("rejects invalid catalog size %s", async objects => {
+    mockFetch(json({ ok: true, snapshotId: SNAP, objects }));
+    expect(await codeOf(getHealth(SNAP))).toBe("INVALID_RESPONSE");
+  });
+});
 
 describe("configuration and transport", () => {
   it("refuses to call anything without a URL and token", async () => {

@@ -717,6 +717,18 @@ async function request(method: "GET" | "POST", path: string, body: unknown, time
 
 // ---------- Endpoints ----------
 
+/** Deployment check: a reachable service must have loaded the expected pinned catalog. */
+export async function getHealth(snapshotId: string): Promise<{ ok: true; snapshotId: string; objects: number }> {
+  if (!isNonEmpty(snapshotId)) badInput("snapshot ID");
+  const body = await request("GET", "/health", undefined, ORBIT_TIMEOUTS.job);
+  if (!isRecord(body) || body.ok !== true || !isNonEmpty(body.snapshotId) ||
+    typeof body.objects !== "number" || !Number.isSafeInteger(body.objects) || body.objects <= 0) {
+    return fail("health response");
+  }
+  if (body.snapshotId !== snapshotId) throw new OrbitServiceError("SNAPSHOT_MISMATCH", "The orbit service loaded a different snapshot than expected.");
+  return { ok: true, snapshotId: body.snapshotId, objects: body.objects };
+}
+
 /** POST /screen: reserves a fleet screening job. The job ID defaults to "screen-<scanId>", so the same scan never
  *  creates a second job: a resubmit returns the same job with `created: false`. */
 export async function startScreen(req: ScreenRequest): Promise<JobAccepted> {
