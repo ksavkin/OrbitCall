@@ -1,28 +1,37 @@
 import { v } from "convex/values";
+import { makeFunctionReference } from "convex/server";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { advanceSelection, allApproved, countingApprovals, invalidateEventApprovals, type ResetReason } from "./lib/approvalState";
 import { eventRef } from "./schema/schedule";
 
 // Shared trajectory plans (spec §2.5 TrajectoryPlan, §4.1 "Shared maneuvers", ROOM-15, issue #6). When the selected
-// card of an event moves a spacecraft that is also a party in another linked event, that spacecraft has one plan row
-// listing every affected event and the exact selection each one signs. Each event keeps its own selection and
+// card of an event moves a spacecraft that is also a party in another event inside the burn's horizon, that spacecraft
+// has one plan row listing every affected event and the exact selection each one signs. Each event keeps its own selection and
 // approvals; approvals.approve binds them to the plan's id and version, and lib/approvalState.countingApprovals stops
 // counting them once that version is superseded. A version is a row: any change supersedes the active row and
-// inserts the next version, so an old signature can never be revived. At most one draft, authorizing or scheduled row
-// exists per (objectId, demoRunId); every writer supersedes before it inserts, and OCC serializes concurrent writers on the
-// by_object_state and by_object_version ranges they read.
+// inserts the next version, so an old signature can never be revived. After a sync at most one non-superseded row
+// exists per (objectId, demoRunId) (refuse keeps its refused row beside the next draft until then); every writer
+// supersedes before it inserts, and OCC serializes concurrent writers on the by_object_state and by_object_version
+// ranges they read.
 
 type Ref = { eventId: Id<"events">; proposalId: Id<"proposals">; revision: number; selectionGeneration: number };
 type Plan = Doc<"trajectoryPlans">;
-type Desired = { affectedEventIds: Id<"events">[]; eventRefs: Ref[] } | null;
+type Desired = { anchorId: Id<"events">; affectedEventIds: Id<"events">[]; eventRefs: Ref[] } | null;
 
 const ACTIVE = ["draft", "authorizing"] as const;
 // A scheduled version is also replaced by a change: its write is flagged for review, never left live beside a draft.
 const LIVE = [...ACTIVE, "scheduled"] as const;
+// A refused version authorizes nothing and blocks the mover until the next sync advances or drops it (contract §4ss).
+const OPEN = [...LIVE, "review_required"] as const;
 // Same encounter, other object order or source: one conjunction, not a second affected event (maneuvers.ts uses 60 s).
 const DUPLICATE_MS = 60_000;
 const RESERVED = ["rescreening", "committing", "committed"];
+// maneuvers.ts HORIZON_H; not imported, because maneuvers.ts reaches this module through lib/approvalState.
+const HORIZON_MS = 72 * 3_600_000;
+// An event closed without the burn (or already verified) no longer shares it; maneuvers.ts context() skips the same.
+const CLOSED = ["verified", "no_action_needed"];
+const requestPreview = makeFunctionReference<"mutation", { eventId: Id<"events"> }>("maneuvers:requestPreview");
 
 const runOpen = async (ctx: QueryCtx, demoRunId: Id<"demoRuns"> | null) => {
   if (!demoRunId) return true;
@@ -46,52 +55,54 @@ async function refOf(ctx: QueryCtx, eventId: Id<"events">): Promise<Ref | null> 
     ? { eventId, proposalId: s.proposalId, revision: s.revision, selectionGeneration: s.generation } : null;
 }
 
-// Whether the event's selected card is a maneuver of this spacecraft.
+// The event's selected card when it is a maneuver of this spacecraft.
 async function moves(ctx: QueryCtx, eventId: Id<"events">, objectId: string) {
   const s = await selectionOf(ctx, eventId);
-  if (!s?.proposalId || s.revision === null) return false;
+  if (!s?.proposalId || s.revision === null) return null;
   const revision = await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
     q.eq("proposalId", s.proposalId!).eq("revision", s.revision!)).unique();
   const card = revision && await ctx.db.get(revision.candidateRevisionId);
-  return card?.kind === "maneuver" && card.movingObjectId === objectId;
-}
-
-async function openRoomOf(ctx: QueryCtx, eventId: Id<"events">) {
-  for (const link of await ctx.db.query("roomEvents").withIndex("by_event", q => q.eq("eventId", eventId)).collect()) {
-    const room = await ctx.db.get(link.roomId);
-    if (room && room.state === "open" && room.closedAt === null && await runOpen(ctx, room.demoRunId)) return room;
-  }
-  return null;
+  return card?.kind === "maneuver" && card.movingObjectId === objectId && card.burnTimeUtc ? card : null;
 }
 
 /**
- * The plan this spacecraft should have now, seen from `event`: the active, future events of the event's open room
- * (or, once the room has closed on consensus, the previous plan's events) that have the spacecraft as a party, one
- * per encounter. A plan exists only for two or more such events and a selected maneuver of the spacecraft in one.
+ * The events one burn affects: the anchor and every open event of the mover in the same run with TCA in
+ * [burn, burn + HORIZON_H], except pair duplicates of the anchor. This must match the `linked` set of maneuvers.ts
+ * context(), which refuses a plan that omits one of them. An anchor whose own encounter lies outside its burn's
+ * horizon affects no plan.
+ */
+async function affectedBy(ctx: QueryCtx, event: Doc<"events">, card: Doc<"candidateRevisions">) {
+  const moverId = card.movingSide === "A" ? event.objectAId : event.objectBId;
+  const lower = Date.parse(card.burnTimeUtc!), upper = lower + HORIZON_MS;
+  if (event.tcaMs < lower || event.tcaMs > upper) return [];
+  const others = [
+    ...await ctx.db.query("events").withIndex("by_pair_tca", q => q.eq("objectAId", moverId)).collect(),
+    ...await ctx.db.query("events").withIndex("by_object_b_tca", q => q.eq("objectBId", moverId).gte("tcaMs", lower).lte("tcaMs", upper)).collect(),
+  ];
+  const duplicate = (e: Doc<"events">) => Math.abs(e.tcaMs - event.tcaMs) <= DUPLICATE_MS &&
+    ((e.objectAId === event.objectAId && e.objectBId === event.objectBId) || (e.objectAId === event.objectBId && e.objectBId === event.objectAId));
+  const linked = others.filter(e => e._id !== event._id && e.active && !CLOSED.includes(e.status ?? "") && e.tcaMs >= lower && e.tcaMs <= upper &&
+    (e.demoRunId ?? null) === (event.demoRunId ?? null) && !duplicate(e));
+  return [event._id, ...new Set(linked.map(e => e._id))];
+}
+
+/**
+ * The plan this spacecraft should have now, seen from `event`. The anchor is the first of the event and the previous
+ * plan's events that is active in the event's run and selects a maneuver of the spacecraft affecting another event;
+ * the plan lists every event that burn affects (affectedBy). Without such an anchor the spacecraft needs no plan.
  */
 async function desiredPlan(ctx: QueryCtx, event: Doc<"events">, objectId: string, previous: Plan | null): Promise<Desired> {
   const run = event.demoRunId ?? null;
-  const object = await ctx.db.query("spaceObjects").withIndex("by_object_id", q => q.eq("objectId", objectId)).unique();
-  if (!object) return null;
-  const room = await openRoomOf(ctx, event._id);
-  const ids = room
-    ? (await ctx.db.query("roomEvents").withIndex("by_room", q => q.eq("roomId", room._id)).collect()).map(l => l.eventId)
-    : previous?.affectedEventIds ?? [];
-  const now = Date.now();
-  const affected: Doc<"events">[] = [];
-  // The triggering event first, so its row represents the encounter when duplicates exist.
-  for (const id of [event._id, ...ids.filter(id => id !== event._id)]) {
-    const e = await ctx.db.get(id);
-    if (!e || !e.active || e.tcaMs <= now || (e.demoRunId ?? null) !== run || (e.objectAId !== object._id && e.objectBId !== object._id)) continue;
-    const duplicate = affected.some(o => Math.abs(o.tcaMs - e.tcaMs) <= DUPLICATE_MS &&
-      ((o.objectAId === e.objectAId && o.objectBId === e.objectBId) || (o.objectAId === e.objectBId && o.objectBId === e.objectAId)));
-    if (!duplicate && !affected.some(o => o._id === e._id)) affected.push(e);
+  for (const id of new Set([event._id, ...previous?.affectedEventIds ?? []])) {
+    const anchor = id === event._id ? event : await ctx.db.get(id);
+    if (!anchor || !anchor.active || CLOSED.includes(anchor.status ?? "") || (anchor.demoRunId ?? null) !== run) continue;
+    const card = await moves(ctx, anchor._id, objectId);
+    if (!card) continue;
+    const affected = await affectedBy(ctx, anchor, card);
+    if (affected.length < 2) continue;
+    return { anchorId: anchor._id, affectedEventIds: [...affected].sort(), eventRefs: await refsOf(ctx, affected) };
   }
-  if (affected.length < 2) return null;
-  let moved = false;
-  for (const e of affected) moved ||= await moves(ctx, e._id, objectId);
-  if (!moved) return null;
-  return { affectedEventIds: affected.map(e => e._id).sort(), eventRefs: await refsOf(ctx, affected.map(e => e._id)) };
+  return null;
 }
 
 async function refsOf(ctx: QueryCtx, eventIds: Id<"events">[]) {
@@ -136,11 +147,14 @@ async function nextVersion(ctx: QueryCtx, objectId: string, demoRunId: Id<"demoR
 }
 
 /**
- * Brings the plans of the event's two objects up to date with the current selections. A change supersedes the
- * active version, resets every other affected event that still holds current approvals (each its own reset), and
- * inserts the next version as a draft from the selections as they are after those resets. With `trigger` the event's
- * own approvals were already retired by the selection change that called this. Without it the event is reset like
- * the others, and the result says so, so an approve in progress does not record a click on a reset selection.
+ * Brings the plans of the event's two objects up to date with the current selections. A change supersedes every
+ * non-superseded version (a refused one included), resets every other affected event that still holds current
+ * approvals (each its own reset), inserts the next version as a draft from the selections as they are after those
+ * resets and asks for its preview. With `trigger` the event's own approvals were already retired by the selection
+ * change that called this. Without it the event is reset like the others, and the result says so, so an approve in
+ * progress does not record a click on a reset selection. `previous` is a version refuse() just marked for review: it
+ * stays as the record of the refusal beside the next draft until the next sync, and is superseded at once when no next
+ * version follows (the mover is no longer shared).
  */
 export async function syncPlans(ctx: MutationCtx, event: Doc<"events">, opts: { trigger?: boolean; previous?: Plan } = {}) {
   const run = event.demoRunId ?? null;
@@ -149,11 +163,13 @@ export async function syncPlans(ctx: MutationCtx, event: Doc<"events">, opts: { 
   let selfReset = false;
   for (const objectId of new Set(objects.flatMap(o => o ? [o.objectId] : []))) {
     if (opts.previous && opts.previous.objectId !== objectId) continue;
-    const active = await activePlans(ctx, objectId, run, LIVE);
+    const active = (await activePlans(ctx, objectId, run, OPEN)).filter(p => p._id !== opts.previous?._id);
     const existing = active[0] ?? null;
     const desired = await desiredPlan(ctx, event, objectId, existing ?? opts.previous ?? null);
+    // With no next version the refused one is not a record of anything pending: it would only block the mover.
+    if (!desired && opts.previous && opts.previous.state !== "superseded") active.push(opts.previous);
     if (!desired && !active.length) continue;
-    if (desired && existing && active.length === 1 && samePlan(existing, desired)) continue;
+    if (desired && existing && active.length === 1 && existing.state !== "review_required" && samePlan(existing, desired)) continue;
     const targets = new Set([...active.flatMap(p => p.affectedEventIds), ...desired?.affectedEventIds ?? []]);
     for (const id of targets) {
       if (opts.trigger && id === event._id) continue;
@@ -168,12 +184,20 @@ export async function syncPlans(ctx: MutationCtx, event: Doc<"events">, opts: { 
       const maneuver = plan.maneuverId && await ctx.db.get(plan.maneuverId);
       if (maneuver && maneuver.demoRunId === run && !maneuver.reviewRequired) await ctx.db.patch(maneuver._id, { reviewRequired: true, updatedAt: now });
     }
-    if (!desired) continue;
+    if (!desired) {
+      // No longer shared: each event that was in a plan prepares its own single-event schedule again.
+      for (const id of new Set(active.flatMap(p => p.affectedEventIds))) {
+        const row = await ctx.db.get(id);
+        if (row?.active && !["verified", "no_action_needed"].includes(row.status ?? "")) await ctx.scheduler.runAfter(0, requestPreview, { eventId: id });
+      }
+      continue;
+    }
     await ctx.db.insert("trajectoryPlans", {
       objectId, planVersion: await nextVersion(ctx, objectId, run), state: "draft",
       affectedEventIds: desired.affectedEventIds, eventRefs: await refsOf(ctx, desired.affectedEventIds),
       maneuverId: null, demoRunId: run, createdAt: now, updatedAt: now,
     });
+    await ctx.scheduler.runAfter(0, requestPreview, { eventId: desired.anchorId });
   }
   return selfReset;
 }
