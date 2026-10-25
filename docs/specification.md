@@ -4,7 +4,7 @@ The contract between the Next.js frontend and the Convex backend: data shapes, e
 
 Updated Oct 24, 2026 after direct user decisions: [assigned-fleet workflow](user-flow.md), My Fleet + My Incidents + globe, fleet-versus-catalog Run Scan, severity then earliest closest approach, separate missing/stale-data review, up to four computed candidates, shared selection followed by independent Approve, and a separate unilateral debris path. The Dev Switch separates TLE development simulation from the OMM-only real mode. No TLE fallback is allowed with Dev off. Appendix C specifies safe agent observability. These are requirements; the current simulator types are not yet identical to this contract.
 
-The latest scope and stack are locked in [master-roadmap.md](master-roadmap.md), the team's source of truth. This specification supplies the detailed contract. The four-screen demo uses three dispatchers, 2-4 operator group rooms with pair-specific approvals, three languages, DigitalOcean services, and separate Factory/Backboard/Tiger Data roles. In v1.1, Claude runs the Analyst/Advocates and translation, Gemini runs the Coordination Host, and Grok runs the independent check and selected audio tasks. These targets are not all implemented at the code baseline.
+The latest scope and stack are locked in [master-roadmap.md](master-roadmap.md), the team's source of truth. This specification supplies the detailed contract. The four-screen demo uses three dispatchers, group rooms for any number of linked operators with pair-specific approvals, three languages, DigitalOcean services, and separate Factory/Backboard/Tiger Data roles. In v1.1, Claude runs the Analyst/Advocates and translation, Gemini runs the Coordination Host, and Grok runs the independent check and selected audio tasks. These targets are not all implemented at the code baseline.
 
 The accepted decisions in the master roadmap, user-flow.md, and functionality.md govern behavior. There is no simulator-specific exception overriding approval integrity. Counter is a conversation message, not an approval status. Country and language do not grant fleet access.
 
@@ -42,7 +42,7 @@ type Side = "A" | "B";
 
 ## 1. Sign-in and permissions
 
-- **Login** is Auth0 with sign-ups disabled; the team pre-creates three dispatcher users for the main demo, four assigned spacecraft each (US/RU/CN profiles), a read-only observer, and support for a fourth operator in group-room tests [ACC-1]. The frontend uses `ConvexProviderWithAuth0`. There is no registration screen.
+- **Login** is Auth0 with sign-ups disabled; the team pre-creates three dispatcher users for the main demo, four assigned spacecraft each (US/RU/CN profiles), a read-only observer, and support for further operators in group-room tests; a room has no fixed operator count [ACC-1]. The frontend uses `ConvexProviderWithAuth0`. There is no registration screen.
 - **Every function** resolves the caller with `ctx.auth.getUserIdentity()` and looks up `users` by `authSubject`. No identity → `UNAUTHENTICATED`. No user row → `FORBIDDEN`.
 - **Identity failure:** show the sign-in failure. Auth0 is the locked provider. Replacing it requires a recorded stack revision and another authorization check.
 
@@ -52,7 +52,7 @@ type Side = "A" | "B";
 | `head_of_ops` | `users.me`, `fleet.listMine`, `events.myQueue`, `log.list`, `reports.*` for their own company; company scope, read-only |
 | `demo_observer` | `users.me`, `catalog.snapshot`, `demo.publicView` for its assigned demo run; no approval, policy, private trace, or raw memory access |
 
-A **party company** operates `objectA` or `objectB`. A **fleet assignment** grants an authenticated user responsibility for an object within that company. Event actions (select, approve, veto) require company membership and a current assignment to the corresponding active object; otherwise `FORBIDDEN`. Room chat/call/read requires explicit group-room membership derived from involvement in a linked event. Shared room access never grants approval rights on unrelated sides or access to private records. Side is resolved on the server, never accepted from the browser. Public catalog browsing grants no room access. Demo assignments are seeded, not editable by clients. Revocation invalidates affected approvals. Third/fourth group members are ordinary fleet operators involved in linked events, distinct from deferred unsolicited affected-party notices.
+A **party company** operates `objectA` or `objectB`. A **fleet assignment** grants an authenticated user responsibility for an object within that company. Event actions (select, approve, veto) require company membership and a current assignment to the corresponding active object; otherwise `FORBIDDEN`. Room chat/call/read requires explicit group-room membership derived from involvement in a linked event. Shared room access never grants approval rights on unrelated sides or access to private records. Side is resolved on the server, never accepted from the browser. Public catalog browsing grants no room access. Demo assignments are seeded, not editable by clients. Revocation invalidates affected approvals. Every additional group member (third, fourth or later) is an ordinary fleet operator involved in a linked event, distinct from deferred unsolicited affected-party notices.
 
 An event has stable canonical A/B sides, independent of the current viewer. When two of the same company's objects are involved, return `myObjectIds` for both and `workflow: "internal_review"`, `mySide: null`, `canAct: false`; scheduling remains disabled pending an internal approval rule. A missing active counterpart retains a bilateral requirement and is never treated as debris.
 
@@ -250,7 +250,8 @@ interface RoomState {
   roomId: Id<"rooms">;
   event: EventRow;                 // focused event with viewer-specific canAct/assignment scope
   linkedEvents: { eventId: Id<"events">; summary: string; canAct: boolean; requiredApprovalSides: Side[] }[]; // intentionally shared projection
-  operatorCompanyIds: Id<"companies">[]; // 2-4 active operator companies for group rooms
+  operatorCompanyIds: Id<"companies">[]; // every active operator company with a linked event; no fixed cap
+  trajectoryPlans: TrajectoryPlan[]; // plans whose moved spacecraft affects a linked event (§2.5)
   summaryLines: string[];           // Incident Analyst's five lines, viewer's language [AGT-2]
   participants: {
     userId: Id<"users">; companyId: Id<"companies">; name: string; language: Lang; // sides are event-specific
@@ -333,6 +334,15 @@ interface Maneuver {
   error: string | null;
   reviewRequired: boolean;
   updatedAt: ISODate;
+}
+
+interface TrajectoryPlan {          // one moved spacecraft across every pair event it affects (§4.1)
+  objectId: ObjectId;               // the moved spacecraft
+  planVersion: number;              // advances on any change to the moved trajectory
+  affectedEventIds: Id<"events">[]; // pair events whose inputs use this trajectory
+  proposalRefs: { eventId: Id<"events">; proposalId: Id<"proposals">; revision: number }[]; // one per affected event
+  maneuverId: Id<"maneuvers"> | null;   // the single schedule entry, once an intent is reserved
+  state: "proposed" | "authorized" | "scheduled" | "review_required" | "superseded";
 }
 
 interface Verification {            // [VER-1..VER-4, §20 Q11]
@@ -533,7 +543,7 @@ The default dashboard is My Fleet + My Incidents + globe. Label the separate mis
 
 ### 3.4 Coordination room (screen 2)
 
-A room groups related pair events and supports 2-4 operators. Main demo: US/RU and US/CN, three dispatchers. Call/chat/presence are room-scoped. Selection, approval, scheduling, and verification remain event-scoped. A room member can read the intentionally shared card projection for linked incidents without permission to approve them or read private policy/memory. An observer uses `demo.publicView`, not the operator room query.
+A room groups all linked pair events and every operator company they involve, with no fixed operator count. Main demo: US/RU and US/CN, three dispatchers. Call/chat/presence are room-scoped. Selection, approval, scheduling, and verification remain event-scoped. A situation with more satellites is several linked pair events in one room; a spacecraft whose maneuver affects more than one of them has one `TrajectoryPlan` (§2.5, §4.1). A room member can read the intentionally shared card projection for linked incidents without permission to approve them or read private policy/memory. An observer uses `demo.publicView`, not the operator room query.
 
 Counter uses `messages.send`, optionally referencing the selected proposal/revision. There is no `approvals.counter` mutation, structured counter form or `countered` approval state.
 
@@ -590,7 +600,7 @@ Bilateral workflow requires A and B. Confirmed debris requires only the assigned
 
 1. The caller is an `operator` with a current assignment to the required active-object side in that company → else `FORBIDDEN`. The workflow must allow scheduling.
 2. The event status is `proposal` or `communication` → else `INVALID_STATE`.
-3. `(proposalId, revision, selectionGeneration, approvalRuleVersion)` identifies the current selection and workflow → else `NOT_SELECTED` or `STALE_REVISION`. Material evidence/policy/assignment changes have already invalidated affected approvals and advanced the authorization generation.
+3. `(proposalId, revision, selectionGeneration, approvalRuleVersion)` identifies the current selection and workflow → else `NOT_SELECTED` or `STALE_REVISION`. Material evidence/policy/assignment changes have already invalidated affected approvals and advanced the authorization generation. If the revision belongs to a trajectory plan, the server stores the plan's current `planVersion` with the approval.
 4. `revision` is the latest revision of that proposal → else `STALE_REVISION`.
 5. It stores the caller's real required side as `approved`, with user identity, time and selection generation. Only if every required side has valid current authorization does the event move to `approved`, returning `{ allRequiredApproved: true, requiredApprovalSides }`. Empty required-side lists never authorize scheduling. Confirmed debris never fabricates an approval for its missing side.
 
@@ -601,10 +611,13 @@ After all workflow-required approvals the Maneuver Scheduler runs in the backgro
 - A **wait** candidate moves the event to `monitoring`, with no maneuver.
 - A **maneuver** is re-screened by the orbital service. On refusal: maneuver `refused`, required approvals reset to `pending` with the reason, event back to `agents` [EXE-3]. On pass: Droid commits the prepared diff; maneuver `committed`, event `scheduled`. A failed write leaves the maneuver `failed` with `error`, and a retry never creates a second entry.
 
+**Shared maneuvers.** When one maneuver affects several pair events, the moved spacecraft has one `TrajectoryPlan`. Each affected event keeps its own selection and required approvals. Scheduling requires every affected event's required approvals on the same `planVersion`; one event's approvals never authorize another. The moved trajectory is re-screened once against the full catalog, and the schedule-write intent is keyed by object and `planVersion`, so the plan produces one schedule entry. A refusal resets approvals in all affected events. A revision of the plan advances `planVersion` and invalidates approvals in all affected events, each with its own reset message. Linked events that do not use the moved trajectory keep their approvals.
+
 **Resets.** These invalidate required approvals, advance selection generation and post a workflow-appropriate system message: "Both approvals reset" for bilateral or "Approval reset" for unilateral debris:
 - a new selection;
 - a new revision of the selected proposal (an agent revision or `summary.edit`);
 - a veto or material change inferred from a conversational counter;
+- a new `planVersion` of a trajectory plan this event depends on, including a revision made for another affected event;
 - a material change in policy inputs, orbital evidence, workflow classification or approval authorization (including assignment revocation).
 
 Unrelated messages never reset approvals. Old approvals stay in the log and never come back, even when the selection switches back.
@@ -633,6 +646,7 @@ Unrelated messages never reset approvals. Old approvals stay in the log and neve
 
 - The full orbital catalog is not stored as per-object live Convex updates. Real mode requires OMM from `catalog.snapshot.ommUrl`. Unavailable/invalid OMM stays explicitly pending/error with no TLE or simulator fallback. `/api/catalog` and the TLE element path are dev-only. The shared worker now accepts either format and uses OMM directly in real mode. The numerical fleet-screening service remains to build [DATA-6].
 - Queries read indexed tables only (Convex scans at most 32,000 documents per transaction). Lists are paged where noted.
+- Rooms have no fixed operator or event count. The Coordination Host context accepts up to 24 linked events and 100 messages per run; a room with more linked events fails the host run with a visible reason and never drops an event silently.
 - Risk charts use historical observations only — no forecast model [SCR-6 retired, ROOM-10].
 
 ---
