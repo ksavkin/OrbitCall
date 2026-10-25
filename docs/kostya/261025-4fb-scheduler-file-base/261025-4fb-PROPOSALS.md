@@ -1,8 +1,8 @@
 # Proposed changes for the schedule worker staleness check
 
-Status: proposed; the README sentence below is not applied yet. The issue #6 text is still for the team to post.
+Status: the README sentence below is applied on `kostya/r4-scheduler-file-base`. The issue #6 text is still for the team to post.
 
-## Proposed for services/scheduler/README.md
+## Applied in services/scheduler/README.md
 
 1. **Retries paragraph.** Adds: a preview stays valid while its own operator file is unchanged since the prepare; writes to other operator files may land in between, so several operators' approved plans can commit in any order.
 
