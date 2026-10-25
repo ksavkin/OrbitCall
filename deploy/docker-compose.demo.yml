@@ -1,0 +1,87 @@
+# OrbitCall demo host (one DigitalOcean CPU Droplet). See deploy/README.md.
+#
+#   docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.yml pull
+#   docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.yml up -d
+#   docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.yml ps
+#
+# Values come from the host env file. Each container receives only the names listed
+# under its own `environment`, so no service sees another service's credentials.
+
+name: orbitcall
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  orbit:
+    image: ghcr.io/ksavkin/orbitcall-orbit:${RELEASE_TAG:?set RELEASE_TAG to the release commit}
+    build:
+      context: ../services/orbit
+    restart: unless-stopped
+    expose:
+      - "3610"
+    environment:
+      ORBIT_SERVICE_TOKEN: ${ORBIT_SERVICE_TOKEN:?set ORBIT_SERVICE_TOKEN}
+      ORBIT_SNAPSHOT_ID: ${ORBIT_SNAPSHOT_ID:-gp-20261024T2134Z}
+    # One writable data folder (ORBIT_DATA, the image default): pinned snapshots in, jobs/ sim/ validation/ out.
+    volumes:
+      - orbit_data:/service/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3610/health', timeout=4)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    logging: *logging
+
+  voice:
+    image: ghcr.io/ksavkin/orbitcall-voice:${RELEASE_TAG:?set RELEASE_TAG to the release commit}
+    build:
+      context: ../services/voice
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      LIVEKIT_URL: ${LIVEKIT_URL}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      XAI_API_KEY: ${XAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      CARTESIA_API_KEY: ${CARTESIA_API_KEY}
+      XAI_STT_MODEL: ${XAI_STT_MODEL}
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL}
+      CARTESIA_MODEL_ID: ${CARTESIA_MODEL_ID}
+      CARTESIA_VOICE_ID_EN: ${CARTESIA_VOICE_ID_EN}
+      CARTESIA_VOICE_ID_ZH: ${CARTESIA_VOICE_ID_ZH}
+      XAI_TTS_VOICE_ID: ${XAI_TTS_VOICE_ID}
+      CONVEX_SITE_URL: ${CONVEX_SITE_URL}
+      VOICE_CALLBACK_TOKEN: ${VOICE_CALLBACK_TOKEN:?set VOICE_CALLBACK_TOKEN}
+    logging: *logging
+
+  caddy:
+    image: caddy:2.11.7
+    restart: unless-stopped
+    depends_on:
+      - orbit
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ORBITCALL_API_HOST: ${ORBITCALL_API_HOST:?set ORBITCALL_API_HOST to the API hostname}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging: *logging
+
+volumes:
+  orbit_data:
+  caddy_data:
+  caddy_config:

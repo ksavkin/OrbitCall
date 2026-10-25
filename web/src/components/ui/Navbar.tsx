@@ -13,7 +13,7 @@ import { Tooltip } from "./Tooltip";
 const NAV: { id: Tab; label: string; ready: boolean }[] = [
   { id: "orbit", label: "Orbit", ready: true },
   { id: "conjunctions", label: "Conjunctions", ready: true },
-  { id: "rooms", label: "Rooms", ready: false },
+  { id: "rooms", label: "Rooms", ready: true },
   { id: "policy", label: "Policy", ready: false },
   { id: "audit", label: "Audit log", ready: false },
 ];
