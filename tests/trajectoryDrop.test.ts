@@ -172,4 +172,33 @@ describe("trajectory drop: the remaining event prepares on its own", () => {
     expect(new Set(single.map(p => p.body.intentKey)).size).toBe(1);
     expect(single[0].body).toMatchObject({ trajectory: null });
   });
+
+  it("an event that leaves a plan which still covers others requests its own preview", async () => {
+    const s = await events({ outside: true });
+    mockWorker();
+    const hour = 3_600_000, burn = Date.parse(P1.burnTimeUtc!);
+    await s.t.run(ctx => ctx.db.patch(s.E3, { tcaMs: burn + 10 * hour }));
+    await pick(s.t, "a", s.E1, "P1");
+    await pick(s.t, "a", s.E2, "P1");
+    expect(sorted((await live(s.t))[0].affectedEventIds)).toEqual(sorted([s.E1, s.E2, s.E3]));
+    // Nothing from the picks is still queued.
+    await finish(s.t);
+    await s.t.run(ctx => ctx.db.patch(s.E2, { tcaMs: burn + 90 * hour }));
+    await s.t.mutation(call.sync, { eventId: s.E1 });
+    expect(sorted((await live(s.t))[0].affectedEventIds)).toEqual(sorted([s.E1, s.E3]));
+    const queued = await s.t.run(ctx => ctx.db.system.query("_scheduled_functions").collect());
+    expect(queued.some(job => /requestPreview$/.test(job.name) && (job.args[0] as { eventId?: string }).eventId === s.E2 && job.state.kind === "pending")).toBe(true);
+  });
+
+  it("a sync that finds the current version unchanged retires only the refused version beside it", async () => {
+    const s = await events();
+    await pick(s.t, "a", s.E1, "P1");
+    await pick(s.t, "a", s.E2, "P1");
+    const [first] = await live(s.t);
+    await s.t.mutation(makeFunctionReference<"mutation">("trajectoryPlans:refuse"), { id: first._id, version: first.planVersion });
+    const draft = (await live(s.t)).find(p => p.state === "draft")!;
+    expect((await live(s.t)).map(p => p.state).sort()).toEqual(["draft", "review_required"]);
+    await s.t.mutation(call.sync, { eventId: s.E1 });
+    expect(await live(s.t)).toMatchObject([{ _id: draft._id, state: "draft" }]);
+  });
 });
