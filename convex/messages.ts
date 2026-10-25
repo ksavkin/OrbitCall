@@ -52,9 +52,11 @@ export const send = mutation({
     const { scope, room, pairs } = await requireActiveMember(ctx, roomId);
     const { user, company } = scope;
     // Decision turns: everyone discusses before a decision opens; while one is open, only the side in turn writes.
-    const deciding = (await roomTurns(ctx, scope, pairs, true)).filter(e => e.deciding);
-    if (deciding.length && !deciding.some(e => e.myTurn)) {
-      throw new ConvexError({ code: "INVALID_STATE", message: `Side ${deciding[0].turn} is deciding; wait for your turn.` });
+    // A line about one incident needs the turn on that incident; a room-wide line needs it on every open decision.
+    const outOfTurn = (await roomTurns(ctx, scope, pairs, true))
+      .filter(e => e.deciding && !e.myTurn && (eventId === undefined || e.eventId === eventId));
+    if (outOfTurn.length) {
+      throw new ConvexError({ code: "INVALID_STATE", message: `Side ${outOfTurn[0].turn} is deciding; wait for your turn.` });
     }
     const original = text.trim();
     if (!original || original.length > MAX_TEXT) throw new ConvexError({ code: "VALIDATION", message: "A message must be 1 to 2000 characters." });
