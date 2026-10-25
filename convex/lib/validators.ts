@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 
-// Stored values.
+// Stored values. sourceName is the full spec §2.1 SourceName.
 export const sourceName = v.union(
-  v.literal("celestrak_gp"), v.literal("celestrak_supgp"), v.literal("celestrak_satcat"),
-  v.literal("socrates"), v.literal("simulated"),
+  v.literal("celestrak_gp"), v.literal("celestrak_supgp"), v.literal("socrates"), v.literal("cdm_public"),
+  v.literal("gp_history"), v.literal("keeptrack"), v.literal("simulated"), v.literal("celestrak_satcat"),
 );
 export const sourceRef = v.object({
   name: sourceName,
