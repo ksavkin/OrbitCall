@@ -1,7 +1,7 @@
 // call.join (spec §3.4, §5 step 1): a 2-hour LiveKit token for this coordination room, with the member's language,
 // company and voice gender as signed participant attributes (`lang`, `companyId`, `voice` when set). The room name is
 // `coordination-<roomId>`, the identity `user-<userId>`; the worker publishes `tr:<lang>:<identity>` tracks for it and
-// voices them in the member's gender.
+// voices them in the member's gender. A room that already exists without the translator gets it dispatched here.
 
 import { v } from "convex/values";
 import { makeFunctionReference } from "convex/server";
@@ -9,6 +9,7 @@ import { action, internalQuery } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 import { callError, identityOf, memberBy, roomNameOf } from "./core";
 import { mintLiveKitToken } from "./livekitToken";
+import { ensureTranslator } from "./translatorDispatch";
 
 export const TOKEN_TTL_S = 2 * 3600;
 
@@ -28,12 +29,15 @@ export const join = action({
     if (!serverUrl || !apiKey || !apiSecret) callError("FEATURE_DISABLED", "Voice calls are not configured (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET)");
     const identity = identityOf(member);
     const roomName = roomNameOf(roomId);
+    const agentName = process.env.LIVEKIT_AGENT_NAME || "orbit-translator";
+    const nowS = Math.floor(Date.now() / 1000);
     const token = await mintLiveKitToken({
       apiKey, apiSecret, identity, name: member.name, room: roomName,
       attributes: { lang: member.lang, companyId: member.companyId, ...(member.voice ? { voice: member.voice } : {}) },
-      ttlS: TOKEN_TTL_S, nowS: Math.floor(Date.now() / 1000),
-      canPublish: member.role === "operator", agentName: process.env.LIVEKIT_AGENT_NAME || "orbit-translator",
+      ttlS: TOKEN_TTL_S, nowS, canPublish: member.role === "operator", agentName,
     });
+    // the token dispatches the translator only into a room this join creates; an existing room gets it explicitly
+    await ensureTranslator({ serverUrl, apiKey, apiSecret, room: roomName, agentName, nowS });
     return { serverUrl, token, roomName, identity, language: member.lang, role: member.role };
   },
 });
