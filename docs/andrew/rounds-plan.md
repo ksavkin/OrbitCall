@@ -6,7 +6,7 @@ Round 1 contracts are written out in full because Kostya and Adil build against 
 
 ## How every task runs
 
-- One agent per bullet, one branch per bullet, cut from current `origin/main`: `andrew/r1-host-checker`, `andrew/r1-candidate-cards`, `andrew/r1-memory-note`, `andrew/r2-publish-candidates`, `andrew/r2-host-trigger`, `andrew/r2-history`, `andrew/r3-advocate-memory`, `andrew/r3-host-speech`.
+- One agent per bullet, one branch per bullet, cut from current `origin/main`: `andrew-r1-host-checker`, `andrew-r1-candidate-cards`, `andrew-r1-memory-note`, `andrew-r2-publish-candidates`, `andrew-r2-host-trigger`, `andrew-r2-history`, `andrew-r3-advocate-memory`, `andrew-r3-host-speech`.
 - Use a separate git worktree per agent so parallel agents never share a checkout.
 - Never commit `convex/_generated/`, `package.json`, or a lockfile. Run `npx convex codegen` locally so types resolve, then leave `_generated/` unstaged.
 - Never edit `convex/schema.ts` or `convex/schema/*`. Tables come only from the voice backend task (round 1) and the schema task (round 1.5).
@@ -40,7 +40,7 @@ The three bullets share no file. None reads a new table, because the schema task
 
 ### R1-A: Coordination Host and Grok checker
 
-Branch `andrew/r1-host-checker`. Phases 6 and 7; Gemini and Grok sponsor evidence.
+Branch `andrew-r1-host-checker`. Phases 6 and 7; Gemini and Grok sponsor evidence.
 
 **Files**
 - Create: `convex/lib/host.ts`: pure code (no `"use node"`). Context type, prompt, JSON schema, output checker.
@@ -153,7 +153,7 @@ export const run: InternalAction<{ input: CheckInput; attempt: number }, { span:
 
 ### R1-B: Candidate cards
 
-Branch `andrew/r1-candidate-cards`. Phase 6.
+Branch `andrew-r1-candidate-cards`. Phase 6.
 
 **Files**: create `convex/lib/candidateCards.ts` and `tests/candidateCards.test.ts`. Do not edit `convex/advocates.ts`, `convex/candidates.ts`, or `convex/lib/orbitClient.ts` (Kostya builds that in parallel).
 
@@ -184,7 +184,7 @@ export function stableCandidateId(c: { kind: "maneuver" | "wait"; movingObjectId
 
 ### R1-C: Memory note
 
-Branch `andrew/r1-memory-note`. Phase 10; Backboard.
+Branch `andrew-r1-memory-note`. Phase 10; Backboard.
 
 **Files**: create `convex/lib/advocateMemory.ts` and `tests/advocateMemory.test.ts`. Pure code: no Backboard call here, since Kostya's `convex/lib/backboard.ts` lands in parallel.
 
@@ -227,7 +227,7 @@ Only follow up on the schema request. Check the landed tables against the fields
 
 ### R2-A: Publish candidates into the advocate tables
 
-Branch `andrew/r2-publish-candidates`. Files: `convex/advocates.ts`, `convex/lib/publishCandidates.ts`, `tests/advocateCandidates.test.ts`, and `convex/candidates.ts` if the debris decision adds it.
+Branch `andrew-r2-publish-candidates`. Files: `convex/advocates.ts`, `convex/lib/publishCandidates.ts`, `tests/advocateCandidates.test.ts`, and `convex/candidates.ts` if the debris decision adds it.
 
 - Internal action: `orbitClient.candidates(...)`, then `mapCandidates(...)`, then `internal.candidates.publish`, using the event's current candidate set version as `baseVersion`.
 - Check the landed `OrbitCandidatesResponse` against `orbitClient.ts` types. If they differ, fix the mapper here.
@@ -237,7 +237,7 @@ Branch `andrew/r2-publish-candidates`. Files: `convex/advocates.ts`, `convex/lib
 
 ### R2-B: Host trigger
 
-Branch `andrew/r2-host-trigger`. Files: `convex/hostTriggers.ts`, `tests/hostTriggers.test.ts`.
+Branch `andrew-r2-host-trigger`. Files: `convex/hostTriggers.ts`, `tests/hostTriggers.test.ts`.
 
 - `hostTriggers.request` (internal mutation): `{ roomId, trigger, inputVersion }`. It dedupes on the host runs index `(roomId, inputVersion, trigger)`, so an existing running or succeeded row is a no-op. It inserts a `running` row and schedules the action.
 - The action builds `HostContext` by reading the round 1.5 tables directly (rooms, messages, proposals, approvals, advocate shared outcomes). It does not call Kostya's round 2 functions, which land in parallel. Messages written by the host are excluded, so the host never triggers itself.
@@ -248,7 +248,7 @@ Branch `andrew/r2-host-trigger`. Files: `convex/hostTriggers.ts`, `tests/hostTri
 
 ### R2-C: History
 
-Branch `andrew/r2-history`. Files: `convex/history.ts`, `convex/lib/tigerExport.ts`, `tests/history.test.ts`.
+Branch `andrew-r2-history`. Files: `convex/history.ts`, `convex/lib/tigerExport.ts`, `tests/history.test.ts`.
 
 - `history.recordObservation` (internal mutation) upserts an `observationExports` row by `observationKey` and schedules the export.
 - `tigerExport` uses Kostya's `convex/lib/tiger.ts`. It creates the hypertable if absent and writes with `INSERT ... ON CONFLICT (observation_key, observed_at) DO NOTHING` using parameterized SQL only.
@@ -260,7 +260,7 @@ Branch `andrew/r2-history`. Files: `convex/history.ts`, `convex/lib/tigerExport.
 
 ### R3-A: Advocate memory
 
-Branch `andrew/r3-advocate-memory`. Files: `convex/advocates.ts`, plus `convex/agents/advocate.ts` and `convex/lib/advocate.ts` if the scope request is accepted.
+Branch `andrew-r3-advocate-memory`. Files: `convex/advocates.ts`, plus `convex/agents/advocate.ts` and `convex/lib/advocate.ts` if the scope request is accepted.
 
 - Before the Claude call, recall through Kostya's `backboard.ts`, then `memoryNote(...)`, and put `promptBlock` into this company's prompt only.
 - After a recorded outcome, `buildMemoryItem` gives a checked item, which is written to the run's assistant. A write failure changes nothing else.
@@ -268,7 +268,7 @@ Branch `andrew/r3-advocate-memory`. Files: `convex/advocates.ts`, plus `convex/a
 
 ### R3-B: Host speech
 
-Branch `andrew/r3-host-speech`. File: `convex/hostTriggers.ts` only.
+Branch `andrew-r3-host-speech`. File: `convex/hostTriggers.ts` only.
 
 - After a checked host output is stored, send its canonical text through the voice backend's translation and TTS entry: Claude translation, Cartesia for EN/ZH, Grok TTS for RU.
 - Host speech never approves. A translation failure keeps the original text visible.
