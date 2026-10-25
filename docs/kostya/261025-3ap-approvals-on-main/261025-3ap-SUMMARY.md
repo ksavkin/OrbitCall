@@ -60,12 +60,15 @@ The port replaces the old branch `claude/r2-approvals-chain-a21926`, which must 
 
 ## Tests
 
-- `tests/proposals.test.ts`: 6 tests.
+- `tests/proposals.test.ts`: 7 tests.
 - `tests/approvals.test.ts`: 11 tests.
 - The seed is shared in `tests/decision.ts`.
-- `npm run check` passes: 26 files, 899 tests (882 on the PR #35 tip + 17).
+- `npm run check` passes: 26 files, 900 tests (882 on the PR #35 tip + 18).
 
 ## Decisions and deviations
+
+- **Selection is a turn action.** While a decision is open, only the side in turn may change the selection (user-flow points 6-7: voice selects). Changing it resets that side's earlier approval.
+- **No silent republish after consensus.** `candidates.publish` refuses with INVALID_STATE once the event is `approved` or later (spec §4.1: a change after authorization goes to review).
 
 - **Turns versus spec §4.1.** The spec still says "independent Approve"; Adil's user flow says turns. Turns are implemented, and the spec sentence needs the doc fix.
 - **Status gate.** Spec step 2 requires `proposal` or `communication`. `candidates.publish` is the writer of `proposal`. `communication` is left to `rooms.startWorkflow` as a seam; approving already works in `proposal`.
