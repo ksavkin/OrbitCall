@@ -83,7 +83,7 @@ function assessed(view: AdvocatesView, ref: { candidateId: string; revision: num
   });
 }
 
-/** Per-side feasibility and "Recommended by A/B" on one card (wiring map §5.3). Hidden for a head of ops (FORBIDDEN). */
+/** Per-side feasibility, "Recommended by A/B" (wiring map §5.3) and a failed independent check (AGT-6) on one card. */
 export function AdvocateChips({ proposalId, className = "" }: { proposalId: ProposalId; className?: string }) {
   const real = useRealMode();
   const view = useLive((s) => s.advocates);
@@ -93,9 +93,12 @@ export function AdvocateChips({ proposalId, className = "" }: { proposalId: Prop
   const ref = cardRef(cards, rows, proposalId);
   const sides = real && view && ref ? assessed(view, ref) : [];
   const recommendedBy = sides.filter((s) => s.e.recommended).map((s) => s.side);
+  // the title row is always visible, so a disagreement shows here even on a collapsed card and without assessments
+  const rationale = real && ref ? checkedRationale(rows, cards, proposalId, ref.revision) : null;
+  const disagrees = rationale?.secondModel?.agrees === false ? rationale.secondModel.note : null;
   return (
     <AnimatePresence initial={false}>
-      {sides.length > 0 && (
+      {(sides.length > 0 || disagrees !== null) && (
         <motion.span
           key="advocates"
           initial={{ opacity: 0 }}
@@ -111,6 +114,13 @@ export function AdvocateChips({ proposalId, className = "" }: { proposalId: Prop
             <span className="rounded-full px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-[0.06em] text-neutral-300 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.22)]">
               Recommended by {recommendedBy.join(" and ")}
             </span>
+          )}
+          {disagrees !== null && (
+            <Tooltip side="top" label={disagrees}>
+              <Chip color="var(--orange)" size="sm" icon={<TriangleAlert size={9} />}>
+                Check disagrees
+              </Chip>
+            </Tooltip>
           )}
         </motion.span>
       )}
