@@ -51,7 +51,7 @@ export function ConjunctionMarkers() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  if (tab !== "conjunctions") return null;
+  if (tab !== "orbit") return null;
   return (
     <div className="pointer-events-none absolute inset-0 z-[11] overflow-hidden">
       {events.map((e) => (

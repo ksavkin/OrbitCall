@@ -16,6 +16,7 @@ import { CallFeed } from "./AgentTrace";
 import { PcChart } from "./PcChart";
 import { Decide, Done, TheirReply, Waiting, optionText, useRoomState } from "./DecisionDock";
 import { ObjectChip, RichLine } from "./Entity";
+import { RoomCall } from "@/components/rooms/RoomsScreen";
 
 // The incident command view: one near-full-screen place for the case being worked.
 // Left: the case. Center: what is happening now, or the dispatcher's decision. Right: the agents.
@@ -43,21 +44,23 @@ export function stepOf(e: ConjunctionEvent) {
   }
 }
 
+/** Expanded is the Decision Center tab; collapsed is Orbit with the case bar. The tab is the source of truth. */
 export function setIncidentView(v: "expanded" | "collapsed") {
-  if (useOps.getState().incidentView === v) return;
+  const tab = v === "expanded" ? "decision" : "orbit";
+  if (useOps.getState().tab === tab) return;
   sfx.whoosh();
-  useOps.setState({ incidentView: v });
+  useOps.setState({ incidentView: v, tab });
 }
 
 export function IncidentView() {
   const incident = useOps((s) => s.incident);
-  const view = useOps((s) => s.incidentView);
   const tab = useOps((s) => s.tab);
   const resolvedOpen = useOps((s) => s.resolved?.eventId === s.incident);
   const e = useOps((s) => s.events.find((x) => x.id === s.incident));
   const now = useNow(250);
   const room = useRoomState(e, now);
-  const show = !!incident && !!e && tab === "conjunctions" && !resolvedOpen;
+  const show = !!incident && !!e && (tab === "decision" || tab === "orbit") && !resolvedOpen;
+  const view = tab === "decision" ? "expanded" : "collapsed";
 
   return (
     <AnimatePresence mode="wait">
@@ -297,8 +300,8 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
   return (
     <div className="flex min-h-0 flex-col border-r border-white/[0.06]">
       {/* a fixed slot for the room's state, so changes crossfade in place instead of moving the calls */}
-      {/* the decision box scrolls inside this slot; bottom padding keeps its edge clear of the slot's edge */}
-      <div className={`shrink-0 px-5 pt-4 ${st?.mode === "decide" ? "thin-scroll max-h-[70%] overflow-y-auto pb-3" : ""}`}>
+      {/* the decision box scrolls inside this slot; its pinned Approve bar sits flush with the slot's bottom */}
+      <div className={`shrink-0 px-5 pt-4 ${st?.mode === "decide" ? "thin-scroll max-h-[52%] overflow-y-auto" : ""}`}>
         <div className="relative min-h-[76px]">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
@@ -332,11 +335,16 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
           </AnimatePresence>
         </div>
       </div>
+      {/* the agents' work, for everyone in the case: every model and tool call with its latency */}
       <div className="flex shrink-0 items-baseline justify-between px-5 pb-2 pt-4">
-        <span className="text-[12px] font-semibold text-neutral-200">Agent calls</span>
-        <span className="text-[11px] text-neutral-600">newest first · this case only</span>
+        <span className="text-[12px] font-semibold text-neutral-200">Agent and tool calls</span>
+        <span className="text-[11px] text-neutral-600">newest first · with latency</span>
       </div>
-      <CallFeed className="flex-1 [&_.px-3]:px-5" eventId={e.id} />
+      <CallFeed className="min-h-0 flex-1 [&_.px-3]:px-5" eventId={e.id} />
+      {/* the coordination channel, docked small at the bottom: voice by default, text on the switch */}
+      <div className="flex h-[200px] shrink-0 flex-col border-t border-white/[0.08] bg-black/20">
+        <RoomCall e={e} compact />
+      </div>
     </div>
   );
 }
@@ -365,6 +373,7 @@ function Card({ children }: { children: React.ReactNode }) {
 
 /* ---------------------------------------------------------------- agents */
 
+/** The agents as a graph: who calls whom, live. Their calls are in the middle column for everyone. */
 function AgentsColumn() {
   return (
     <div className="thin-scroll flex min-h-0 flex-col overflow-y-auto px-5 py-4">

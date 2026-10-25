@@ -67,7 +67,7 @@ export function DecisionDock() {
   const room = useRoomState(e, now);
   const { viewer, other } = room;
   // the incident view owns its case; the resolution card takes over once it closes
-  const state = !e || tab !== "conjunctions" || resolvedId === e.id || incident === e.id ? null : room.state;
+  const state = !e || tab !== "orbit" || resolvedId === e.id || incident === e.id ? null : room.state;
 
   return (
     <AnimatePresence>

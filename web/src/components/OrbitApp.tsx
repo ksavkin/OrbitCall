@@ -20,7 +20,7 @@ import { BackendSync } from "@/components/ops/BackendSync";
 import { RealModeStatus } from "@/components/ops/RealModeStatus";
 import { CONVEX_ENABLED } from "@/lib/backend/provider";
 import { ConjunctionMarkers } from "@/components/ops/ConjunctionMarkers";
-import { ConjunctionQueue } from "@/components/ops/ConjunctionQueue";
+import { OrbitOps } from "@/components/ops/OrbitOps";
 import { OpsSync } from "@/components/ops/OpsSync";
 import { Director } from "@/components/ops/Director";
 import { ScanResults, UrgencyOverlay } from "@/components/ops/DemoFlow";
@@ -48,7 +48,9 @@ export function OrbitApp() {
 
   const tab = useOps((s) => s.tab);
   const dev = useOps((s) => s.dev);
-  const conj = tab === "conjunctions";
+  const orbit = tab === "orbit";
+  // a case is running: Orbit shows the agents on the right instead of the satellite panel
+  const caseLive = useOps((s) => !!s.incident && s.resolved?.eventId !== s.incident);
 
   return (
     <main className="relative h-dvh w-screen overflow-hidden bg-black select-none">
@@ -68,24 +70,22 @@ export function OrbitApp() {
       <ConjunctionMarkers />
       <Navbar />
       {/* left column: per-screen panels share the height */}
-      <div className="pointer-events-none absolute bottom-[112px] left-2.5 top-[58px] z-20 flex w-[244px] flex-col gap-2" style={{ width: conj ? 300 : 244 }}>
-        <AnimatePresence mode="popLayout" initial={false}>
-          {conj ? (
-            <ConjunctionQueue key="queue" />
-          ) : (
-            <div key="orbit" className="flex min-h-0 flex-1 flex-col gap-2">
-              <CatalogPanel />
-              <WeatherCard />
-            </div>
-          )}
-        </AnimatePresence>
+      <div className="pointer-events-none absolute bottom-[112px] left-2.5 top-[58px] z-20 flex w-[264px] flex-col gap-2">
+        {orbit && (
+          <div className="flex min-h-0 flex-1 flex-col gap-2">
+            <OrbitOps />
+            <CatalogPanel />
+            <WeatherCard />
+          </div>
+        )}
       </div>
-      {!conj && <SatellitePanel />}
-      <AnimatePresence>{conj && <AgentsPanel key="agents" />}</AnimatePresence>
-      <AnimatePresence>{tab === "rooms" && <RoomsScreen key="rooms" />}</AnimatePresence>
+      {orbit && !caseLive && <SatellitePanel />}
+      <AnimatePresence>{orbit && caseLive && <AgentsPanel key="agents" />}</AnimatePresence>
+      {/* Decision Center without a running case: the rooms list (the sample call in Dev) */}
+      <AnimatePresence>{tab === "decision" && !caseLive && <RoomsScreen key="rooms" />}</AnimatePresence>
       <AnimatePresence>{tab === "policy" && <PolicyScreen key="policy" />}</AnimatePresence>
       <AnimatePresence>{tab === "audit" && <AuditScreen key="audit" />}</AnimatePresence>
-      <AnimatePresence>{conj && dev && <ScenarioBar key="scenario" />}</AnimatePresence>
+      <AnimatePresence>{orbit && dev && <ScenarioBar key="scenario" />}</AnimatePresence>
       <DecisionDock />
       <IncidentView />
       <UrgencyOverlay />
@@ -180,15 +180,15 @@ function useShortcuts() {
       if (k === "escape") {
         const ops = useOps.getState();
         if (ops.agentsExpanded) ops.set({ agentsExpanded: false });
-        else if (ops.incident && ops.incidentView === "expanded" && ops.tab === "conjunctions") setIncidentView("collapsed");
+        else if (ops.incident && ops.tab === "decision") setIncidentView("collapsed");
         else if (s.following) s.set({ following: false });
-        else if (ops.tab === "conjunctions" && ops.focusEvent) ops.set({ focusEvent: null });
+        else if (ops.tab === "orbit" && ops.focusEvent && !ops.incident) ops.set({ focusEvent: null });
         else s.set({ selected: null });
       } else if (k === "d") {
         toggleDev();
       } else if (k === "e" && useOps.getState().incident) {
         const ops = useOps.getState();
-        setIncidentView(ops.incidentView === "expanded" ? "collapsed" : "expanded");
+        setIncidentView(ops.tab === "decision" ? "collapsed" : "expanded");
       } else if (k === " ") {
         e.preventDefault();
         sfx.toggle(s.paused);

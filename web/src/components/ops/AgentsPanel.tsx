@@ -206,7 +206,7 @@ export function AgentsPanel() {
 
 /** Full-screen agent operations view: big graph, live step, trace and log side by side. */
 export function AgentsExpanded() {
-  const open = useOps((s) => s.agentsExpanded && s.dev && s.tab === "conjunctions");
+  const open = useOps((s) => s.agentsExpanded && s.dev && (s.tab === "orbit" || s.tab === "decision"));
   return (
     <AnimatePresence>
       {open && (

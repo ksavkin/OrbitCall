@@ -4,7 +4,8 @@ import { create } from "zustand";
 import type { CatalogSnapshot, EventRow } from "@/lib/backend/types";
 import type { AgentId, ConjunctionEvent, HumanPrompt, LogLine, Reply, Span } from "./types";
 
-export type Tab = "orbit" | "conjunctions" | "rooms" | "policy" | "audit";
+/** Orbit (globe, fleet, scan, agents), Decision Center (the case and its call), Policy, Inbox (audit + notices). */
+export type Tab = "orbit" | "decision" | "policy" | "audit";
 export type AgentView = "graph" | "trace" | "logs";
 
 interface OpsState {
@@ -42,6 +43,8 @@ interface OpsState {
   /** High-priority alert: red edge glow, banner and alarm. */
   alert: { eventId: string; at: number } | null;
   humans: HumanPrompt[];
+  /** A plan named by voice in the case's call ("option B"); the plan panel asks for a click to confirm it. */
+  voiceIntent: { eventId: string; label: string; said: string; at: number } | null;
   /** Risk Monitor screening pass in progress (drives the globe sweep). */
   scanning: boolean;
   lastScan: { at: number; objects: number; pairs: number; flagged: number; ms: number } | null;
@@ -85,6 +88,7 @@ export const useOps = create<OpsState>((set) => ({
   incident: null,
   incidentView: "expanded",
   humans: [],
+  voiceIntent: null,
   scanning: false,
   lastScan: null,
   validation: null,
