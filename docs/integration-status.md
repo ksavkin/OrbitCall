@@ -25,7 +25,7 @@ The [assigned-fleet user flow](user-flow.md) is the starting point. The [specifi
 | Queue source (Oct 25) | My Incidents lists only events from our own fleet scan (`scans.startMine`, which calls the orbital service's `POST /screen`). Before the first scan the queue is empty and asks for Run Scan. SOCRATES pairs are never the queue |
 | Reference check (Oct 25) | Every scan event is checked against the SOCRATES reference list: "Matched in SOCRATES", "Data differs" or "Not in SOCRATES", with their TCA, miss and probability side by side with ours. Provenance, not a confidence score. Validation (`GET /validation`) uses the full eligible list, not a top-N subset |
 | Run Scan access (Oct 25) | Shown on Orbit and Conjunctions. Signed out or without assignments: visible, not runnable, and it says why. Only provisioned accounts start paid work |
-| Probability display (Oct 25) | A decimal with two significant digits at 0.0001 and above (`0.0013`), scientific below (`1.3 × 10⁻⁷`), "1 in N" in the tooltip. SOCRATES values keep the `max_prob` label |
+| Probability display (Oct 25) | "1 in N" is the main reading (`1 in 770`), because people grasp it at once. The exact value sits next to it, smaller: two significant digits as a decimal from 0.0001 up (`0.0013`), scientific below (`1.3 × 10⁻⁷`). SOCRATES values keep the `max_prob` label |
 | TCA | Time of Closest Approach; display "Time until closest approach" / "До ближайшего сближения" |
 | Proposals | Up to four computed candidates. Show fewer if fewer exist |
 | Selection | Shared selected candidate, separate from each human's Approve. Selecting an alternative is not a counter |
