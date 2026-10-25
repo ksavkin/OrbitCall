@@ -3,6 +3,10 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useMemo, useState } from "react";
 import { Loader2, Maximize2, Minimize2 } from "lucide-react";
+import { useCaseRow } from "@/lib/backend/adapt";
+import { fmtStamp, pcSource } from "@/lib/backend/format";
+import { useLive, useRealMode } from "@/lib/backend/live";
+import type { ApprovalStatus, Side } from "@/lib/backend/types";
 import { fmtCountdown, fmtMiss, fmtChance, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { AGENTS, MODELS } from "@/lib/ops/roster";
 import { engine } from "@/lib/ops/engine";
@@ -12,8 +16,11 @@ import { sfx } from "@/lib/sound";
 import { useNow } from "@/lib/useNow";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { TurnStatus, WorkflowNote } from "@/components/live/DecisionStatus";
+import { SchedulerStatus } from "@/components/live/SchedulerStatus";
 import { AgentGraph, GraphLegend } from "./AgentGraph";
 import { CallFeed } from "./AgentTrace";
+import { SummaryView } from "./BackendQueue";
 import { PcTrend } from "./PcTrend";
 import { Meeting } from "./Meeting";
 import { useRoomState } from "./DecisionDock";
@@ -26,12 +33,13 @@ import { RoomCall } from "@/components/rooms/RoomsScreen";
 
 export const STEPS = ["Detected", "Analysis", "Negotiation", "Decision", "Scheduling", "Verification"];
 
-export function stepOf(e: ConjunctionEvent) {
+/** `summarized`: the analyst's summary is out, so the agents moved on from Analysis. */
+export function stepOf(e: ConjunctionEvent, summarized = !!e.summary) {
   switch (e.status) {
     case "new":
       return 0;
     case "agents":
-      return e.summary ? 2 : 1;
+      return summarized ? 2 : 1;
     case "proposal":
     case "communication":
     case "needs_decision":
@@ -60,11 +68,15 @@ export function IncidentView() {
   const e = useOps((s) => s.events.find((x) => x.id === s.incident));
   const now = useNow(250);
   const room = useRoomState(e, now);
+  const step = useStep(e);
+  const real = useRealMode();
+  const caseError = useLive((s) => s.errors.case);
   const show = !!incident && !!e && (tab === "decision" || tab === "orbit");
   const view = tab === "decision" ? "expanded" : "collapsed";
 
   return (
     <AnimatePresence mode="wait">
+      {real && !!incident && !e && !!caseError && tab === "decision" && <CaseUnavailable key="incident-error" message={caseError} />}
       {show && view === "expanded" && (
         <motion.div
           key="incident-full"
@@ -77,19 +89,46 @@ export function IncidentView() {
           <Header e={e!} now={now} />
           {/* who is on the case, always in view, beside where the case stands */}
           <div className="flex items-center gap-6 border-b border-white/[0.06] px-7 pb-3">
-            <PartiesBar e={e!} room={room} />
-            <Stepper e={e!} />
+            {real ? <LivePartiesBar e={e!} /> : <PartiesBar e={e!} room={room} />}
+            <Stepper e={e!} step={step} />
           </div>
           {/* the case is narrow; the decision and the agents' run get the room */}
           <div className="grid min-h-0 flex-1 grid-cols-[300px_minmax(0,1fr)_minmax(320px,380px)]">
-            <CaseColumn e={e!} />
-            <CenterColumn e={e!} now={now} room={room} />
+            <CaseColumn e={e!} now={now} real={real} />
+            <CenterColumn e={e!} now={now} room={room} real={real} />
             <AgentsColumn />
           </div>
         </motion.div>
       )}
-      {show && view === "collapsed" && <CollapsedBar key="incident-bar" e={e!} now={now} decide={room.state?.mode === "decide"} />}
+      {show && view === "collapsed" && <CollapsedBar key="incident-bar" e={e!} now={now} step={step} decide={room.state?.mode === "decide"} />}
     </AnimatePresence>
+  );
+}
+
+/** The stepper's position. In real mode the analyst's checked summary moves the case past Analysis, as in the simulator. */
+function useStep(e: ConjunctionEvent | undefined) {
+  const real = useRealMode();
+  const summarized = useLive((s) => (s.summary?.summaryLines.length ?? 0) > 0);
+  return e ? stepOf(e, real ? summarized : !!e.summary) : 0;
+}
+
+/** Real mode: the open case could not be read at all (inbox.get failed and no queue row has it). */
+function CaseUnavailable({ message }: { message: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -6 }}
+      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      className="glass pointer-events-auto absolute left-1/2 top-[58px] z-[38] w-[360px] max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-[12px] px-4 py-3"
+      role="alert"
+    >
+      <div className="text-[12px] font-medium">This case could not be opened</div>
+      <p className="mt-1 text-[11px] leading-relaxed text-muted">{message}</p>
+      <button className="btn btn-ghost-line mt-2.5 h-7 px-3 text-[11.5px]" onClick={() => useOps.setState({ incident: null, tab: "orbit" })}>
+        Back to the globe
+      </button>
+    </motion.div>
   );
 }
 
@@ -134,8 +173,7 @@ function Header({ e, now }: { e: ConjunctionEvent; now: number }) {
 }
 
 /** Six thin segments: done, current, ahead. Only the current step is named, so the line stays quiet. */
-function Stepper({ e }: { e: ConjunctionEvent }) {
-  const cur = stepOf(e);
+function Stepper({ e, step: cur }: { e: ConjunctionEvent; step: number }) {
   return (
     <div className="w-[280px] shrink-0">
       <div className="mb-2 text-right text-[12px] text-neutral-500">
@@ -161,7 +199,7 @@ function Stepper({ e }: { e: ConjunctionEvent }) {
 
 /* ------------------------------------------------------------------ case */
 
-function CaseColumn({ e }: { e: ConjunctionEvent }) {
+function CaseColumn({ e, now, real }: { e: ConjunctionEvent; now: number; real: boolean }) {
   const cross = engine.encounters.get(e.id)?.crossDeg;
   const lat = `${Math.abs(Math.round(e.where.lat))}°${e.where.lat >= 0 ? "N" : "S"}`;
   const lon = `${Math.abs(Math.round(e.where.lon))}°${e.where.lon >= 0 ? "E" : "W"}`;
@@ -169,19 +207,28 @@ function CaseColumn({ e }: { e: ConjunctionEvent }) {
   return (
     <div className="thin-scroll min-h-0 overflow-y-auto border-r border-white/[0.06]">
       {/* four figures, one grid, thin dividers */}
-      <div className="grid grid-cols-2 border-b border-white/[0.06]">
-        <Fact label="Chance" value={fmtOdds(e.pc)} tone={red ? "#ff8a80" : "var(--amber)"} note={`${fmtChance(e.pc)} · ${e.pcSource}`} />
-        <Fact label="Miss distance" value={fmtMiss(e.missM)} note={`±${fmtMiss(e.uncertaintyM)} between sources`} right />
-        <Fact label="Relative speed" value={`${e.relVelKms.toFixed(1)} km/s`} note={cross ? `crossing at ${cross}°` : undefined} bottom />
-        <Fact label="Where" value={`${Math.round(e.where.altKm)} km`} note={`over ${lat} ${lon}`} right bottom />
-      </div>
+      {real ? (
+        <LiveFacts e={e} />
+      ) : (
+        <div className="grid grid-cols-2 border-b border-white/[0.06]">
+          <Fact label="Chance" value={fmtOdds(e.pc)} tone={red ? "#ff8a80" : "var(--amber)"} note={`${fmtChance(e.pc)} · ${e.pcSource}`} />
+          <Fact label="Miss distance" value={fmtMiss(e.missM)} note={`±${fmtMiss(e.uncertaintyM)} between sources`} right />
+          <Fact label="Relative speed" value={`${e.relVelKms.toFixed(1)} km/s`} note={cross ? `crossing at ${cross}°` : undefined} bottom />
+          <Fact label="Where" value={`${Math.round(e.where.altKm)} km`} note={`over ${lat} ${lon}`} right bottom />
+        </div>
+      )}
 
-      <div className="border-b border-white/[0.06] px-5 py-4">
-        <PcTrend e={e} />
-      </div>
+      {/* the backend sends no Pc history with the case, so real mode has no trend to draw */}
+      {!real && (
+        <div className="border-b border-white/[0.06] px-5 py-4">
+          <PcTrend e={e} />
+        </div>
+      )}
 
-      <Section title="Analyst notes" note={`${AGENTS.analyst.name} · ${MODELS[AGENTS.analyst.model].label}`}>
-        {e.summary ? (
+      <Section title="Analyst notes" note={real ? AGENTS.analyst.name : `${AGENTS.analyst.name} · ${MODELS[AGENTS.analyst.model].label}`}>
+        {real ? (
+          <LiveSummary e={e} now={now} />
+        ) : e.summary ? (
           <ol className="space-y-2.5">
             {e.summary.slice(1).map((l, i) => (
               <li key={i} className="flex gap-3 text-[13px] leading-[1.6] text-neutral-300">
@@ -224,6 +271,42 @@ function Section({ title, note, children }: { title: string; note?: string; chil
   );
 }
 
+/** Real mode: the case row's own figures. Nothing is shown that the backend did not send (no spread, no position). */
+function LiveFacts({ e }: { e: ConjunctionEvent }) {
+  const pc = useCaseRow((s) => (s.row?.eventId === e.id ? s.row.pc : null));
+  const v = pc?.value ?? null;
+  return (
+    <div className="grid grid-cols-2 border-b border-white/[0.06]">
+      <Fact
+        label={pc?.metric === "max_prob" ? "Max probability" : "Chance"}
+        value={v !== null ? fmtOdds(v) : "—"}
+        tone={v === null ? "var(--muted)" : e.risk === "red" ? "#ff8a80" : "var(--amber)"}
+        note={v !== null ? fmtChance(v) : "No source supplied it"}
+      />
+      <Fact label="Miss distance" value={fmtMiss(e.missM)} right />
+      <Fact label="Relative speed" value={`${e.relVelKms.toFixed(1)} km/s`} bottom />
+      <Fact label="Evidence" value={pc ? pcSource(pc) : "—"} note={pc?.epochUtc ? `epoch ${fmtStamp(pc.epochUtc)}` : "epoch not supplied"} right bottom />
+    </div>
+  );
+}
+
+/** Real mode: the Incident Analyst's checked five lines and run state (agentSummaries.get, wiring map §5.1). */
+function LiveSummary({ e, now }: { e: ConjunctionEvent; now: number }) {
+  const summary = useLive((s) => s.summary);
+  const error = useLive((s) => s.errors.summary);
+  const color = useCaseRow((s) => (s.row?.eventId === e.id ? s.row.color : null));
+  if (summary === undefined && error) {
+    return (
+      <div className="text-[12px] leading-[1.5] text-neutral-500">
+        Summary unavailable · <span className="mono text-[11px]">{error}</span>
+      </div>
+    );
+  }
+  return <SummaryView s={summary} color={color ?? (e.risk === "red" ? "red" : "yellow")} now={now} />;
+}
+
+type PartyState = { text: string; color: string; pulse?: boolean };
+
 /**
  * Everyone on the case, always in view: who is in the call and speaking (from the call), whose turn it is and how
  * each side answered (from the case). Where a person is in the app is known only for this screen's own side.
@@ -255,46 +338,110 @@ function PartiesBar({ e, room }: { e: ConjunctionEvent; room: ReturnType<typeof 
                   ? { text: "Waits for side A", color: "#8a8a8a" }
                   : { text: e.agentsWorking ? "Agents working" : "Waiting", color: "#8a8a8a" };
         const where = me ? "Decision Center" : inCall ? "In the call" : "Not in the call";
-        return (
-          <div
-            key={p.id}
-            data-party={p.id}
-            data-speaking={speaking}
-            className="flex shrink-0 items-center gap-2.5 rounded-[12px] py-1.5 pl-1.5 pr-3.5 transition-colors"
-            style={{ background: turn ? "rgba(255,159,64,0.07)" : "rgba(255,255,255,0.03)", boxShadow: turn ? "inset 0 0 0 1px rgba(255,159,64,0.35)" : "inset 0 0 0 1px rgba(255,255,255,0.06)" }}
-          >
-            <span
-              className="relative grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-[8px] transition-shadow duration-200"
-              style={{ boxShadow: speaking ? "0 0 0 2px var(--green), 0 0 16px -2px rgba(61,220,151,0.8)" : "0 0 0 1px rgba(255,255,255,0.14)" }}
-            >
-              {p.country && <Flag code={p.country} h={32} square />}
-            </span>
-            <span className="min-w-0">
-              <span className="flex items-center gap-1.5 text-[13px] font-medium leading-tight text-white">
-                <span className="max-w-[150px] truncate">{p.operator.replace(/\s*\(synthetic\)/i, "")}</span>
-                {me && <span className="text-[11px] font-normal text-neutral-500">you</span>}
-              </span>
-              <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px] leading-tight">
-                {speaking ? (
-                  <span className="flex items-center gap-1 font-medium text-green">
-                    <SpeakingBars /> Speaking
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1.5 font-medium" style={{ color: st.color }}>
-                    {st.pulse ? <span className="pulse-dot" style={{ width: 5, height: 5 }} /> : <span className="h-1.5 w-1.5 rounded-full" style={{ background: st.color }} />}
-                    {st.text}
-                  </span>
-                )}
-                <span className="text-neutral-700">·</span>
-                <span className="text-neutral-500">{p.role === "affected" ? "Affected" : `Side ${p.role.toUpperCase()}`}</span>
-                <span className="text-neutral-700">·</span>
-                <span className="text-neutral-500">{where}</span>
-              </span>
-            </span>
-          </div>
-        );
+        const side = p.role === "affected" ? "Affected" : `Side ${p.role.toUpperCase()}`;
+        return <PartyChip key={p.id} id={p.id} name={p.operator} country={p.country} me={me} turn={turn} speaking={speaking} st={st} side={side} where={where} />;
       })}
       {e.b.kind === "debris" && <span className="shrink-0 text-[12px] text-neutral-500">Debris has no operator · single-operator avoidance</span>}
+    </div>
+  );
+}
+
+/**
+ * Real mode: one chip per operator side of the case row. Presence comes from the room's members (rooms.byId) and the
+ * call, the turn and each side's approval from approvals.status. Debris has no operator and no chip; WorkflowNote
+ * says so beside the chips.
+ */
+function LivePartiesBar({ e }: { e: ConjunctionEvent }) {
+  const row = useCaseRow((s) => (s.row?.eventId === e.id ? s.row : null));
+  const status = useLive((s) => (s.approvals?.eventId === e.id ? s.approvals : undefined));
+  const room = useLive((s) => s.room);
+  const roomId = useLive((s) => s.roomId);
+  const live = useOps((s) => (s.callLive?.eventId === e.id ? s.callLive : null));
+  const mySide = status?.mySide ?? row?.mySide ?? null;
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none]" data-testid="parties-bar">
+      {(row?.sides ?? []).map((s) => {
+        const role = s.side === "A" ? "a" : "b";
+        if (e[role].kind === "debris") return null;
+        const party = e.parties?.find((p) => p.role === role);
+        const company = s.owner?.companyId;
+        const members = company ? (room?.members ?? []).filter((m) => m.companyId === company) : [];
+        const me = s.side === mySide;
+        const speaking = members.some((m) => live?.speaking.includes(m.userId));
+        const inCall = members.some((m) => m.inCall || live?.inCall.includes(m.userId));
+        const where = me ? "Decision Center" : !roomId ? "No room yet" : !room ? null : inCall ? "In the call" : members.some((m) => m.inRoom) ? "In the room" : "Not in the room";
+        return (
+          <PartyChip
+            key={s.side}
+            id={party?.id ?? s.side}
+            name={party?.operator ?? "Operator unknown"}
+            country={party?.country ?? null}
+            me={me}
+            turn={!!status?.deciding && status.turn === s.side}
+            speaking={speaking}
+            st={liveAnswer(status, s.side, me, e.agentsWorking)}
+            side={`Side ${s.side}`}
+            where={where}
+          />
+        );
+      })}
+      <span className="flex shrink-0 items-center gap-3 empty:hidden">
+        <TurnStatus eventId={e.id} />
+        <WorkflowNote eventId={e.id} />
+      </span>
+    </div>
+  );
+}
+
+/** A side's state from approvals.status: deciding now, approved, waiting for the side ahead, or not asked yet. */
+function liveAnswer(s: ApprovalStatus | undefined, side: Side, me: boolean, working: boolean): PartyState {
+  if (s?.deciding && s.turn === side) return { text: me && s.myTurn ? "Your turn to decide" : "Deciding", color: "var(--orange)", pulse: true };
+  if (s?.approvals[side]?.status === "approved") return { text: "Approved", color: "var(--green)" };
+  if (s?.deciding && s.turn && s.requiredApprovalSides.includes(side)) return { text: `Waits for side ${s.turn}`, color: "#8a8a8a" };
+  return { text: working ? "Agents working" : "Waiting", color: "#8a8a8a" };
+}
+
+function PartyChip(p: { id: string; name: string; country: string | null; me: boolean; turn: boolean; speaking: boolean; st: PartyState; side: string; where: string | null }) {
+  const { st, turn, speaking } = p;
+  return (
+    <div
+      data-party={p.id}
+      data-speaking={speaking}
+      className="flex shrink-0 items-center gap-2.5 rounded-[12px] py-1.5 pl-1.5 pr-3.5 transition-colors"
+      style={{ background: turn ? "rgba(255,159,64,0.07)" : "rgba(255,255,255,0.03)", boxShadow: turn ? "inset 0 0 0 1px rgba(255,159,64,0.35)" : "inset 0 0 0 1px rgba(255,255,255,0.06)" }}
+    >
+      <span
+        className="relative grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-[8px] transition-shadow duration-200"
+        style={{ boxShadow: speaking ? "0 0 0 2px var(--green), 0 0 16px -2px rgba(61,220,151,0.8)" : "0 0 0 1px rgba(255,255,255,0.14)" }}
+      >
+        {p.country && <Flag code={p.country} h={32} square />}
+      </span>
+      <span className="min-w-0">
+        <span className="flex items-center gap-1.5 text-[13px] font-medium leading-tight text-white">
+          <span className="max-w-[150px] truncate">{p.name.replace(/\s*\(synthetic\)/i, "")}</span>
+          {p.me && <span className="text-[11px] font-normal text-neutral-500">you</span>}
+        </span>
+        <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px] leading-tight">
+          {speaking ? (
+            <span className="flex items-center gap-1 font-medium text-green">
+              <SpeakingBars /> Speaking
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 font-medium" style={{ color: st.color }}>
+              {st.pulse ? <span className="pulse-dot" style={{ width: 5, height: 5 }} /> : <span className="h-1.5 w-1.5 rounded-full" style={{ background: st.color }} />}
+              {st.text}
+            </span>
+          )}
+          <span className="text-neutral-700">·</span>
+          <span className="text-neutral-500">{p.side}</span>
+          {p.where && (
+            <>
+              <span className="text-neutral-700">·</span>
+              <span className="text-neutral-500">{p.where}</span>
+            </>
+          )}
+        </span>
+      </span>
     </div>
   );
 }
@@ -311,7 +458,7 @@ function SpeakingBars() {
 
 /* ---------------------------------------------------------------- center */
 
-function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room: ReturnType<typeof useRoomState> }) {
+function CenterColumn({ e, now, room, real }: { e: ConjunctionEvent; now: number; room: ReturnType<typeof useRoomState>; real: boolean }) {
   const st = room.state;
   const due = st?.mode === "decide";
   // Decision and the agents' run share the main area; a decision that becomes due brings Decision forward
@@ -354,6 +501,13 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
         </div>
         <span className="ml-auto text-[12px] text-neutral-600">{view === "run" ? "Every model and tool call · newest first · with latency" : "Shared record of the case · newest at the bottom"}</span>
       </div>
+
+      {/* after consensus: waiting for linked incidents, re-screening, the schedule entry (wiring map §1.5) */}
+      {real && (
+        <div className="shrink-0 px-6 pb-3 empty:hidden">
+          <SchedulerStatus eventId={e.id} />
+        </div>
+      )}
 
       <div className="relative min-h-0 flex-1">
         <AnimatePresence mode="wait" initial={false}>
@@ -415,8 +569,8 @@ function AgentsColumn() {
 
 /* ------------------------------------------------------------- collapsed */
 
-function CollapsedBar({ e, now, decide }: { e: ConjunctionEvent; now: number; decide: boolean }) {
-  const step = STEPS[Math.min(stepOf(e), STEPS.length - 1)];
+function CollapsedBar({ e, now, step: at, decide }: { e: ConjunctionEvent; now: number; step: number; decide: boolean }) {
+  const step = STEPS[Math.min(at, STEPS.length - 1)];
   return (
     <motion.div
       initial={{ opacity: 0, y: -14, scale: 0.97 }}
