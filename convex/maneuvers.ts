@@ -15,8 +15,10 @@ import { commitSchedule, getScheduleJob, prepareSchedule, retryScheduleJob, sche
 // Convex owns authorization and durable job state; the Factory worker only builds and writes the checked artifact.
 // requestPreview (after a selection) asks the worker to /prepare the exact append and records its diff on the revision
 // before any approval; requestSchedule (after all required approvals) re-screens and then /commits under the same intent
-// key. Worker failures stay visible and retry the same intent. No substitute writer. Single-event intents only: a
-// shared mover stays SHARED_TRAJECTORY_REQUIRED and the worker always receives trajectory null.
+// key. Worker failures stay visible and retry the same intent. No substitute writer. A shared mover (one burn that
+// affects several linked incidents) is authorized only through its trajectory plan: one intent per plan version, every
+// affected incident re-checked and re-screened, one schedule write; without a covering plan it stays
+// SHARED_TRAJECTORY_REQUIRED.
 // All write entry points are internal: only an approval mutation / scheduler may initiate them, not a browser.
 const selectionRef = v.object({ ...eventRef.fields, approvalRuleVersion: v.number() });
 type Ref = Infer<typeof selectionRef>;
@@ -27,7 +29,8 @@ export const POLL_DELAY_MS = 5_000;
 // A Droid session takes tens of seconds and the worker runs jobs one at a time, so preparation may wait longer.
 export const PREPARE_POLL_LIMIT = 60;
 export const HORIZON_H = 72;
-const MAX_ARTIFACT = 128_000;
+// The worker and the schedule client accept artifacts up to 256 KB; a smaller limit here would strand valid previews.
+const MAX_ARTIFACT = 256_000;
 const calls = {
   submit: makeFunctionReference<"action">("maneuvers:submit"),
   poll: makeFunctionReference<"action">("maneuvers:poll"),
@@ -128,9 +131,10 @@ async function context(ctx: QueryCtx, ref: Ref, approved = false, allowPast = fa
   }
   authority.sort((a, b) => a.userId.localeCompare(b.userId));
   for (const a of authority) a.objects.sort();
+  let plan: Doc<"trajectoryPlans"> | null = null;
   if (candidate.kind === "maneuver") {
-    // R4 supplies all-event trajectory authorization. Pair duplicates are one encounter; another encounter in the
-    // burn's horizon needs that contract even if it has not yet been put in a coordination room.
+    // Pair duplicates are one encounter; another encounter in the burn's horizon needs all-event trajectory
+    // authorization even if it has not yet been put in a coordination room.
     const moverId = candidate.movingSide === "A" ? event.objectAId : event.objectBId;
     const lower = Date.parse(candidate.burnTimeUtc!), upper = lower + HORIZON_H * 3_600_000;
     const others = [
@@ -139,12 +143,19 @@ async function context(ctx: QueryCtx, ref: Ref, approved = false, allowPast = fa
     ];
     const duplicate = (e: Doc<"events">) => Math.abs(e.tcaMs - event.tcaMs) <= 60_000 &&
       ((e.objectAId === event.objectAId && e.objectBId === event.objectBId) || (e.objectAId === event.objectBId && e.objectBId === event.objectAId));
-    if (others.some(e => e._id !== event._id && e.active && e.tcaMs >= lower && e.tcaMs <= upper &&
-        (e.demoRunId ?? null) === (event.demoRunId ?? null) && !duplicate(e))) {
+    const linked = others.filter(e => e._id !== event._id && e.active && e.tcaMs >= lower && e.tcaMs <= upper &&
+      (e.demoRunId ?? null) === (event.demoRunId ?? null) && !duplicate(e));
+    const plans = (await ctx.db.query("trajectoryPlans").withIndex("by_object_state", q => q.eq("objectId", candidate.movingObjectId!)).collect())
+      .filter(p => p.state !== "superseded" && p.demoRunId === (event.demoRunId ?? null) && p.affectedEventIds.length > 1);
+    plan = plans.find(p => p.eventRefs.some(r => same(r, eventReference(ref)))) ?? null;
+    if (plan) {
+      // The plan authorizes the shared mover only while it is open and lists every incident this burn affects.
+      if (plan.state === "review_required" || linked.some(e => !plan!.affectedEventIds.includes(e._id))) {
+        fail("SHARED_TRAJECTORY_REQUIRED", "The trajectory plan does not cover every incident this burn affects.");
+      }
+    } else if (linked.length > 0) {
       fail("SHARED_TRAJECTORY_REQUIRED", "This spacecraft affects another incident; all-event trajectory authorization is required.");
-    }
-    const plans = await ctx.db.query("trajectoryPlans").withIndex("by_object_state", q => q.eq("objectId", candidate.movingObjectId!)).collect();
-    if (plans.some(plan => plan.state !== "superseded" && plan.demoRunId === (event.demoRunId ?? null) && plan.affectedEventIds.length > 1)) {
+    } else if (plans.length > 0) {
       fail("SHARED_TRAJECTORY_REQUIRED", "This spacecraft already belongs to a shared trajectory plan.");
     }
   }
@@ -161,7 +172,10 @@ async function context(ctx: QueryCtx, ref: Ref, approved = false, allowPast = fa
             a.version === approval.assignmentVersion && a.objects.includes(objectIds[side]))) {
         fail("APPROVAL_REQUIRED", "Every required side must explicitly approve the current revision with current responsibility.");
       }
-      if (approval.trajectoryPlanId !== null || approval.trajectoryPlanVersion !== null) fail("SHARED_TRAJECTORY_REQUIRED", "Trajectory-plan scheduling is not connected yet.");
+      if (plan && (approval.trajectoryPlanId !== plan._id || approval.trajectoryPlanVersion !== plan.planVersion)) {
+        fail("APPROVAL_REQUIRED", "Every required side must approve the current version of the shared trajectory plan.");
+      }
+      if (!plan && (approval.trajectoryPlanId !== null || approval.trajectoryPlanVersion !== null)) fail("SHARED_TRAJECTORY_REQUIRED", "This approval belongs to a trajectory plan that no longer covers the incident.");
     }
   }
   // Frozen Round 1.5 schema has no candidate-set/rule pin columns. A versioned opaque authorization fingerprint
@@ -178,9 +192,41 @@ async function context(ctx: QueryCtx, ref: Ref, approved = false, allowPast = fa
   const entry = candidate.kind === "wait" ? null : { eventId: String(event._id), proposalId: String(ref.proposalId),
     revision: ref.revision, objectId: candidate.movingObjectId!,
     burnTimeUtc: wholeSecondUtc(Date.parse(candidate.burnTimeUtc!)), deltaVMs: candidate.deltaVMs!, direction: candidate.direction!, simulated: candidate.simulated };
-  return { ref, event, selection, revision, candidate, set, facts, pinned, filePath, entry, approvals };
+  return { ref, event, selection, revision, candidate, set, facts, pinned, filePath, entry, approvals, plan };
 }
 type Context = Awaited<ReturnType<typeof context>>;
+type Trajectory = { id: string; version: number } | null;
+type Scope = { head: Context; parts: Context[]; plan: Doc<"trajectoryPlans"> | null; intentKey: string;
+  refs: Infer<typeof eventRef>[]; pinned: Pins; trajectory: Trajectory };
+const sortedUnique = <T>(rows: T[], key: (row: T) => string) =>
+  [...new Map(rows.map(row => [key(row), row])).values()].sort((a, b) => key(a).localeCompare(key(b)));
+
+/** The authorization unit of one physical schedule write: the incident itself, or every incident of its trajectory
+ * plan, each fully re-checked, with the plan's first incident as the worker's request ref and schedule entry. One
+ * incident's approvals never authorize another: each part checks its own selection, approvals and responsibility. */
+async function scope(ctx: QueryCtx, ref: Ref, approved = false, allowPast = false, own?: Context): Promise<Scope> {
+  const mine = own ?? await context(ctx, ref, approved, allowPast);
+  if (!mine.plan) return { head: mine, parts: [mine], plan: null, intentKey: intentOf(ref), refs: [eventReference(ref)], pinned: mine.pinned, trajectory: null };
+  const plan = mine.plan, parts: Context[] = [];
+  // The plan's two event lists must name the same incidents once each, or an affected incident could skip its checks.
+  const listed = plan.eventRefs.map(r => String(r.eventId)).sort(), affected = plan.affectedEventIds.map(String).sort();
+  if (new Set(listed).size !== listed.length || !same(listed, affected)) fail("SHARED_TRAJECTORY_REQUIRED", "The trajectory plan's incidents are inconsistent.");
+  for (const r of plan.eventRefs) {
+    if (r.eventId === ref.eventId) { parts.push(mine); continue; }
+    const event = await ctx.db.get(r.eventId);
+    const c = await context(ctx, { ...r, approvalRuleVersion: event?.approvalRuleVersion ?? 0 }, approved, allowPast);
+    if (c.plan?._id !== plan._id) fail("SHARED_TRAJECTORY_REQUIRED", "The affected incidents do not share one trajectory plan.");
+    parts.push(c);
+  }
+  const burn = (c: Context) => c.entry && canonical({ objectId: c.entry.objectId, burnTimeUtc: c.entry.burnTimeUtc, deltaVMs: c.entry.deltaVMs,
+    direction: c.entry.direction, filePath: c.filePath, snapshotId: c.pinned.snapshotId });
+  if (parts.some(c => !c.entry || burn(c) !== burn(parts[0]))) fail("SHARED_TRAJECTORY_REQUIRED", "The affected incidents disagree on the moved trajectory.");
+  const pinned: Pins = { snapshotId: parts[0].pinned.snapshotId, evidenceKeys: parts.flatMap(c => c.pinned.evidenceKeys),
+    policyRevisions: sortedUnique(parts.flatMap(c => c.pinned.policyRevisions), r => `${r.companyId}:${r.revision}`),
+    assignmentVersions: sortedUnique(parts.flatMap(c => c.pinned.assignmentVersions), r => `${r.userId}:${r.version}`) };
+  return { head: parts[0], parts, plan, intentKey: `trajectory:${plan._id}:version:${plan.planVersion}`, refs: plan.eventRefs, pinned,
+    trajectory: { id: String(plan._id), version: plan.planVersion } };
+}
 
 /** One entry per line, with commas at the start of subsequent entry lines: append-only diffs need not disclose any
  * previous, unrelated maneuver to the other incident party. These functions validate/render worker output only. */
@@ -210,9 +256,11 @@ function checkedArtifact(c: Context, before: string | null, after: string, diff:
 export const preview = internalQuery({
   args: { ref: selectionRef },
   handler: async (ctx, { ref }) => {
-    const c = await context(ctx, ref);
-    if (c.set.state !== "open") fail("INVALID_STATE", "A scheduled candidate set cannot prepare a replacement schedule.");
-    return { kind: c.candidate.kind, ref, pinned: c.pinned, intentKey: intentOf(ref), filePath: c.filePath, entry: c.entry, trajectory: null };
+    const s = await scope(ctx, ref);
+    if (s.parts.some(c => c.set.state !== "open")) fail("INVALID_STATE", "A scheduled candidate set cannot prepare a replacement schedule.");
+    // For a plan, the worker request carries the plan's first incident as its ref and schedule entry.
+    return { kind: s.head.candidate.kind, ref: s.head.ref, pinned: s.pinned, intentKey: s.intentKey, filePath: s.head.filePath, entry: s.head.entry,
+      trajectory: s.trajectory };
   },
 });
 
@@ -237,14 +285,15 @@ export const requestPreview = internalMutation({
     if (!ref) return { status: "skipped" as const, code: "NOT_SELECTED" };
     // Without a configured worker every selection would log the same failure; scheduling reports it once instead.
     try { scheduleConfig(); } catch { return { status: "skipped" as const, code: "WORKER_UNAVAILABLE" }; }
-    let c: Context;
-    try { c = await context(ctx, ref); }
+    let s: Scope;
+    try { s = await scope(ctx, ref); }
     catch (error) { const code = codeOf(error); if (!code) throw error; return { status: "skipped" as const, code }; }
-    if (!c.entry || c.set.state !== "open") return { status: "skipped" as const, code: "NO_ARTIFACT" };
-    const existing = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique();
+    if (!s.head.entry || s.parts.some(c => c.set.state !== "open")) return { status: "skipped" as const, code: "NO_ARTIFACT" };
+    const existing = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", s.intentKey)).unique();
     if (existing) return { status: "prepared" as const, code: null };
-    if (c.approvals.some(a => a.status === "approved") && c.revision.schedulePreviewHash === null) {
-      await audit(ctx, c, "schedule_failed", "PREVIEW_AFTER_APPROVAL: An approval arrived before Factory prepared the schedule diff; select the plan again to prepare it.", { intentKey: intentOf(ref) });
+    const early = s.parts.find(c => c.approvals.some(a => a.status === "approved") && c.revision.schedulePreviewHash === null);
+    if (early) {
+      await audit(ctx, early, "schedule_failed", "PREVIEW_AFTER_APPROVAL: An approval arrived before Factory prepared the schedule diff; select the plan again to prepare it.", { intentKey: s.intentKey });
       return { status: "skipped" as const, code: "PREVIEW_AFTER_APPROVAL" };
     }
     await ctx.scheduler.runAfter(0, calls.prepare, { ref, attempt: 0 });
@@ -258,13 +307,15 @@ export const prepare = internalAction({
   args: { ref: selectionRef, attempt: v.number(), expectedPinned: v.optional(pinnedInputs), thenSchedule: v.optional(v.boolean()) },
   handler: async (ctx, { ref, attempt, expectedPinned, thenSchedule }) => {
     if (!Number.isInteger(attempt) || attempt < 0 || attempt >= PREPARE_POLL_LIMIT) fail("VALIDATION", "Invalid polling attempt.");
+    let intentKey: string | undefined;
     try {
       const p = await ctx.runQuery(calls.preview, { ref });
       if (!p.entry || !p.filePath) return null;
+      intentKey = p.intentKey as string;
       const pinned = expectedPinned ?? p.pinned;
-      const expected = { intentKey: p.intentKey, kind: "prepare" as const, ref: workerRef(ref), trajectory: null };
+      const expected = { intentKey: p.intentKey, kind: "prepare" as const, ref: workerRef(p.ref), trajectory: p.trajectory as Trajectory };
       let job: ScheduleJob = attempt === 0
-        ? await prepareSchedule({ intentKey: p.intentKey, filePath: p.filePath, ref: expected.ref, trajectory: null, entry: p.entry })
+        ? await prepareSchedule({ intentKey: p.intentKey, filePath: p.filePath, ref: expected.ref, trajectory: expected.trajectory, entry: p.entry })
         : await getScheduleJob(await sha256(`prepare:${p.intentKey}`), expected);
       // Job errors arrive masked; the worker itself refuses (409) a retry that is unsafe or over its attempt limit.
       if (job.status === "failed") job = await retryScheduleJob(job.jobId, job.attempt, expected);
@@ -272,27 +323,27 @@ export const prepare = internalAction({
         const a = job.result!;
         await ctx.runMutation(calls.recordPreview, { ref, expectedPinned: pinned, before: a.before, after: a.after, diff: a.diff });
         if (thenSchedule) await ctx.runMutation(calls.requestSchedule, { eventId: ref.eventId });
-      } else if (job.status === "failed") await ctx.runMutation(calls.prepareFailed, { ref, code: job.error!.code, message: job.error!.message });
-      else if (attempt + 1 >= PREPARE_POLL_LIMIT) await ctx.runMutation(calls.prepareFailed, { ref, code: "PREPARE_TIMEOUT", message: "Factory preparation polling reached its limit; select the plan again to retry." });
+      } else if (job.status === "failed") await ctx.runMutation(calls.prepareFailed, { ref, intentKey, code: job.error!.code, message: job.error!.message });
+      else if (attempt + 1 >= PREPARE_POLL_LIMIT) await ctx.runMutation(calls.prepareFailed, { ref, intentKey, code: "PREPARE_TIMEOUT", message: "Factory preparation polling reached its limit; select the plan again to retry." });
       else await ctx.scheduler.runAfter(POLL_DELAY_MS, calls.prepare, { ref, attempt: attempt + 1, expectedPinned: pinned, thenSchedule });
-    } catch (error) { await ctx.runMutation(calls.prepareFailed, { ref, ...failure(error) }); }
+    } catch (error) { await ctx.runMutation(calls.prepareFailed, { ref, intentKey, ...failure(error) }); }
     return null;
   },
 });
 
 /** A failed preparation has no maneuver row yet; the event log keeps the failure visible to the room. */
 export const recordPrepareFailure = internalMutation({
-  args: { ref: selectionRef, code: v.string(), message: v.string() },
-  handler: async (ctx, { ref, code, message }) => {
+  args: { ref: selectionRef, code: v.string(), message: v.string(), intentKey: v.optional(v.string()) },
+  handler: async (ctx, { ref, code, message, intentKey = intentOf(ref) }) => {
     const event = await ctx.db.get(ref.eventId), current = await currentRef(ctx, ref.eventId);
     // A preparation overtaken by a newer selection is simply obsolete, and one that another chain already recorded
     // succeeded; neither is a failure to show.
     if (!event || !current || intentOf(current) !== intentOf(ref)) return null;
-    if (await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique()) return null;
+    if (await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentKey)).unique()) return null;
     const summary = `${code}: ${message}`.slice(0, 500);
     const recent = await ctx.db.query("log").withIndex("by_event_at", q => q.eq("eventId", ref.eventId)).order("desc").take(20);
-    if (recent.some(l => l.action === "schedule_failed" && l.summary === summary && l.after?.intentKey === intentOf(ref))) return null;
-    await audit(ctx, { event, ref }, "schedule_failed", summary, { intentKey: intentOf(ref) });
+    if (recent.some(l => l.action === "schedule_failed" && l.summary === summary && l.after?.intentKey === intentKey)) return null;
+    await audit(ctx, { event, ref }, "schedule_failed", summary, { intentKey });
     return null;
   },
 });
@@ -300,26 +351,30 @@ export const recordPrepareFailure = internalMutation({
 export const recordPreview = internalMutation({
   args: { ref: selectionRef, expectedPinned: pinnedInputs, before: v.union(v.string(), v.null()), after: v.string(), diff: v.string() },
   handler: async (ctx, { ref, expectedPinned, before, after, diff }) => {
-    const c = await context(ctx, ref);
-    if (!same(c.pinned, expectedPinned)) fail("STALE_REVISION", "Authorization inputs changed while Factory prepared the preview.");
-    checkedArtifact(c, before, after, diff);
+    const s = await scope(ctx, ref);
+    if (!same(s.pinned, expectedPinned)) fail("STALE_REVISION", "Authorization inputs changed while Factory prepared the preview.");
+    checkedArtifact(s.head, before, after, diff);
     const hash = await sha256(after);
-    const existing = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique();
+    const existing = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", s.intentKey)).unique();
     if (existing) {
-      if (!same(existing.pinned, expectedPinned) || existing.diff !== diff || c.revision.schedulePreviewHash !== hash) fail("STALE_REVISION", "An intent's prepared artifact is immutable; publish a new revision.");
+      if (!same(existing.pinned, expectedPinned) || existing.diff !== diff || s.parts.some(c => c.revision.schedulePreviewHash !== hash)) fail("STALE_REVISION", "An intent's prepared artifact is immutable; publish a new revision.");
       return existing._id;
     }
-    if (c.set.state !== "open") fail("INVALID_STATE", "A scheduled candidate set cannot prepare a replacement schedule.");
-    if (c.revision.schedulePreviewHash !== null && c.revision.schedulePreviewHash !== hash) fail("STALE_REVISION", "This revision already has a different preview.");
-    // A new generation of an already previewed revision carries byte-identical content, so approvals given after that
-    // revision's first preview were given on this diff. Anything else must be prepared before collecting approvals.
-    const since = await previewedAt(ctx, ref);
-    if (c.approvals.some(a => a.status === "approved" && (since === null || a.at < since))) fail("INVALID_STATE", "Prepare the checked preview before collecting human approvals.");
-    await ctx.db.patch(c.revision._id, { schedulePreviewDiff: diff, schedulePreviewHash: hash });
-    const maneuverId = await ctx.db.insert("maneuvers", { refs: [eventReference(ref)], trajectoryPlanId: null, trajectoryPlanVersion: null,
-      pinned: c.pinned, intentKey: intentOf(ref), status: "preview", filePath: c.filePath!, diff, commitSha: null, writtenBy: "droid",
-      rescreenJobId: null, rescreen: null, error: null, reviewRequired: false, demoRunId: c.event.demoRunId ?? null, updatedAt: Date.now() });
-    await ctx.db.insert("maneuverEvents", { maneuverId, eventId: ref.eventId });
+    if (s.parts.some(c => c.set.state !== "open")) fail("INVALID_STATE", "A scheduled candidate set cannot prepare a replacement schedule.");
+    for (const c of s.parts) {
+      if (c.revision.schedulePreviewHash !== null && c.revision.schedulePreviewHash !== hash) fail("STALE_REVISION", "This revision already has a different preview.");
+      // A new generation of an already previewed revision carries byte-identical content, so approvals given after that
+      // revision's first preview were given on this diff. Anything else must be prepared before collecting approvals.
+      const since = await previewedAt(ctx, c.ref);
+      if (c.approvals.some(a => a.status === "approved" && (since === null || a.at < since))) fail("INVALID_STATE", "Prepare the checked preview before collecting human approvals.");
+    }
+    // Every affected incident shows the same diff: one schedule write for the shared burn.
+    for (const c of s.parts) await ctx.db.patch(c.revision._id, { schedulePreviewDiff: diff, schedulePreviewHash: hash });
+    const maneuverId = await ctx.db.insert("maneuvers", { refs: s.refs, trajectoryPlanId: s.plan?._id ?? null, trajectoryPlanVersion: s.plan?.planVersion ?? null,
+      pinned: s.pinned, intentKey: s.intentKey, status: "preview", filePath: s.head.filePath!, diff, commitSha: null, writtenBy: "droid",
+      rescreenJobId: null, rescreen: null, error: null, reviewRequired: false, demoRunId: s.head.event.demoRunId ?? null, updatedAt: Date.now() });
+    for (const c of s.parts) await ctx.db.insert("maneuverEvents", { maneuverId, eventId: c.event._id });
+    if (s.plan) await ctx.db.patch(s.plan._id, { maneuverId, updatedAt: Date.now() });
     return maneuverId;
   },
 });
@@ -328,9 +383,15 @@ async function audit(ctx: MutationCtx, c: Pick<Context, "event" | "ref">, action
   await ctx.db.insert("log", { eventId: c.event._id, actor: { kind: "system" }, action, summary, texts: null, before: null, after,
     proposalId: c.ref.proposalId, revision: c.ref.revision, roomId: null, demoRunId: c.event.demoRunId ?? null, simulated: c.event.simulated, at: Date.now() });
 }
+/** Resets every incident of the intent, each with its own wording; a plan needs review before it can authorize again. */
 async function reset(ctx: MutationCtx, row: Maneuver, reason: string) {
-  const ref = row.refs[0], event = ref && await ctx.db.get(ref.eventId);
-  if (!ref || !event) return;
+  for (const ref of row.refs) await resetEvent(ctx, row, ref, reason);
+  const plan = row.trajectoryPlanId && await ctx.db.get(row.trajectoryPlanId);
+  if (plan && plan.state !== "superseded" && plan.planVersion === row.trajectoryPlanVersion) await ctx.db.patch(plan._id, { state: "review_required", updatedAt: Date.now() });
+}
+async function resetEvent(ctx: MutationCtx, row: Maneuver, ref: Maneuver["refs"][number], reason: string) {
+  const event = await ctx.db.get(ref.eventId);
+  if (!event) return;
   if (event.requiredApprovalSides?.length === 2) reason = reason.replace(/^Approval reset:/, "Both approvals reset:");
   const selection = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", ref.eventId)).unique();
   // A late result must never invalidate a newer independent selection.
@@ -347,31 +408,41 @@ async function previewedAt(ctx: QueryCtx, ref: Pick<Ref, "eventId" | "proposalId
   let first: number | null = null;
   for (const link of await ctx.db.query("maneuverEvents").withIndex("by_event", q => q.eq("eventId", ref.eventId)).collect()) {
     const row = await ctx.db.get(link.maneuverId);
-    if (row?.writtenBy === "droid" && row.refs.length === 1 && row.refs[0].proposalId === ref.proposalId && row.refs[0].revision === ref.revision) {
+    if (row?.writtenBy === "droid" && row.refs.some(r => r.eventId === ref.eventId && r.proposalId === ref.proposalId && r.revision === ref.revision)) {
       first = Math.min(first ?? Infinity, row._creationTime);
     }
   }
   return first;
 }
 async function currentFor(ctx: QueryCtx, row: Maneuver, allowPast = false) {
-  if (row.refs.length !== 1 || row.trajectoryPlanId !== null) fail("SHARED_TRAJECTORY_REQUIRED", "Only single-event intents are connected.");
   if (row.writtenBy !== "droid") fail("INVALID_STATE", "A backend substitute cannot authorize a Factory artifact.");
   const ref = row.refs[0], event = await ctx.db.get(ref.eventId);
-  const c = await context(ctx, { ...ref, approvalRuleVersion: event?.approvalRuleVersion ?? 0 }, true, allowPast);
-  if (!same(c.pinned, row.pinned) || row.reviewRequired || c.revision.schedulePreviewDiff !== row.diff || !c.revision.schedulePreviewHash) {
+  const s = await scope(ctx, { ...ref, approvalRuleVersion: event?.approvalRuleVersion ?? 0 }, true, allowPast);
+  if (s.intentKey !== row.intentKey || !same(s.refs, row.refs) || !same(s.pinned, row.pinned) || row.reviewRequired ||
+      s.parts.some(c => c.revision.schedulePreviewDiff !== row.diff || !c.revision.schedulePreviewHash)) {
     fail("STALE_REVISION", "The prepared intent's pinned inputs changed; review and approve a new revision.");
   }
-  const since = Math.min(row._creationTime, await previewedAt(ctx, ref) ?? Infinity);
-  if (c.approvals.some(a => a.at < Math.floor(since))) fail("APPROVAL_REQUIRED", "Approval must follow the prepared preview.");
-  return c;
+  for (const c of s.parts) {
+    const since = Math.min(row._creationTime, await previewedAt(ctx, c.ref) ?? Infinity);
+    if (c.approvals.some(a => a.at < Math.floor(since))) fail("APPROVAL_REQUIRED", "Approval must follow the prepared preview.");
+  }
+  return s;
+}
+/** A row whose write may already be with the worker and that covers this exact selection (single or plan intent). */
+async function handedFor(ctx: QueryCtx, ref: Ref) {
+  for (const link of await ctx.db.query("maneuverEvents").withIndex("by_event", q => q.eq("eventId", ref.eventId)).collect()) {
+    const row = await ctx.db.get(link.maneuverId);
+    if (row && handedOver(row) && row.refs.some(r => same(r, eventReference(ref)))) return row;
+  }
+  return null;
 }
 
 export const start = internalMutation({
   args: { ref: selectionRef, expectedPinned: pinnedInputs },
   handler: async (ctx, { ref, expectedPinned }) => {
-    const c = await context(ctx, ref, true);
-    if (!same(c.pinned, expectedPinned)) fail("STALE_REVISION", "Scheduling inputs changed after authorization.");
-    return await startIntent(ctx, c);
+    const s = await scope(ctx, ref, true);
+    if (!same(s.pinned, expectedPinned)) fail("STALE_REVISION", "Scheduling inputs changed after authorization.");
+    return await startIntent(ctx, s);
   },
 });
 
@@ -384,21 +455,31 @@ export const requestSchedule = internalMutation({
     if (!ref) return { maneuverId: null, status: "skipped", code: "NOT_SELECTED" };
     // A commit chain lost (or failed on a missed poll) after its write may have been handed over resumes without
     // re-authorizing: it only reads back and records that job; any new /commit or retry still goes through reserveCommit.
-    const handed = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique();
-    if (handed && handedOver(handed)) {
+    const handed = await handedFor(ctx, ref);
+    if (handed) {
       await ctx.scheduler.runAfter(0, calls.commit, { maneuverId: handed._id, attempt: 0 });
       return { maneuverId: handed._id, status: "committing", code: null };
     }
     try {
-      const c = await context(ctx, ref, true);
+      // A shared burn is scheduled once, when the last affected incident completes its approvals; until then any
+      // affected incident (this one included) asking for it waits instead of failing.
+      const plan = (await context(ctx, ref)).plan;
+      let s: Scope;
+      try { s = await scope(ctx, ref, true); }
+      catch (error) {
+        if (!plan || codeOf(error) !== "APPROVAL_REQUIRED") throw error;
+        // APPROVAL_REQUIRED also covers an invalid workflow; only missing approvals wait, so check the plan without them.
+        await scope(ctx, ref);
+        return { maneuverId: null, status: "waiting", code: "PLAN_APPROVALS_PENDING" };
+      }
       // A reset advanced the generation of a revision humans already saw previewed: prepare this intent's identical
       // diff now and continue here once it is recorded (recordPreview re-checks the content and approval times).
-      if (c.entry && c.revision.schedulePreviewHash !== null &&
-          !await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique()) {
+      if (s.head.entry && s.parts.every(c => c.revision.schedulePreviewHash !== null) &&
+          !await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", s.intentKey)).unique()) {
         await ctx.scheduler.runAfter(0, calls.prepare, { ref, attempt: 0, thenSchedule: true });
         return { maneuverId: null, status: "preparing", code: null };
       }
-      return { ...await startIntent(ctx, c), code: null };
+      return { ...await startIntent(ctx, s), code: null };
     }
     catch (error) {
       const code = codeOf(error), event = await ctx.db.get(eventId);
@@ -409,8 +490,8 @@ export const requestSchedule = internalMutation({
   },
 });
 
-async function startIntent(ctx: MutationCtx, c: Context) {
-  const ref = c.ref;
+async function startIntent(ctx: MutationCtx, s: Scope) {
+  const c = s.head;
   if (c.candidate.kind === "wait") {
     if (c.event.status !== "monitoring") {
       await ctx.db.patch(c.event._id, { status: "monitoring", situation: null });
@@ -418,7 +499,7 @@ async function startIntent(ctx: MutationCtx, c: Context) {
     }
     return { maneuverId: null, status: "monitoring" };
   }
-  const row = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", intentOf(ref))).unique();
+  const row = await ctx.db.query("maneuvers").withIndex("by_intent", q => q.eq("intentKey", s.intentKey)).unique();
   if (!row) fail("WORKER_UNAVAILABLE", "Factory must prepare a checked preview before this maneuver can be scheduled.");
   await currentFor(ctx, row);
   // A commit chain lost after reservation would strand the row; the worker returns the same job for the same intent.
@@ -435,19 +516,22 @@ async function startIntent(ctx: MutationCtx, c: Context) {
   return { maneuverId: row._id, status: "rescreening" };
 }
 
+/** The re-screen of one partner encounter. A shared burn is re-screened against the full catalog for every affected
+ * incident's partner (simulated partners are not in the catalog), one job per partner; all must pass. */
 export const jobInput = internalQuery({
-  args: { maneuverId: v.id("maneuvers") },
-  handler: async (ctx, { maneuverId }) => {
+  args: { maneuverId: v.id("maneuvers"), partner: v.optional(v.number()) },
+  handler: async (ctx, { maneuverId, partner = 0 }) => {
     const row = await ctx.db.get(maneuverId);
     if (!row || row.status !== "rescreening") return null;
-    const c = await currentFor(ctx, row);
-    if (!c.entry || !row.rescreenJobId) fail("INVALID_STATE", "The re-screen request has no selected maneuver.");
-    const request: RescreenRequest = { jobId: row.rescreenJobId, snapshotId: c.pinned.snapshotId, evidenceVersion: evidenceVersionOf(c.facts),
-      objectId: c.entry.objectId, partnerObjectId: c.candidate.movingSide === "A" ? c.facts.objectB.objectId : c.facts.objectA.objectId,
-      maneuver: { burnTimeUtc: c.entry.burnTimeUtc, deltaVMs: c.entry.deltaVMs, direction: c.entry.direction }, tcaUtc: wholeSecondUtc(c.event.tcaMs),
-      fromUtc: c.entry.burnTimeUtc, toUtc: wholeSecondUtc(Date.parse(c.entry.burnTimeUtc) + HORIZON_H * 3_600_000),
+    const s = await currentFor(ctx, row), c = s.parts[partner], e = s.head.entry;
+    if (!c || !e || !row.rescreenJobId) fail("INVALID_STATE", "The re-screen request has no selected maneuver.");
+    const request: RescreenRequest = { jobId: partner === 0 ? row.rescreenJobId : `${row.rescreenJobId}-${partner}`, snapshotId: s.pinned.snapshotId,
+      evidenceVersion: evidenceVersionOf(c.facts), objectId: e.objectId,
+      partnerObjectId: c.candidate.movingSide === "A" ? c.facts.objectB.objectId : c.facts.objectA.objectId,
+      maneuver: { burnTimeUtc: e.burnTimeUtc, deltaVMs: e.deltaVMs, direction: e.direction }, tcaUtc: wholeSecondUtc(c.event.tcaMs),
+      fromUtc: e.burnTimeUtc, toUtc: wholeSecondUtc(Date.parse(e.burnTimeUtc) + HORIZON_H * 3_600_000),
       proposalId: String(c.ref.proposalId), revision: c.ref.revision, ...(c.event.demoRunId ? { runId: String(c.event.demoRunId) } : {}) };
-    return { request, pinned: row.pinned };
+    return { request, pinned: row.pinned, partners: s.parts.length };
   },
 });
 
@@ -466,8 +550,10 @@ export const recordFailure = internalMutation({
     if (row.status === "failed" && row.error === error && row.reviewRequired === reviewRequired) return null;
     await ctx.db.patch(row._id, { status: "failed", error, reviewRequired: row.reviewRequired || reviewRequired, updatedAt: Date.now() });
     if (reviewRequired) await reset(ctx, row, "Approval reset: the pinned scheduling inputs changed.");
-    const event = await ctx.db.get(row.refs[0].eventId);
-    if (event) await audit(ctx, { event, ref: { ...row.refs[0], approvalRuleVersion: event.approvalRuleVersion ?? 0 } }, "schedule_failed", error, { intentKey: row.intentKey });
+    for (const r of row.refs) {
+      const event = await ctx.db.get(r.eventId);
+      if (event) await audit(ctx, { event, ref: { ...r, approvalRuleVersion: event.approvalRuleVersion ?? 0 } }, "schedule_failed", error, { intentKey: row.intentKey });
+    }
     return null;
   },
 });
@@ -475,24 +561,32 @@ async function failAction(ctx: { runMutation: (ref: typeof calls.fail, args: any
   const safe = failure(error);
   await ctx.runMutation(calls.fail, { maneuverId, ...safe, reviewRequired: ["STALE_REVISION", "NOT_SELECTED", "APPROVAL_REQUIRED", "INVALID_STATE", "SHARED_TRAJECTORY_REQUIRED"].includes(safe.code) });
 }
+const screened = v.array(rescreen);
 export const submit = internalAction({
-  args: { maneuverId: v.id("maneuvers") },
-  handler: async (ctx, { maneuverId }) => {
+  args: { maneuverId: v.id("maneuvers"), partner: v.optional(v.number()), results: v.optional(screened) },
+  handler: async (ctx, { maneuverId, partner = 0, results = [] }) => {
     try {
-      const input = await ctx.runQuery(calls.jobInput, { maneuverId });
+      const input = await ctx.runQuery(calls.jobInput, { maneuverId, partner });
       if (!input) return null;
       await startRescreen(input.request);
-      await ctx.scheduler.runAfter(0, calls.poll, { maneuverId, attempt: 0 });
+      await ctx.scheduler.runAfter(0, calls.poll, { maneuverId, attempt: 0, partner, results });
     } catch (error) { await failAction(ctx, maneuverId, error); }
     return null;
   },
 });
+/** One verdict for the intent: it passes only if every partner passed; the first refusal is the reason. */
+function combined(results: Infer<typeof rescreen>[]): Infer<typeof rescreen> {
+  const refused = results.find(r => !r.passed), misses = results.map(r => r.originalMissAfterKm).filter((m): m is number => m !== null);
+  return { ...results[0], passed: !refused, objectsChecked: Math.max(...results.map(r => r.objectsChecked)),
+    originalMissAfterKm: refused ? refused.originalMissAfterKm : misses.length ? Math.min(...misses) : null,
+    newConjunctions: results.flatMap(r => r.newConjunctions), refusalReason: refused?.refusalReason ?? null };
+}
 export const poll = internalAction({
-  args: { maneuverId: v.id("maneuvers"), attempt: v.number() },
-  handler: async (ctx, { maneuverId, attempt }) => {
+  args: { maneuverId: v.id("maneuvers"), attempt: v.number(), partner: v.optional(v.number()), results: v.optional(screened) },
+  handler: async (ctx, { maneuverId, attempt, partner = 0, results = [] }) => {
     if (!Number.isInteger(attempt) || attempt < 0 || attempt >= POLL_LIMIT) fail("VALIDATION", "Invalid polling attempt.");
     try {
-      const input = await ctx.runQuery(calls.jobInput, { maneuverId });
+      const input = await ctx.runQuery(calls.jobInput, { maneuverId, partner });
       if (!input) return null;
       const req: RescreenRequest = input.request;
       const job = await getRescreenJob(req.jobId, req);
@@ -502,12 +596,13 @@ export const poll = internalAction({
         if (result.horizonH !== HORIZON_H || (result.passed && (result.screenedFromUtc !== req.fromUtc || result.screenedToUtc !== req.toUtc)) ||
             (result.proposalId !== undefined && result.proposalId !== req.proposalId) || (result.revision !== undefined && result.revision !== req.revision) ||
             (result.runId ?? undefined) !== req.runId) fail("INVALID_RESPONSE", "Re-screen result does not describe this exact requested trajectory and horizon.");
-        await ctx.runMutation(calls.finishRescreen, { maneuverId, jobId: job.jobId, expectedPinned: input.pinned,
-          result: { snapshotId: result.snapshotId, evidenceKeys: input.pinned.evidenceKeys, passed: result.passed,
-            objectsChecked: result.objectsChecked, horizonH: result.horizonH, originalMissAfterKm: result.originalMissAfterKm,
-            newConjunctions: result.newConjunctions.map(({ objectId, name, tcaUtc, missKm }) => ({ objectId, name, tcaUtc, missKm })), refusalReason: result.refusalReason } });
+        const all = [...results, { snapshotId: result.snapshotId, evidenceKeys: input.pinned.evidenceKeys, passed: result.passed,
+          objectsChecked: result.objectsChecked, horizonH: result.horizonH, originalMissAfterKm: result.originalMissAfterKm,
+          newConjunctions: result.newConjunctions.map(({ objectId, name, tcaUtc, missKm }) => ({ objectId, name, tcaUtc, missKm })), refusalReason: result.refusalReason }];
+        if (result.passed && partner + 1 < input.partners) await ctx.scheduler.runAfter(0, calls.submit, { maneuverId, partner: partner + 1, results: all });
+        else await ctx.runMutation(calls.finishRescreen, { maneuverId, jobId: job.jobId, expectedPinned: input.pinned, result: combined(all) });
       } else if (attempt + 1 >= POLL_LIMIT) await ctx.runMutation(calls.fail, { maneuverId, code: "RESCREEN_TIMEOUT", message: "Re-screen polling reached its limit; retry the same intent to read the same job." });
-      else await ctx.scheduler.runAfter(POLL_DELAY_MS, calls.poll, { maneuverId, attempt: attempt + 1 });
+      else await ctx.scheduler.runAfter(POLL_DELAY_MS, calls.poll, { maneuverId, attempt: attempt + 1, partner, results });
     } catch (error) { await failAction(ctx, maneuverId, error); }
     return null;
   },
@@ -517,15 +612,15 @@ export const finishRescreen = internalMutation({
   handler: async (ctx, { maneuverId, jobId, expectedPinned, result }) => {
     const row = await ctx.db.get(maneuverId);
     if (!row || row.status !== "rescreening") return null;
-    const c = await currentFor(ctx, row);
-    if (jobId !== row.rescreenJobId || !same(expectedPinned, row.pinned) || result.snapshotId !== row.pinned.snapshotId ||
+    const scoped = await currentFor(ctx, row);
+    if (!row.rescreenJobId || (jobId !== row.rescreenJobId && !jobId.startsWith(`${row.rescreenJobId}-`)) || !same(expectedPinned, row.pinned) || result.snapshotId !== row.pinned.snapshotId ||
         !same(result.evidenceKeys, row.pinned.evidenceKeys) || result.horizonH !== HORIZON_H ||
         (result.passed && (result.originalMissAfterKm === null || result.originalMissAfterKm < 1 || result.newConjunctions.some(n => n.missKm < 1) || result.refusalReason !== null)) ||
         (!result.passed && !result.refusalReason)) fail("INVALID_RESPONSE", "The re-screen result is not bound to this intent.");
     await ctx.db.patch(row._id, { status: result.passed ? "committing" : "refused", rescreen: result, error: result.refusalReason, updatedAt: Date.now() });
-    await audit(ctx, c, result.passed ? "rescreened" : "refused", result.passed ? "The pinned maneuver passed catalog re-screening; its write intent is reserved." : result.refusalReason!, { intentKey: row.intentKey });
+    for (const c of scoped.parts) await audit(ctx, c, result.passed ? "rescreened" : "refused", result.passed ? "The pinned maneuver passed catalog re-screening; its write intent is reserved." : result.refusalReason!, { intentKey: row.intentKey });
     if (!result.passed) await reset(ctx, row, `Approval reset: ${result.refusalReason}`);
-    else await ctx.scheduler.runAfter(0, calls.commit, { maneuverId });
+    else await ctx.scheduler.runAfter(0, calls.commit, { maneuverId, attempt: 0 });
     return null;
   },
 });
@@ -538,23 +633,26 @@ export const reserveCommit = internalMutation({
     const row = await ctx.db.get(maneuverId);
     if (!row) fail("NOT_FOUND", "Schedule intent not found.");
     if (row.status === "committed") return { status: "committed", intentKey: row.intentKey, commitSha: row.commitSha };
-    const c = await currentFor(ctx, row);
+    const s = await currentFor(ctx, row);
     if (!row.rescreen?.passed || !["committing", "failed"].includes(row.status)) fail("INVALID_STATE", "A passed re-screen is required before reserving the write.");
     if (row.status !== "committing") await ctx.db.patch(row._id, { status: "committing", error: null, updatedAt: Date.now() });
-    return { status: "reserved", intentKey: row.intentKey, filePath: row.filePath, diff: row.diff, contentHash: c.revision.schedulePreviewHash, demoRunId: row.demoRunId, ref: c.ref };
+    return { status: "reserved", intentKey: row.intentKey, filePath: row.filePath, diff: row.diff, contentHash: s.head.revision.schedulePreviewHash,
+      demoRunId: row.demoRunId, ref: s.head.ref, trajectory: s.trajectory };
   },
 });
 /** Unauthorized read of a reserved intent for polling its external commit job. A write already handed to the worker
  * must still be recorded when inputs move, so polls do not re-run the authorization check; recordCommit flags it. */
 /** A write may have reached the worker: committing, or failed after a passed re-screen (e.g. a missed poll). */
+const trajectoryOf = (row: Maneuver): Trajectory =>
+  row.trajectoryPlanId && row.trajectoryPlanVersion !== null ? { id: String(row.trajectoryPlanId), version: row.trajectoryPlanVersion } : null;
 const handedOver = (row: Maneuver) => row.status === "committing" || (row.status === "failed" && row.rescreen?.passed === true);
 export const commitIntent = internalQuery({
   args: { maneuverId: v.id("maneuvers") },
   handler: async (ctx, { maneuverId }) => {
     const row = await ctx.db.get(maneuverId);
-    const event = row && row.refs.length === 1 ? await ctx.db.get(row.refs[0].eventId) : null;
+    const event = row && row.refs.length > 0 ? await ctx.db.get(row.refs[0].eventId) : null;
     if (!row || !event || !handedOver(row)) return null;
-    return { intentKey: row.intentKey, ref: { ...row.refs[0], approvalRuleVersion: event.approvalRuleVersion ?? 0 } };
+    return { intentKey: row.intentKey, ref: { ...row.refs[0], approvalRuleVersion: event.approvalRuleVersion ?? 0 }, trajectory: trajectoryOf(row) };
   },
 });
 /** Reserve (attempt 0) or poll the Factory /commit for a passed re-screen. The commit request repeats the exact
@@ -571,34 +669,34 @@ export const commit = internalAction({
         // The worker job is bound to the ref sent with /commit; a later rule-version change must not hide its result.
         const ref = sentRef ?? known.ref;
         let job: ScheduleJob;
-        try { job = await getScheduleJob(await sha256(`commit:${known.intentKey}`), { intentKey: known.intentKey, kind: "commit", ref: workerRef(ref), trajectory: null }); }
+        try { job = await getScheduleJob(await sha256(`commit:${known.intentKey}`), { intentKey: known.intentKey, kind: "commit", ref: workerRef(ref), trajectory: known.trajectory }); }
         catch (error) {
           // A write already handed over may still complete: an unreachable worker is only a missed poll, not a failure.
           if (!(error instanceof ScheduleServiceError && error.code === "WORKER_UNAVAILABLE") || attempt + 1 >= POLL_LIMIT) throw error;
           await ctx.scheduler.runAfter(POLL_DELAY_MS, calls.commit, { maneuverId, attempt: attempt + 1, ref });
           return null;
         }
-        return await settleCommit(ctx, maneuverId, attempt, job, known.intentKey, ref, false);
+        return await settleCommit(ctx, maneuverId, attempt, job, known.intentKey, ref, known.trajectory, false);
       }
       // A write handed over by a lost chain is read back and recorded before anything is re-authorized; only a new
       // /commit needs current authorization. An unknown job (or an unreachable worker) falls through to the reservation.
       if (known) {
-        const handed = await readHanded(known.intentKey, known.ref);
+        const handed = await readHanded(known.intentKey, known.ref, known.trajectory);
         // A failed job is retried only after the reservation below has re-authorized the write.
-        if (handed && handed.job.status !== "failed") return await settleCommit(ctx, maneuverId, attempt, handed.job, known.intentKey, handed.ref, false);
+        if (handed && handed.job.status !== "failed") return await settleCommit(ctx, maneuverId, attempt, handed.job, known.intentKey, handed.ref, known.trajectory, false);
       }
       {
         const intent = await ctx.runMutation(calls.reserve, { maneuverId });
         if (intent.status === "committed") return null;
-        const { intentKey, ref } = intent as { intentKey: string; ref: Ref };
-        const prepared = await getScheduleJob(await sha256(`prepare:${intentKey}`), { intentKey, kind: "prepare", ref: workerRef(ref), trajectory: null });
+        const { intentKey, ref, trajectory } = intent as { intentKey: string; ref: Ref; trajectory: Trajectory };
+        const prepared = await getScheduleJob(await sha256(`prepare:${intentKey}`), { intentKey, kind: "prepare", ref: workerRef(ref), trajectory });
         const a = prepared.result;
         if (prepared.status !== "completed" || !a || a.contentHash !== intent.contentHash || a.diff !== intent.diff || a.filePath !== intent.filePath) {
           fail("INVALID_RESPONSE", "The worker's prepared artifact is not the approved preview.");
         }
         const job = await commitSchedule({ intentKey, preparedJobId: prepared.jobId, contentHash: a.contentHash, expectedPreviousHash: a.expectedPreviousHash,
-          expectedPreviousCommit: a.expectedPreviousCommit, ref: workerRef(ref), trajectory: null });
-        return await settleCommit(ctx, maneuverId, attempt, job, intentKey, ref, true);
+          expectedPreviousCommit: a.expectedPreviousCommit, ref: workerRef(ref), trajectory });
+        return await settleCommit(ctx, maneuverId, attempt, job, intentKey, ref, trajectory, true);
       }
     } catch (error) { await failAction(ctx, maneuverId, error); }
     return null;
@@ -606,11 +704,11 @@ export const commit = internalAction({
 });
 /** The rows keep no approval rule version, and the worker job is bound to the one sent. A resumed chain looks for it,
  * newest first, over a few recent versions; an unknown job or an unreachable worker yields null. */
-async function readHanded(intentKey: string, current: Ref) {
+async function readHanded(intentKey: string, current: Ref, trajectory: Trajectory) {
   const jobId = await sha256(`commit:${intentKey}`);
   for (let version = current.approvalRuleVersion; version >= Math.max(1, current.approvalRuleVersion - 9); version--) {
     const ref = { ...current, approvalRuleVersion: version };
-    try { return { job: await getScheduleJob(jobId, { intentKey, kind: "commit", ref: workerRef(ref), trajectory: null }), ref }; }
+    try { return { job: await getScheduleJob(jobId, { intentKey, kind: "commit", ref: workerRef(ref), trajectory }), ref }; }
     catch (error) {
       if (!(error instanceof ScheduleServiceError)) throw error;
       if (error.code === "WORKER_UNAVAILABLE") return null;
@@ -620,8 +718,9 @@ async function readHanded(intentKey: string, current: Ref) {
   return null;
 }
 type ActionCtx = { runMutation: (ref: any, args: any) => Promise<any>; scheduler: { runAfter: (ms: number, ref: any, args: any) => Promise<unknown> } };
-async function settleCommit(ctx: ActionCtx, maneuverId: Id<"maneuvers">, attempt: number, job: ScheduleJob, intentKey: string, ref: Ref, authorized: boolean) {
-  const expected = { intentKey, kind: "commit" as const, ref: workerRef(ref), trajectory: null };
+async function settleCommit(ctx: ActionCtx, maneuverId: Id<"maneuvers">, attempt: number, job: ScheduleJob, intentKey: string, ref: Ref,
+    trajectory: Trajectory, authorized: boolean) {
+  const expected = { intentKey, kind: "commit" as const, ref: workerRef(ref), trajectory };
   // Only an infrastructure failure is retryable for a write, and only right after reserveCommit re-authorized it; the
   // worker refuses (409) any other retry. A failure seen while polling is recorded; the next request re-authorizes.
   if (job.status === "failed" && authorized) job = await retryScheduleJob(job.jobId, job.attempt, expected);
@@ -647,17 +746,22 @@ export const recordCommit = internalMutation({
       return row._id;
     }
     if (!row.rescreen?.passed || !["committing", "failed"].includes(row.status)) fail("INVALID_STATE", "This write intent was never reserved.");
-    let c: Context | null = null;
-    try { c = await currentFor(ctx, row, true); } catch { /* The actual artifact remains historical even when inputs moved after reservation. */ }
-    await ctx.db.patch(row._id, { status: "committed", commitSha, writtenBy: "droid", error: c ? null : "The reserved inputs changed; the committed artifact requires review.",
-      reviewRequired: row.reviewRequired || !c, updatedAt: Date.now() });
-    const event = await ctx.db.get(ref.eventId);
-    if (c) {
-      await ctx.db.patch(c.event._id, { status: "scheduled", situation: null });
-      await ctx.db.patch(c.set._id, { state: "scheduled" });
+    let s: Scope | null = null;
+    try { s = await currentFor(ctx, row, true); } catch { /* The actual artifact remains historical even when inputs moved after reservation. */ }
+    await ctx.db.patch(row._id, { status: "committed", commitSha, writtenBy: "droid", error: s ? null : "The reserved inputs changed; the committed artifact requires review.",
+      reviewRequired: row.reviewRequired || !s, updatedAt: Date.now() });
+    if (s) {
+      for (const c of s.parts) {
+        await ctx.db.patch(c.event._id, { status: "scheduled", situation: null });
+        await ctx.db.patch(c.set._id, { state: "scheduled" });
+      }
+      if (s.plan) await ctx.db.patch(s.plan._id, { state: "scheduled", maneuverId: row._id, updatedAt: Date.now() });
     } else await reset(ctx, row, "Approval reset: inputs changed after the schedule write was reserved.");
-    if (event) await audit(ctx, { event, ref: { ...ref, approvalRuleVersion: event.approvalRuleVersion ?? 0 } }, "schedule_committed",
-      "Factory recorded the schedule artifact; this is not evidence of maneuver execution.", { intentKey, maneuverId, commitSha, reviewRequired: c ? "false" : "true" });
+    for (const r of row.refs) {
+      const event = await ctx.db.get(r.eventId);
+      if (event) await audit(ctx, { event, ref: { ...r, approvalRuleVersion: event.approvalRuleVersion ?? 0 } }, "schedule_committed",
+        "Factory recorded the schedule artifact; this is not evidence of maneuver execution.", { intentKey, maneuverId, commitSha, reviewRequired: s ? "false" : "true" });
+    }
     return row._id;
   },
 });
@@ -684,8 +788,9 @@ export const get = query({
     let reviewRequired = row.reviewRequired;
     try {
       if (row.status === "preview") {
-        const c = await context(ctx, { ...row.refs[0], approvalRuleVersion: event.approvalRuleVersion ?? 0 }, false, true);
-        reviewRequired ||= !same(c.pinned, row.pinned);
+        const first = await ctx.db.get(row.refs[0].eventId);
+        const s = await scope(ctx, { ...row.refs[0], approvalRuleVersion: first?.approvalRuleVersion ?? 0 }, false, true);
+        reviewRequired ||= s.intentKey !== row.intentKey || !same(s.pinned, row.pinned);
       } else await currentFor(ctx, row, true);
     } catch { reviewRequired = true; }
     const screen = row.rescreen && (({ evidenceKeys: _keys, ...shared }) => shared)(row.rescreen);
