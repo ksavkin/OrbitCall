@@ -33,6 +33,8 @@ function call(fetch: ReturnType<typeof vi.fn>, index = 0) {
   const [url, options] = fetch.mock.calls[index] as [string, RequestInit];
   return { url: String(url), options, body: typeof options.body === "string" ? JSON.parse(options.body) : options.body };
 }
+const bodyFailure = (error: Error) =>
+  ({ ok: true, status: 200, json: () => Promise.reject(error) }) as unknown as Response;
 const stored = (text: string, meta: unknown) => `${text}\n\n[orbitcall-memory] ${JSON.stringify(meta)}`;
 const meta = (companyId = "company-a") => ({
   v: 1, companyId, demoRunId: "run-7", sourceEventId: "event-1", sourceMessageIds: ["msg-1"],
@@ -193,6 +195,11 @@ describe("recallMemory", () => {
     ["500", () => stubFetch(json({ detail: SECRET }, 500)), "UPSTREAM_UNAVAILABLE"],
     ["malformed JSON", () => stubFetch(new Response(`<html>${SECRET}`, { status: 200 })), "MEMORY_INVALID_RESPONSE"],
     ["wrong shape", () => stubFetch(json({ results: SECRET })), "MEMORY_INVALID_RESPONSE"],
+    ["body stream failure", () => stubFetch(new Response(new ReadableStream({
+      start(controller) { controller.error(new TypeError(`socket hang up ${SECRET}`)); },
+    }), { status: 200 })), "UPSTREAM_UNAVAILABLE"],
+    ["abort while reading the body", () => stubFetch(bodyFailure(new DOMException(SECRET, "AbortError"))), "UPSTREAM_UNAVAILABLE"],
+    ["socket failure while reading the body", () => stubFetch(bodyFailure(new TypeError(`terminated ${SECRET}`))), "UPSTREAM_UNAVAILABLE"],
   ])("never throws and reports unavailable on %s", async (_, arrange, code) => {
     arrange();
     const recall = await recallMemory(ASSISTANT, { companyId: "company-a", query: "q" });

@@ -50,8 +50,9 @@ async function request(method: "POST" | "DELETE", path: string, body?: unknown, 
     if (!response.ok) throw statusError(response.status);
     try {
       return await response.json();
-    } catch {
-      throw badResponse();
+    } catch (error) {
+      if (error instanceof SyntaxError) throw badResponse();
+      throw error;
     }
   } catch (error) {
     if (error instanceof AnalystError) throw error;
