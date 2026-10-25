@@ -21,6 +21,11 @@ const revisionView = v.object({
   direction: v.union(v.literal("prograde"), v.literal("retrograde"), v.null()),
   estimatedFuelKg: v.union(v.number(), v.null()), missBeforeKm: v.number(), missAfterKm: v.union(v.number(), v.null()),
   indicative: v.literal(true), assumptions: v.array(v.string()), simulated: v.boolean(),
+  candidateId: v.string(), changeSummary: v.union(v.string(), v.null()), sourceMessageIds: v.array(v.id("messages")),
+  // Only a checked explanation reaches a card (AGT-5); the schedule diff is the one prepared for this revision (ROOM-9).
+  rationale: v.union(v.object({ text: v.string(), numbersChecked: v.literal(true),
+    secondModel: v.union(v.object({ agrees: v.boolean(), note: v.string() }), v.null()) }), v.null()),
+  schedulePreviewDiff: v.union(v.string(), v.null()),
 });
 export const proposalCard = v.object({
   proposalId: v.id("proposals"), label: v.string(), latest: revisionView, revisionCount: v.number(), isSelected: v.boolean(),
@@ -52,6 +57,9 @@ export const list = query({
           kind: card.kind, movingSide: card.movingSide, movingObjectId: card.movingObjectId, burnTimeUtc: card.burnTimeUtc,
           deltaVMs: card.deltaVMs, direction: card.direction, estimatedFuelKg: card.estimatedFuelKg, missBeforeKm: card.missBeforeKm,
           missAfterKm: card.missAfterKm, indicative: card.indicative, assumptions: card.assumptions, simulated: card.simulated,
+          candidateId: card.candidateId, changeSummary: revision.changeSummary, sourceMessageIds: revision.sourceMessageIds,
+          rationale: revision.rationale?.numbersChecked ? { text: revision.rationale.text, numbersChecked: true as const, secondModel: revision.rationale.secondModel } : null,
+          schedulePreviewDiff: revision.schedulePreviewDiff,
         },
       };
     }));

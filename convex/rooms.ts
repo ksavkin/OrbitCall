@@ -288,6 +288,23 @@ export const get = query({
   },
 });
 
+/** The incident's most recent room, open or closed, so a reloaded page can still open a closed room's history
+ * (`rooms.byId`). `rooms.get` keeps returning null after the room closes (spec §3.4). */
+export const forEvent = query({
+  args: { eventId: v.id("events") },
+  returns: v.union(v.object({ roomId: v.id("rooms"), state: v.union(v.literal("open"), v.literal("closed")), closedAt: v.union(v.string(), v.null()) }), v.null()),
+  handler: async (ctx, { eventId }) => {
+    const { scope } = await requirePartyScope(ctx, eventId);
+    if (scope.user.role === "demo_observer") throw new ConvexError({ code: "FORBIDDEN", message: "Use the observer view for your authorized demonstration." });
+    let latest: Doc<"rooms"> | null = null;
+    for (const link of await ctx.db.query("roomEvents").withIndex("by_event", q => q.eq("eventId", eventId)).collect()) {
+      const room = await ctx.db.get(link.roomId);
+      if (room && (!latest || room._creationTime > latest._creationTime)) latest = room;
+    }
+    return latest && { roomId: latest._id, state: latest.state, closedAt: latest.closedAt === null ? null : isoUtc(latest.closedAt) };
+  },
+});
+
 /** A room the caller is a member of, open or closed (history stays readable, INBOX-5). */
 export const byId = query({
   args: { roomId: v.id("rooms") },

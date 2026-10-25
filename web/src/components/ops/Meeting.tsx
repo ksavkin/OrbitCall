@@ -1,10 +1,12 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUpRight, Check, CheckCheck, CircleDot, Hourglass, RotateCcw, Sparkles, Wrench, X } from "lucide-react";
+import { ArrowUpRight, Check, CheckCheck, CircleDot, Hourglass, Radar, RotateCcw, Sparkles, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CallMessage } from "@/call/api";
-import { fmtMiss, fmtMs, fmtOdds, fmtWhen } from "@/lib/ops/format";
+import { fmtMiss, fmtMs, fmtOdds, fmtUsd, fmtWhen } from "@/lib/ops/format";
+import { runScan } from "@/lib/ops/scenarios";
+import { sfx } from "@/lib/sound";
 import { AGENTS, MODELS } from "@/lib/ops/roster";
 import { useOps } from "@/lib/ops/store";
 import type { AgentId, ConjunctionEvent, Reply, Span } from "@/lib/ops/types";
@@ -81,7 +83,7 @@ export function Meeting({ e, now, room, onRun }: { e: ConjunctionEvent; now: num
   const st = room.state;
   const deciding = humans.filter((h) => h.eventId === e.id).map((h) => h.side);
   const open = (e.status === "proposal" || e.status === "communication") && !!e.options?.length;
-  const closed = !!e.outcome?.checks.length;
+  const closed = !!e.outcome?.resolvedAt;
   const turnOf = deciding.includes("a") ? "a" : deciding[0];
   const turnName = turnOf ? clean(e.parties?.find((p) => p.role === turnOf)?.operator) : "";
 
@@ -100,8 +102,10 @@ export function Meeting({ e, now, room, onRun }: { e: ConjunctionEvent; now: num
       if (pinned.current) el.scrollTop = el.scrollHeight;
     };
     el.addEventListener("scroll", onScroll, { passive: true });
+    // the list grows, and the box grows when the pinned decision above it closes
     const ro = new ResizeObserver(follow);
     ro.observe(inner);
+    ro.observe(el);
     follow();
     return () => {
       el.removeEventListener("scroll", onScroll);
@@ -109,59 +113,55 @@ export function Meeting({ e, now, room, onRun }: { e: ConjunctionEvent; now: num
     };
   }, []);
 
-  // a decision that becomes due is brought into view, even for someone who was reading back
   const due = open && st?.mode === "decide";
-  useEffect(() => {
-    if (!due) return;
-    pinned.current = true;
-    const el = box.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [due]);
 
   return (
-    <div ref={box} className="thin-scroll absolute inset-0 overflow-y-auto" data-testid="meeting">
-      <div ref={list} className="mx-auto flex max-w-[860px] flex-col gap-4 px-6 pb-6 pt-2">
-        <div className="pb-1 text-center text-[11.5px] text-neutral-600">
-          Shared with everyone on {e.id} · each person reads it in their own language · nothing here approves anything
-        </div>
-        <AnimatePresence initial={false}>
-          {items.map((it) =>
-            it.kind === "msg" ? (
-              <ol key={it.key} className="contents">
-                <Message m={it.m} myUserId={live?.me ?? null} />
-              </ol>
-            ) : it.kind === "agent" ? (
-              <AgentNote key={it.key} e={e} s={it.s} tools={it.tools} onRun={onRun} />
-            ) : (
-              <Line key={it.key} at={it.at} tone={it.tone} who={it.who} text={it.text} />
-            ),
-          )}
-        </AnimatePresence>
-
-        {/* the decision, at the end of the meeting while it is open */}
-        {due ? (
-          <motion.div layout className="rounded-[16px] bg-white/[0.02] shadow-[inset_0_0_0_1px_rgba(255,159,64,0.32)]" data-testid="meeting-decision">
-            <ProposalPanel e={e} viewer={room.viewer} now={now} embedded />
-          </motion.div>
-        ) : open ? (
-          <motion.div layout className="rounded-[16px] bg-white/[0.015] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)]">
-            <ProposalPanel e={e} viewer={room.viewer} now={now} embedded readOnly />
-            {turnName && (
+    <div className="absolute inset-0 flex flex-col" data-testid="meeting-wrap">
+      {/* the open decision stays pinned above the discussion, so people talk about it underneath */}
+      {open && (
+        <div className="thin-scroll max-h-[58%] shrink-0 overflow-y-auto px-6 pt-1 [scrollbar-gutter:stable]">
+          <motion.div
+            layout
+            className={`mx-auto max-w-[860px] rounded-[16px] ${due ? "bg-white/[0.02] shadow-[inset_0_0_0_1px_rgba(255,159,64,0.32)]" : "bg-white/[0.015] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)]"}`}
+            data-testid="meeting-decision"
+          >
+            <ProposalPanel e={e} viewer={room.viewer} now={now} embedded readOnly={!due} />
+            {!due && turnName && (
               <div className="flex items-center gap-2 border-t border-white/[0.06] px-5 py-3 text-[12.5px] text-neutral-500">
                 <Hourglass size={12} className="text-[#9cc2ff]" /> {turnName} decides now. Your controls open on your turn.
               </div>
             )}
           </motion.div>
-        ) : null}
-
-        {!open && !closed && e.agentsWorking && (
-          <div className="flex items-center gap-2.5 pl-1 text-[13px] text-neutral-500">
-            <Sparkles size={13} className="text-[#9cc2ff]" />
-            <span className="shimmer font-medium">The agents are working · their notes appear here</span>
+        </div>
+      )}
+      <div ref={box} className={`thin-scroll min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] ${open ? "mt-3 border-t border-white/[0.06]" : ""}`} data-testid="meeting">
+        <div ref={list} className="mx-auto flex max-w-[908px] flex-col gap-4 px-6 pb-6 pt-3">
+          <div className="pb-1 text-center text-[11.5px] text-neutral-600">
+            Shared with everyone on {e.id} · each person reads it in their own language · nothing here approves anything
           </div>
-        )}
-
-        {closed && <Report e={e} />}
+          <AnimatePresence initial={false}>
+            {items.map((it) =>
+              it.kind === "msg" ? (
+                <ol key={it.key} className="contents">
+                  <Message m={it.m} myUserId={live?.me ?? null} />
+                </ol>
+              ) : it.kind === "agent" ? (
+                <AgentNote key={it.key} e={e} s={it.s} tools={it.tools} onRun={onRun} />
+              ) : (
+                <Line key={it.key} at={it.at} tone={it.tone} who={it.who} text={it.text} />
+              ),
+            )}
+          </AnimatePresence>
+  
+          {!open && !closed && e.agentsWorking && (
+            <div className="flex items-center gap-2.5 pl-1 text-[13px] text-neutral-500">
+              <Sparkles size={13} className="text-[#9cc2ff]" />
+              <span className="shimmer font-medium">The agents are working · their notes appear here</span>
+            </div>
+          )}
+  
+          {closed && <Report e={e} />}
+        </div>
       </div>
     </div>
   );
@@ -261,6 +261,10 @@ function Report({ e }: { e: ConjunctionEvent }) {
   const took = e.outcome?.resolvedAt ? e.outcome.resolvedAt - e.createdAt : null;
   const checks = e.outcome?.checks ?? [];
   const next = e.outcome?.next ?? [];
+  const spans = useOps((s) => s.spans);
+  const mine = spans.filter((s) => s.eventId === e.id);
+  const steps = mine.length;
+  const cost = mine.reduce((n, s) => n + (s.costUsd ?? 0), 0);
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -336,6 +340,29 @@ function Report({ e }: { e: ConjunctionEvent }) {
             {next.join(" · ")}
           </div>
         )}
+      </div>
+      <div className="flex items-center gap-2 border-t border-[rgba(61,220,151,0.14)] px-5 py-3">
+        <span className="tnum text-[11.5px] text-neutral-600">
+          {steps} agent steps · {fmtUsd(cost)}
+        </span>
+        <button
+          className="btn btn-ghost-line ml-auto h-8 gap-1.5 px-3 text-[12px]"
+          onClick={() => {
+            useOps.setState({ resolved: null, incident: null, incidentView: "expanded", tab: "orbit" });
+            runScan();
+          }}
+        >
+          <Radar size={12} /> Run another scan
+        </button>
+        <button
+          className="btn btn-primary h-8 gap-1.5 px-3.5 text-[12px]"
+          onClick={() => {
+            sfx.close();
+            useOps.setState({ resolved: null, incident: null, incidentView: "expanded", tab: "orbit" });
+          }}
+        >
+          <Check size={12} /> Close case
+        </button>
       </div>
     </motion.div>
   );

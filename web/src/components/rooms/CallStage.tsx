@@ -344,14 +344,15 @@ function DockedCall({
   return (
     <div className="flex flex-col" data-testid="call-panel" data-state={c.state} data-mode={mode}>
       {c.error && (
-        <div className="mx-5 mt-3 flex items-center gap-3 rounded-[12px] bg-[rgba(255,90,79,0.1)] px-4 py-2 text-[12.5px] text-[#ff8a80]" role="alert" data-testid="call-error" data-code={c.error.code}>
+        <div className="mx-auto mt-3 flex w-[calc(100%-48px)] max-w-[860px] items-center gap-3 rounded-[12px] bg-[rgba(255,90,79,0.1)] px-4 py-2 text-[12.5px] text-[#ff8a80]" role="alert" data-testid="call-error" data-code={c.error.code}>
           {ERROR_TEXT[c.error.code] ?? `${c.error.code}: ${c.error.message}`}
           <button className="ml-auto text-[12px] text-neutral-400 underline" onClick={c.clearError}>
             Dismiss
           </button>
         </div>
       )}
-      <div className="flex items-center gap-4 px-5 py-3">
+      {/* the same column as the meeting above it, so the dock lines up with the chat */}
+      <div className="mx-auto flex w-full max-w-[908px] items-center gap-4 px-6 py-3">
         <Tooltip label={canTalk ? (c.micMode === "hold" ? "Hold to talk · or hold Space" : c.micOn ? "Click to mute" : "Click to unmute") : status}>
           <button
             className="relative grid h-[68px] w-[68px] shrink-0 place-items-center rounded-full transition-[transform,opacity] active:scale-95 disabled:cursor-default"
