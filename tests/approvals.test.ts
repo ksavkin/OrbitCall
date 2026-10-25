@@ -4,6 +4,7 @@ import type { Id } from "../convex/_generated/dataModel";
 import { FIXTURE_NOW } from "../fixtures/events";
 import { advocateCandidates, advocateEvent, policyA } from "../fixtures/policies";
 import { buildHostContext } from "../convex/lib/hostContext";
+import { decisionTurn } from "../convex/lib/decision";
 import { insertEvent, type Backend } from "./helpers";
 import { as, code, companyA, fn, pick, seed, selection, tick, userId, withCard } from "./decision";
 
@@ -158,6 +159,17 @@ describe("approval resets", () => {
       lastReset: { reason: "assignment_revoked" } });
     expect(await code(as(t, "b").mutation(fn.approve, await tick(t, eventId)))).toBe("INVALID_STATE");
     expect(await as(t, "a").mutation(fn.approve, await tick(t, eventId))).toMatchObject({ allRequiredApproved: false });
+  });
+
+  it("stops counting an approval the revalidation sweep missed once the approver's assignments changed", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    const a = await userId(t, "a");
+    // An assignment change the sweep never saw: only the version moves; the row stays current and exact.
+    await t.run(async ctx => { await ctx.db.patch(a, { assignmentVersion: 9 }); });
+    expect(await t.run(async ctx => decisionTurn(ctx, (await ctx.db.get(eventId))!))).toMatchObject({ turn: "A" });
+    expect(await read(t, "b", eventId)).toMatchObject({ turn: "A", approvals: { A: { status: "pending" } } });
+    expect(await code(as(t, "b").mutation(fn.approve, await tick(t, eventId)))).toBe("INVALID_STATE");
   });
 
   it("resets approvals on a policy edit and refuses decisions on stale evidence", async () => {

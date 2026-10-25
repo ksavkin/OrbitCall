@@ -104,7 +104,7 @@ async function approvedRoom(t: Backend) {
       by: { kind: "human", userId: room.userIds[0] }, at: FIXTURE_NOW, lastReset: null });
     const approvalId = await ctx.db.insert("approvals", { eventId, side: "A", status: "approved", current: true,
       userId: room.userIds[0], companyId: room.companyIds[0], proposalId, revision: 1, selectionGeneration: 1,
-      approvalRuleVersion: 1, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, at: FIXTURE_NOW });
+      approvalRuleVersion: 1, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, at: FIXTURE_NOW, assignmentVersion: 1 });
     return { proposalId, selectionId, approvalId };
   });
   await say(t, room.roomId, human(room, 0), "Please summarize the current decision.", 0);
@@ -235,7 +235,7 @@ describe("Coordination Host context", () => {
       await ctx.db.insert("proposalRevisions", { proposalId, eventId: sooner, revision: 1, candidateRevisionId: p1, changeSummary: null,
         sourceMessageIds: [], rationale: null, schedulePreviewDiff: null, schedulePreviewHash: null, simulated: true, createdAt: FIXTURE_NOW });
       const approval = { eventId: sooner, userId: room.userIds[0], companyId: a, proposalId, revision: 1, selectionGeneration: 1,
-        approvalRuleVersion: 1, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, at: FIXTURE_NOW };
+        approvalRuleVersion: 1, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null, at: FIXTURE_NOW, assignmentVersion: 1 };
       await ctx.db.insert("selections", { eventId: sooner, proposalId, revision: 1, generation: 1,
         by: { kind: "human", userId: room.userIds[0] }, at: FIXTURE_NOW, lastReset: null });
       await ctx.db.insert("approvals", { ...approval, side: "A", status: "approved", current: true });
