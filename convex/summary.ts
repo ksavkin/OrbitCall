@@ -219,6 +219,11 @@ function editedCandidate(card: Doc<"candidateRevisions">, input: Edit, note: str
   }
   if (note.length > 500) fail("VALIDATION", "The summary note must be at most 500 characters.");
   validateCandidates([next], facts);
+  // Orbit labels describe the original burn. Reusing one after a field edit would contradict the checked card.
+  const description = next.kind === "wait" ? "Wait for update"
+    : `Move ${next.movingObjectId} ${next.direction} ${next.deltaVMs} m/s at ${next.burnTimeUtc}`;
+  next.label = description.length <= 80 ? description : "Edited maneuver";
+  if (next.kind === "wait") next.assumptions = ["Waiting is not a maneuver or a claim of safety."];
   return next;
 }
 
