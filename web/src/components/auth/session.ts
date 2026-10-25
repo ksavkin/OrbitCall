@@ -30,8 +30,11 @@ export interface Me {
   access: Access;
 }
 
+/** What a spacecraft does, for its drawing in the fleet list. */
+export type SatKind = "imaging" | "rf" | "weather" | "cubesat";
+
 export interface FleetSatellite {
-  object: { objectId: string; name: string; norad: number | null; orbit: string | null };
+  object: { objectId: string; name: string; norad: number | null; orbit: string | null; kind?: SatKind };
   assignedAt: string | null;
   freshness: "current" | "stale" | "unknown";
   unresolvedIncidentCount: number | null;
@@ -53,12 +56,14 @@ export interface ServerMe {
 /** The server's answer for the signed-in identity: an account, not provisioned, or not readable right now. */
 export type BackendAccount = { status: "ok"; me: ServerMe } | { status: "forbidden" } | { status: "error" };
 
-const sat = (objectId: string, name: string, norad: number, orbit: string, incidents = 0, freshness: FleetSatellite["freshness"] = "current"): FleetSatellite => ({
-  object: { objectId, name, norad, orbit },
+// Real catalog objects (NORAD IDs, orbits from the gp-20261024T2134Z snapshot) assigned to fictional demo
+// companies, so "My fleet" finds their real conjunctions in the queue. Open cases are counted live from the queue.
+const sat = (norad: number, name: string, orbit: string, kind: SatKind): FleetSatellite => ({
+  object: { objectId: String(norad), name, norad, orbit, kind },
   assignedAt: "2026-10-24T08:00:00Z",
-  freshness,
-  unresolvedIncidentCount: incidents,
-  scanCoverage: incidents ? "complete" : "not_scanned",
+  freshness: "current",
+  unresolvedIncidentCount: null,
+  scanCoverage: "not_scanned",
 });
 
 /** Demo accounts: three dispatchers with four simulated spacecraft each, and a sign-up without access. Logins for them are server-side. */
@@ -72,11 +77,16 @@ export const DEMO_ACCOUNTS: { me: Me; fleet: FleetSatellite[] }[] = [
       language: "en",
       dispatcherCountry: "us",
       company: { companyId: "asd", name: "American Satellite Dynamics", country: "us", simulated: true },
-      assignedObjectIds: ["ASD-1", "ASD-2", "ASD-3", "ASD-4"],
+      assignedObjectIds: ["56191", "56193", "56200", "62382"],
       assignmentVersion: 1,
       access: "granted",
     },
-    fleet: [sat("ASD-1", "ASD-1 PATHFINDER", 90001, "LEO 550 km", 1), sat("ASD-2", "ASD-2 RELAY", 90002, "LEO 560 km"), sat("ASD-3", "ASD-3 IMAGER", 90003, "SSO 530 km"), sat("ASD-4", "ASD-4 RELAY", 90004, "LEO 570 km", 0, "stale")],
+    fleet: [
+      sat(56191, "HAWK-7A", "SSO · 479 × 481 km", "rf"),
+      sat(56193, "HAWK-7B", "SSO · 479 × 481 km", "rf"),
+      sat(56200, "HAWK-7C", "SSO · 479 × 481 km", "rf"),
+      sat(62382, "HAWK-11A", "LEO 45° · 468 × 473 km", "rf"),
+    ],
   },
   {
     me: {
@@ -87,11 +97,16 @@ export const DEMO_ACCOUNTS: { me: Me; fleet: FleetSatellite[] }[] = [
       language: "ru",
       dispatcherCountry: "ru",
       company: { companyId: "sever", name: "Sever Imaging", country: "ru", simulated: true },
-      assignedObjectIds: ["SEV-1", "SEV-2", "SEV-3", "SEV-4"],
+      assignedObjectIds: ["64880", "64890", "57182", "57178"],
       assignmentVersion: 1,
       access: "granted",
     },
-    fleet: [sat("SEV-1", "SEVER-1", 90101, "SSO 510 km", 1), sat("SEV-2", "SEVER-2", 90102, "SSO 512 km"), sat("SEV-3", "SEVER-3", 90103, "LEO 600 km"), sat("SEV-4", "SEVER-4", 90104, "LEO 605 km")],
+    fleet: [
+      sat(64880, "GEOSCAN 1", "SSO · 460 × 473 km", "cubesat"),
+      sat(64890, "GEOSCAN 2", "SSO · 459 × 471 km", "cubesat"),
+      sat(57182, "MONITOR-4", "SSO · 468 × 483 km", "imaging"),
+      sat(57178, "CUBESX-HSE 3", "SSO · 457 × 470 km", "cubesat"),
+    ],
   },
   {
     me: {
@@ -102,11 +117,16 @@ export const DEMO_ACCOUNTS: { me: Me; fleet: FleetSatellite[] }[] = [
       language: "zh",
       dispatcherCountry: "cn",
       company: { companyId: "jade", name: "Jade Orbit", country: "cn", simulated: true },
-      assignedObjectIds: ["JDE-1", "JDE-2", "JDE-3", "JDE-4"],
+      assignedObjectIds: ["43023", "58646", "58647", "54686"],
       assignmentVersion: 1,
       access: "granted",
     },
-    fleet: [sat("JDE-1", "JADE-1", 90201, "LEO 520 km"), sat("JDE-2", "JADE-2", 90202, "LEO 525 km"), sat("JDE-3", "JADE-3", 90203, "SSO 540 km", 1), sat("JDE-4", "JADE-4", 90204, "LEO 700 km")],
+    fleet: [
+      sat(43023, "JILIN-1 05", "SSO · 455 × 463 km", "imaging"),
+      sat(58646, "TIANMU-1 12", "SSO · 479 × 486 km", "weather"),
+      sat(58647, "TIANMU-1 13", "SSO · 479 × 486 km", "weather"),
+      sat(54686, "DONGPO 08", "SSO · 452 × 464 km", "imaging"),
+    ],
   },
   {
     me: {
@@ -137,6 +157,8 @@ interface Session {
   signOut: () => Promise<void>;
   setProfileOpen: (v: boolean) => void;
   setBackend: (v: BackendAccount | null) => void;
+  /** The Auth0 login, mirrored here by Auth0Bridge while the tenant is configured. */
+  auth0: { email: string | null; name: string | null; logout: () => void } | null;
 }
 
 // Who is signed in comes from the server (/api/session reads a signed httpOnly cookie); the browser never
@@ -144,6 +166,7 @@ interface Session {
 export const useSession = create<Session>((set) => ({
   userId: undefined,
   backend: null,
+  auth0: null,
   profileOpen: false,
   signIn: async (username, password) => {
     const res = await fetch("/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password }) }).catch(() => null);
@@ -155,6 +178,8 @@ export const useSession = create<Session>((set) => ({
   signOut: async () => {
     await fetch("/api/session", { method: "DELETE" }).catch(() => null);
     set({ userId: null, profileOpen: false });
+    // an Auth0 login ends at Auth0 too, which redirects back here
+    useSession.getState().auth0?.logout();
   },
   setProfileOpen: (profileOpen) => set({ profileOpen }),
   setBackend: (backend) => set({ backend }),
@@ -181,7 +206,12 @@ function serverAccount(b: BackendAccount): Me {
 export function useMe(): Me | null {
   const id = useSession((s) => s.userId);
   const backend = useSession((s) => s.backend);
-  if (backend) return serverAccount(backend);
+  const auth0 = useSession((s) => s.auth0);
+  if (backend) {
+    const me = serverAccount(backend);
+    // session.me has no email or (yet) a name for unprovisioned logins; Auth0 knows both
+    return { ...me, email: me.email ?? auth0?.email ?? null, name: me.name ?? auth0?.name ?? null };
+  }
   return DEMO_ACCOUNTS.find((a) => a.me.userId === id)?.me ?? null;
 }
 

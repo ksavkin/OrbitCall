@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowRight, Loader2, Lock, Play, Radar, ShieldAlert, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtChance, fmtCountdown, fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { runIncident, runScan } from "@/lib/ops/scenarios";
 import { useOps } from "@/lib/ops/store";
@@ -14,7 +14,9 @@ import { useNow } from "@/lib/useNow";
 import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { RESOLVED } from "./meta";
-import { useMe } from "@/components/auth/session";
+import { useMe, useSession } from "@/components/auth/session";
+import { Popover } from "@/components/ui/Popover";
+import Link from "next/link";
 import { PcChart } from "./PcChart";
 
 /** Stable fallback: a new {} per render would loop the store subscription. */
@@ -42,27 +44,70 @@ export function ScanButton() {
   const me = useMe();
   const allowed = me?.access === "granted";
   const scanning = phase === "scanning";
+  const [gate, setGate] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const closeGate = useCallback(() => setGate(false), []);
   // one case at a time: scanning again would pull the dispatcher away from it
   const busy = useOps((s) => {
     const ev = s.incident ? s.events.find((x) => x.id === s.incident) : undefined;
     return ev && !RESOLVED.includes(ev.status) ? ev.id : null;
   });
+  // Without sign-in or access the button stays clickable and explains why it cannot scan, instead of sitting
+  // greyed out with a tooltip nobody hovers. The server refuses these scans either way.
+  const locked = !me || !allowed;
   const btn = (
     <button
+      ref={anchor}
       className="btn btn-primary h-8 w-full gap-1.5 text-[12px]"
-      disabled={!dev || !ready || scanning || !!busy || !allowed}
+      disabled={!locked && (!dev || !ready || scanning || !!busy)}
+      aria-haspopup={locked ? "dialog" : undefined}
       onClick={() => {
+        if (locked) {
+          sfx.click();
+          setGate((g) => !g);
+          return;
+        }
         sfx.ping();
         runScan();
       }}
     >
-      {scanning || busy ? <Loader2 size={13} className="animate-spin" /> : allowed ? <Radar size={13} /> : <Lock size={12} />}
+      {scanning || busy ? <Loader2 size={13} className="animate-spin" /> : locked ? <Lock size={12} /> : <Radar size={13} />}
       {scanning ? "Scanning 18k objects…" : busy ? `Case in progress · ${busy}` : "Run scan"}
     </button>
   );
-  // the server refuses scans for accounts without a provisioned fleet; the button says so before anyone clicks
-  if (!me) return <Tooltip label="Sign in to scan your fleet">{btn}</Tooltip>;
-  if (!allowed) return <Tooltip label="Your account has no scan access yet. Request it in your profile.">{btn}</Tooltip>;
+  if (locked)
+    return (
+      <>
+        {btn}
+        <Popover open={gate} onClose={closeGate} anchor={anchor} width={260} label="Scanning needs an account">
+          <div className="p-3">
+            <div className="flex items-center gap-2 text-[13px] font-semibold text-white">
+              <Lock size={13} className="text-neutral-400" /> {me ? "No scan access yet" : "Sign in to scan"}
+            </div>
+            <p className="mt-1.5 text-[12px] leading-[1.55] text-neutral-400">
+              {me
+                ? "Scans run paid screening and analysis, so they open for accounts with a company and assigned satellites."
+                : "A scan checks the satellites assigned to your account against the whole catalog. Sign in as a dispatcher to run one."}
+            </p>
+            {me ? (
+              <button
+                className="btn btn-primary mt-3 h-8 w-full text-[12px]"
+                onClick={() => {
+                  setGate(false);
+                  useSession.getState().setProfileOpen(true);
+                }}
+              >
+                Request access
+              </button>
+            ) : (
+              <Link href="/signin" className="btn btn-primary mt-3 flex h-8 w-full items-center justify-center text-[12px]" onClick={() => sfx.click()}>
+                Sign in
+              </Link>
+            )}
+          </div>
+        </Popover>
+      </>
+    );
   if (!dev) return <Tooltip label="Triggers the Risk Monitor once the backend is connected">{btn}</Tooltip>;
   if (busy) return <Tooltip label="Finish or close the current case before scanning again">{btn}</Tooltip>;
   return btn;
