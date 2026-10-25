@@ -1,8 +1,14 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowRight, Loader2, Lock, Play, Radar, ShieldAlert, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight, Clock, ListChecks, Loader2, Lock, Play, Radar, ShieldAlert, TriangleAlert, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { scanStartRef } from "@/lib/backend/api";
+import { backendError } from "@/lib/backend/errors";
+import { fmtAge } from "@/lib/backend/format";
+import { setLiveError, useLive, useRealMode } from "@/lib/backend/live";
+import { mutate } from "@/lib/backend/run";
+import type { ScanRun } from "@/lib/backend/types";
 import { fmtChance, fmtCountdown, fmtMiss, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { runIncident, runScan } from "@/lib/ops/scenarios";
 import { useOps } from "@/lib/ops/store";
@@ -37,9 +43,11 @@ export const WARN_MS = 3400;
 /** Queue order (user-flow §4): red before yellow, then the earliest closest approach, then the higher chance. */
 const byPriority = (a: ConjunctionEvent, b: ConjunctionEvent) => (a.risk === b.risk ? 0 : a.risk === "red" ? -1 : 1) || a.tca - b.tca || b.pc - a.pc;
 
-/** Primary action on the queue: one full screening pass. */
+/** Primary action on the queue: one full screening pass (the simulator in dev, `scans.startMine` in real mode). */
 export function ScanButton() {
   const dev = useOps((s) => s.dev);
+  const real = useRealMode();
+  const live = useLiveScan();
   const phase = useOps((s) => s.scan.phase);
   const ready = useOrbit((s) => !!s.catalog);
   const me = useMe();
@@ -60,7 +68,7 @@ export function ScanButton() {
     <button
       ref={anchor}
       className={`btn h-8 w-full gap-1.5 text-[12px] ${locked ? "bg-white/[0.06] text-neutral-500 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] hover:text-neutral-300" : "btn-primary"}`}
-      disabled={!locked && (!dev || !ready || scanning || !!busy)}
+      disabled={!locked && (real ? live.waiting || !!live.running : !dev || !ready || scanning || !!busy)}
       aria-haspopup={locked ? "dialog" : undefined}
       onClick={() => {
         if (locked) {
@@ -69,11 +77,21 @@ export function ScanButton() {
           return;
         }
         sfx.ping();
-        runScan();
+        if (real) void live.start();
+        else runScan();
       }}
     >
-      {scanning || busy ? <Loader2 size={13} className="animate-spin" /> : locked ? <Lock size={12} /> : <Radar size={13} />}
-      {scanning ? "Scanning 18k objects…" : busy ? `Case in progress · ${busy}` : "Run scan"}
+      {real && !locked ? (
+        <>
+          {live.waiting || live.running ? <Loader2 size={13} className="animate-spin" /> : <Radar size={13} />}
+          {live.waiting ? "Starting scan…" : live.running ? phaseLabel(live.running) : "Run scan"}
+        </>
+      ) : (
+        <>
+          {scanning || busy ? <Loader2 size={13} className="animate-spin" /> : locked ? <Lock size={12} /> : <Radar size={13} />}
+          {scanning ? "Scanning 18k objects…" : busy ? `Case in progress · ${busy}` : "Run scan"}
+        </>
+      )}
     </button>
   );
   if (locked)
@@ -109,6 +127,13 @@ export function ScanButton() {
         </Popover>
       </>
     );
+  if (real)
+    return (
+      <>
+        {btn}
+        <LiveScanStatus scan={live.scan} error={live.error} />
+      </>
+    );
   if (!dev) return <Tooltip label="Triggers the Risk Monitor once the backend is connected">{btn}</Tooltip>;
   if (busy) return <Tooltip label="Finish or close the current case before scanning again">{btn}</Tooltip>;
   return btn;
@@ -132,8 +157,15 @@ function whyRanked(e: ConjunctionEvent, rank: number, now: number) {
     : `Below the action line: watch it, no action needed yet. Closest approach ${when} away.`;
 }
 
-/** Ranked results of a scan, drawn as if being written row by row; hover a row for its detail. */
+/** Ranked results of a scan: the simulator's in dev. In real mode the run drives the scan phase only. */
 export function ScanResults() {
+  const real = useRealMode();
+  useLiveScanPhase(real);
+  return real ? null : <SimScanResults />;
+}
+
+/** Ranked results of a scan, drawn as if being written row by row; hover a row for its detail. */
+function SimScanResults() {
   const scan = useOps((s) => s.scan);
   const tab = useOps((s) => s.tab);
   const events = useOps((s) => s.events);
@@ -521,5 +553,206 @@ export function UrgencyOverlay() {
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+/* ------------------------------------------------------------------ real mode: scans.startMine, getMine, myQueue */
+
+// Wiring map §7.2. Run scan starts the caller's fleet scan; ScanSync (components/live/sync) puts the run in
+// useLive.scan. While it runs it drives the same scan phase as the simulator (sweep, camera); when a run this
+// screen watched finishes, the results list the caller's queue as the backend ranked it.
+
+/** The run while it is queued or running, else null. */
+const pendingRun = (r: ScanRun | null | undefined) => (r && (r.status === "queued" || r.status === "running") ? r : null);
+const plural = (n: number, word: string) => `${n.toLocaleString("en-US")} ${word}${n === 1 ? "" : "s"}`;
+const windowHours = (r: ScanRun) => Math.round((r.toMs - r.fromMs) / 3600_000);
+
+/** 950 / 112k / 1.2M: counters that fit the fleet panel. */
+function fmtCount(n: number) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e4) return `${Math.round(n / 1e3)}k`;
+  return n.toLocaleString("en-US");
+}
+
+const PHASE: Record<ScanRun["phase"], string> = {
+  queued: "Scan queued",
+  loading: "Loading the catalog",
+  screening: "Screening",
+  matching_sources: "Matching sources",
+  publishing: "Publishing results",
+  done: "Scan complete",
+  failed: "Scan failed",
+};
+
+function phaseLabel(r: ScanRun) {
+  const c = r.counts;
+  return r.phase === "screening" ? `Screening ${c.primariesCompleted} of ${plural(c.primaryObjects, "satellite")}` : PHASE[r.phase];
+}
+
+/** Run scan in real mode: one requestId per click; the run it returns is the one ScanSync follows. */
+function useLiveScan() {
+  const scanId = useLive((s) => s.scanId);
+  const scan = useLive((s) => s.scan);
+  const syncError = useLive((s) => s.errors.scan);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  // RATE_LIMITED and the like are advice for now, not a lasting state: they go once the 30 s wait is over
+  useEffect(() => {
+    if (!startError) return;
+    const t = setTimeout(() => setStartError(null), 30_000);
+    return () => clearTimeout(t);
+  }, [startError]);
+
+  const start = async () => {
+    setStarting(true);
+    setStartError(null);
+    try {
+      const { scanId: id } = await mutate(scanStartRef, { requestId: crypto.randomUUID() });
+      const s = useLive.getState();
+      if (s.scanId !== id) {
+        // a reused run that is already on screen keeps its data; any other starts empty
+        useLive.setState({ scanId: id, ...(s.scan?.scanId === id ? {} : { scan: undefined }) });
+        setLiveError("scan", null);
+      }
+    } catch (e) {
+      const b = backendError(e);
+      setStartError(b.code === "UNKNOWN" ? "The scan could not start. Try again." : b.message);
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  return {
+    scan,
+    // from the click until getMine answers for the new run
+    waiting: starting || (scanId !== null && scan === undefined && !syncError),
+    running: pendingRun(scan),
+    error: startError ?? syncError ?? null,
+    start,
+  };
+}
+
+/**
+ * The backend run drives the scan phase the sweep, the camera (Director) and the results read, as runScan does in
+ * dev. The results open when a run this screen saw pending completes, never for an old run found on load.
+ */
+function useLiveScanPhase(real: boolean) {
+  useEffect(() => {
+    if (!real) return;
+    const apply = (scan: ScanRun | null | undefined, failed: boolean, prev: ScanRun | null | undefined) => {
+      // loading: keep what is on screen until the run answers
+      if (scan === undefined && !failed) return;
+      const running = !failed && !!pendingRun(scan);
+      const finished = !failed && scan?.status === "completed" && pendingRun(prev)?.scanId === scan.scanId;
+      const ops = useOps.getState();
+      const phase = running ? "scanning" : finished ? "results" : ops.scan.phase === "scanning" ? "idle" : ops.scan.phase;
+      if (ops.scanning !== running || ops.scan.phase !== phase) useOps.setState({ scanning: running, scan: { phase, ids: [], stats: null } });
+    };
+    const now = useLive.getState();
+    apply(now.scan, !!now.errors.scan, undefined);
+    const unsub = useLive.subscribe((s, p) => {
+      if (s.scan !== p.scan || s.errors.scan !== p.errors.scan) apply(s.scan, !!s.errors.scan, p.scan);
+    });
+    return () => {
+      unsub();
+      useOps.setState({ scanning: false, scan: { phase: "idle", ids: [], stats: null } });
+    };
+  }, [real]);
+}
+
+/** Under Run scan: the run's progress, then how it ended, or why it could not start. */
+function LiveScanStatus({ scan, error }: { scan: ScanRun | null | undefined; error: string | null }) {
+  const now = useNow(30_000);
+  const running = pendingRun(scan);
+  let view: { key: string; node: ReactNode } | null = null;
+  if (error) view = { key: "error", node: <StatusLine icon={<TriangleAlert size={11} className="text-orange" />}>{error}</StatusLine> };
+  else if (running) view = { key: "running", node: <LiveScanProgress scan={running} /> };
+  else if (scan?.status === "failed")
+    view = { key: "failed", node: <StatusLine icon={<TriangleAlert size={11} className="text-red" />}>Scan failed · {scan.error?.message ?? "No reason was given."}</StatusLine> };
+  else if (scan?.status === "completed") view = { key: "done", node: <LastScanLine scan={scan} now={now} /> };
+  return (
+    <AnimatePresence initial={false} mode="wait">
+      {view && (
+        <motion.div
+          key={view.key}
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: "auto", opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="overflow-hidden"
+        >
+          {view.node}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function StatusLine({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <div className="mt-2 flex items-start gap-2 text-[10.5px] leading-[1.45] text-fg-2">
+      <span className="mt-[2px] shrink-0">{icon}</span>
+      <span className="min-w-0 break-words">{children}</span>
+    </div>
+  );
+}
+
+/** Measured progress from the orbit service; an indeterminate bar while it has no fraction yet. */
+function LiveScanProgress({ scan }: { scan: ScanRun }) {
+  const c = scan.counts;
+  const pct = scan.progress === null ? null : Math.round(Math.min(Math.max(scan.progress, 0), 1) * 100);
+  const early = scan.phase === "queued" || scan.phase === "loading";
+  return (
+    <div className="mt-2">
+      <div
+        className="h-[2px] overflow-hidden rounded-full bg-white/[0.08]"
+        role="progressbar"
+        aria-label="Scan progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct ?? undefined}
+      >
+        {pct === null ? (
+          <motion.div
+            className="h-full w-1/3 rounded-full bg-blue"
+            initial={{ x: "-100%" }}
+            animate={{ x: "300%" }}
+            transition={{ duration: 1.6, ease: "easeInOut", repeat: Infinity }}
+          />
+        ) : (
+          <motion.div className="h-full rounded-full bg-blue" initial={false} animate={{ width: `${Math.max(pct, 3)}%` }} transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }} />
+        )}
+      </div>
+      <div className="mono tnum mt-1.5 flex items-center gap-2 text-[10px] text-muted">
+        <span className="min-w-0 truncate">
+          {early ? `${plural(c.primaryObjects, "satellite")} · next ${windowHours(scan)} h` : `${fmtCount(c.pairsChecked)} pairs checked · ${c.eventsFound} found`}
+        </span>
+        {pct !== null && <span className="ml-auto shrink-0 text-fg-2">{pct}%</span>}
+      </div>
+    </div>
+  );
+}
+
+function LastScanLine({ scan, now }: { scan: ScanRun; now: number }) {
+  const at = scan.finishedAt ?? scan.updatedAt;
+  const partial = !scan.coverage.complete;
+  return (
+    <div className="mt-2 flex items-center gap-2 text-[10.5px] text-muted">
+      {partial ? <TriangleAlert size={11} className="shrink-0 text-amber" /> : <Clock size={11} className="shrink-0" />}
+      <span className="min-w-0 truncate">
+        {partial ? <span className="text-amber">Partial</span> : "Scanned"}
+        {now > 0 && ` ${partial ? "· " : ""}${fmtAge(now - at)}`} · <span className="text-fg-2">{scan.counts.eventsFound}</span> found
+      </span>
+      <button
+        className="ml-auto flex shrink-0 items-center gap-1 text-fg-2 hover:text-white"
+        onClick={() => {
+          sfx.click();
+          useOps.setState((s) => ({ scan: { ...s.scan, phase: "results" } }));
+        }}
+      >
+        <ListChecks size={11} /> Show
+      </button>
+    </div>
   );
 }
