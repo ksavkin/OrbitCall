@@ -145,6 +145,21 @@ If the release images are not in the registry, build them on the host with the s
 A running or healthy container does not prove provider access or numerical readiness. Run one real screening job
 through Convex and join one LiveKit room with speech in each language before calling the host ready.
 
+The internal `ops:checkOrbit` action checks readiness from the deployed Convex runtime and rejects the wrong
+snapshot. It can also read and validate an existing screening job through the production service credential:
+
+```sh
+npx convex run ops:checkOrbit '{"snapshotId":"gp-20261024T2134Z"}' --prod
+npx convex run ops:checkOrbit '{"snapshotId":"gp-20261024T2134Z","screen":{"jobId":"<job-id>","scanId":"<scan-id>","evidenceVersion":"<evidence-version>"}}' --prod
+```
+
+This check does not start a scan or write application data. Its output contains readiness, counts, coverage,
+runtime and a sanitized job error; it never returns credentials or the full encounter list. A health-only result
+does not establish that the service token works; include an existing job to check the authenticated path.
+
+The current hackathon host, completed scan and voice evidence, and remaining website rehearsal are recorded in
+[demo-status.md](demo-status.md).
+
 ## Assumed names, confirm with the service code
 
 These were chosen here because the roadmap does not name them. Rename them in this folder if the services use
