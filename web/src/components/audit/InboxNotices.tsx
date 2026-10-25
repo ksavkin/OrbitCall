@@ -47,11 +47,13 @@ const STATUS: Record<EventStatus, { label: string; color: string }> = {
   no_action_needed: { label: "No action needed", color: "var(--muted)" },
 };
 
-const MISSING: Record<string, string> = { pc: "probability", "pc.epochUtc": "probability epoch", spread: "source spread", room: "room" };
+const MISSING: Record<string, string> = { pc: "probability", "pc.epochUtc": "probability epoch", room: "room" };
 
 /** `missing[]` in words (INBOX-3): "owner:B" → "side B owner". An unknown key is shown as it is, never dropped. */
 function missingText(keys: string[]): string[] {
   return keys
+    // spread is never computed in Phase 1 (convex/inbox.ts:144): on every row it would say nothing
+    .filter((k) => k !== "spread")
     .filter((k) => !(k === "pc.epochUtc" && keys.includes("pc")))
     .map((k) => {
       const [field, side] = k.split(":");
