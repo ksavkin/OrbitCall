@@ -50,7 +50,8 @@ export interface HostOutput {
 
 export type HostCandidate = HostContext["events"][number]["candidates"][number];
 
-export const MAX_EVENTS = 10;
+// Rooms have no operator cap: every linked pair event must fit, e.g. four assigned spacecraft for each of six companies.
+export const MAX_EVENTS = 24;
 export const MAX_MESSAGES = 100;
 export const MAX_MESSAGE_TEXT = 2000;
 const MAX_ITEMS = 6;

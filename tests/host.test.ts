@@ -3,7 +3,7 @@ import type { Infer } from "convex/values";
 import { internal } from "../convex/_generated/api";
 import { callGemini } from "../convex/coordinationHost";
 import {
-  checkHostOutput, hostPrompt, hostResponseSchema, validateHostContext,
+  checkHostOutput, hostPrompt, hostResponseSchema, validateHostContext, MAX_EVENTS,
   type AgentSpan, type HostContext, type HostOutput,
   agentSpanValidator, hostContextValidator, hostOutputValidator,
 } from "../convex/lib/host";
@@ -88,6 +88,25 @@ describe("Coordination Host context and prompt", () => {
     expect(codeOf(() => validateHostContext(stranger))).toBe("INVALID_INPUT");
     const duplicate = { ...hostContext, messages: [hostContext.messages[0], hostContext.messages[0]] };
     expect(codeOf(() => validateHostContext(duplicate))).toBe("INVALID_INPUT");
+  });
+
+  it("accepts every linked event of a room with six companies, up to MAX_EVENTS", () => {
+    const companies = ["co-a", "co-b", "co-c", "co-d", "co-e", "co-f"];
+    const room = (count: number): HostContext => ({
+      ...hostContext,
+      members: companies.map(companyId => ({ companyId, language: "en" as const })),
+      events: Array.from({ length: count }, (_, i) => ({
+        ...hostContext.events[0], eventId: `evt-${i}`, objectAId: `${40000 + i}`, objectBId: `${50000 + i}`,
+        candidates: hostContext.events[0].candidates.map(c => ({ ...c, candidateId: `${c.candidateId}-${i}` })),
+        feasibility: [], approvals: [],
+      })),
+    });
+    expect(MAX_EVENTS).toBe(24);
+    expect(codeOf(() => validateHostContext(room(MAX_EVENTS)))).toBe("NO_ERROR");
+    expect(codeOf(() => validateHostContext(room(MAX_EVENTS + 1)))).toBe("INVALID_INPUT");
+    const summaries = room(MAX_EVENTS).events.map(e => ({ eventId: e.eventId, text: "co-a is checking.", messageIds: [] }));
+    expect(checkHostOutput(raw({ ...output, requestedRevisions: [], clarifications: [], summaries }), room(MAX_EVENTS)).summaries)
+      .toHaveLength(MAX_EVENTS);
   });
 
   it("publishes a JSON schema that closes every object", () => {
