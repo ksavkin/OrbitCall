@@ -112,6 +112,28 @@ describe("mapCandidates", () => {
     expect(text).not.toContain(String(advocateEvent.pc.value));
     expect(text.toLowerCase()).not.toMatch(/\bpc\b|probability/);
   });
+  it("shows minutes for burns under an hour before closest approach", () => {
+    const [card] = mapCandidates(response([maneuver({ burnTimeUtc: at(0.75) })]), context());
+    expect(card.label).toBe("Move SIM-1001 prograde 0.05 m/s, 45 min before closest approach");
+  });
+  it("rounds delta-v for display only", () => {
+    const [card] = mapCandidates(response([maneuver({ deltaVMs: 0.0512345678 })]), context());
+    expect(card.label).toBe("Move SIM-1001 prograde 0.0512 m/s, 6 h before closest approach");
+    expect(card.deltaVMs).toBe(0.0512345678);
+    expect(card.candidateId).toBe(stableCandidateId(maneuver({ deltaVMs: 0.0512345678 })));
+    expect(card.candidateId).not.toBe(stableCandidateId(maneuver({ deltaVMs: 0.0512 })));
+  });
+  it("shortens labels that would exceed 80 characters", () => {
+    const withObject = (objectId: string): [CardContext, Item] => [
+      context({ facts: { ...advocateEvent, objectA: { ...advocateEvent.objectA, objectId } } }), maneuver({ movingObjectId: objectId }),
+    ];
+    const [mediumContext, medium] = withObject("SIM-" + "1".repeat(36));
+    expect(mapCandidates(response([medium]), mediumContext)[0].label).toBe(`Move SIM-${"1".repeat(36)} prograde 0.05 m/s`);
+    const [longContext, long] = withObject("SIM-" + "1".repeat(90));
+    const [card] = mapCandidates(response([long]), longContext);
+    expect(card.label).toHaveLength(80);
+    expect(card.label.startsWith("Move SIM-111")).toBe(true);
+  });
   it("drops burns at or before now and never pads to four", () => {
     const cards = mapCandidates(response([
       maneuver({ burnTimeUtc: at(16) }), maneuver({ burnTimeUtc: new Date(FIXTURE_NOW).toISOString() }), maneuver(),

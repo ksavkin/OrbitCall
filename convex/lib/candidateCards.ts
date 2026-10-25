@@ -105,9 +105,12 @@ function latestRevision(previous: StoredCandidate[], candidateId: string) {
 
 function label(c: OrbitCandidatesResponse["candidates"][number], tcaUtc: string): string {
   if (c.kind === "wait") return "Wait for update";
-  const hours = Math.round((Date.parse(tcaUtc) - Date.parse(c.burnTimeUtc!)) / 360_000) / 10;
-  const move = `Move ${c.movingObjectId} ${c.direction} ${c.deltaVMs} m/s`;
-  const full = `${move}, ${hours} h before closest approach`;
+  const leadMs = Date.parse(tcaUtc) - Date.parse(c.burnTimeUtc!);
+  const minutes = Math.round(leadMs / 60_000);
+  const lead = minutes < 60 ? `${minutes} min` : `${Math.round(leadMs / 360_000) / 10} h`;
+  const deltaV = c.deltaVMs === null ? null : Number(c.deltaVMs.toPrecision(3));
+  const move = `Move ${c.movingObjectId} ${c.direction} ${deltaV} m/s`;
+  const full = `${move}, ${lead} before closest approach`;
   return (full.length <= 80 ? full : move).slice(0, 80);
 }
 
