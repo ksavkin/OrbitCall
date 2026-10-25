@@ -73,15 +73,36 @@ export interface TigerClientConfig {
   user: string;
   password: string;
   database: string;
-  ssl: { rejectUnauthorized: true } | false;
+  // Certificate verification is always on. `ca` pins the issuing CA when the server's chain is not in the system
+  // store: Tiger Cloud signs free services with its own CA (ca.timescale.com), so TIGER_DATABASE_CA carries that
+  // certificate, as PEM or as base64 of the PEM. Verification is then against that CA alone.
+  ssl: { rejectUnauthorized: true; ca?: string } | false;
   connectionTimeoutMillis: number;
   query_timeout: number;
 }
 
 const notConfigured = (message: string) => new AnalystError("HISTORY_NOT_CONFIGURED", message);
 const LOOPBACK = ["localhost", "127.0.0.1", "::1"];
+const PEM_CERTIFICATE = /^-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----\s*$/;
 
-export function tigerClientConfig(connectionString: string | undefined = process.env.TIGER_DATABASE_URL): TigerClientConfig {
+function pinnedCa(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  let pem = value.trim();
+  if (!pem.startsWith("-----BEGIN")) {
+    try {
+      pem = Buffer.from(pem, "base64").toString("utf8").trim();
+    } catch {
+      throw notConfigured("TIGER_DATABASE_CA must be a PEM certificate or its base64.");
+    }
+  }
+  if (!PEM_CERTIFICATE.test(pem)) throw notConfigured("TIGER_DATABASE_CA must be a PEM certificate or its base64.");
+  return pem;
+}
+
+export function tigerClientConfig(
+  connectionString: string | undefined = process.env.TIGER_DATABASE_URL,
+  caCertificate: string | undefined = process.env.TIGER_DATABASE_CA,
+): TigerClientConfig {
   if (!connectionString) throw notConfigured("Set TIGER_DATABASE_URL in this Convex deployment.");
   let url: URL;
   try {
@@ -104,7 +125,8 @@ export function tigerClientConfig(connectionString: string | undefined = process
   const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
   const loopback = LOOPBACK.includes(host);
   let ssl: TigerClientConfig["ssl"];
-  if (["require", "verify-ca", "verify-full"].includes(sslmode)) ssl = { rejectUnauthorized: true };
+  const ca = pinnedCa(caCertificate);
+  if (["require", "verify-ca", "verify-full"].includes(sslmode)) ssl = ca === undefined ? { rejectUnauthorized: true } : { rejectUnauthorized: true, ca };
   else if (sslmode === "disable" && loopback) ssl = false;
   else throw notConfigured("TIGER_DATABASE_URL must use TLS: sslmode=require or verify-full (disable is allowed on localhost only).");
   return {

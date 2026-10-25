@@ -71,8 +71,11 @@ async function failure(promise: Promise<unknown>): Promise<{ code: string; messa
   return { code, message };
 }
 
-beforeEach(() => { vi.stubEnv("TIGER_DATABASE_URL", URL_WITH_SECRET); });
+beforeEach(() => { vi.stubEnv("TIGER_DATABASE_URL", URL_WITH_SECRET); vi.stubEnv("TIGER_DATABASE_CA", ""); });
 afterEach(() => { vi.unstubAllEnvs(); });
+
+// Not a real CA: a PEM-shaped placeholder is enough to check that the value is passed through verbatim.
+const CA_PEM = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUTESTtestTESTtestTESTtestTESTtest=\n-----END CERTIFICATE-----";
 
 describe("Tiger client configuration", () => {
   it("builds the exact pg.Client object from TIGER_DATABASE_URL, with TLS verification on and no connection string", () => {
@@ -94,6 +97,25 @@ describe("Tiger client configuration", () => {
     expect(tigerClientConfig("postgres://dev:dev@localhost:5432/orbitcall?sslmode=disable").ssl).toBe(false);
     expect(tigerClientConfig("postgres://dev:dev@127.0.0.1/orbitcall?sslmode=disable").ssl).toBe(false);
     expect(tigerClientConfig("postgres://dev:dev@[::1]/orbitcall?sslmode=disable")).toMatchObject({ host: "::1", ssl: false });
+  });
+
+  it("pins the issuing CA from TIGER_DATABASE_CA, as PEM or base64, and keeps verification on", () => {
+    expect(tigerClientConfig(URL_WITH_SECRET, CA_PEM).ssl).toEqual({ rejectUnauthorized: true, ca: CA_PEM });
+    expect(tigerClientConfig(URL_WITH_SECRET, `${CA_PEM}\n`).ssl).toEqual({ rejectUnauthorized: true, ca: CA_PEM });
+    expect(tigerClientConfig(URL_WITH_SECRET, Buffer.from(CA_PEM).toString("base64")).ssl).toEqual({ rejectUnauthorized: true, ca: CA_PEM });
+    vi.stubEnv("TIGER_DATABASE_CA", CA_PEM);
+    expect(tigerClientConfig().ssl).toEqual({ rejectUnauthorized: true, ca: CA_PEM });
+    expect(tigerClientConfig("postgres://dev:dev@localhost/orbitcall?sslmode=disable", CA_PEM).ssl).toBe(false);
+  });
+
+  it("ignores an empty CA and rejects one that is not a certificate", () => {
+    expect(tigerClientConfig(URL_WITH_SECRET, "").ssl).toEqual({ rejectUnauthorized: true });
+    expect(tigerClientConfig(URL_WITH_SECRET, "  \n").ssl).toEqual({ rejectUnauthorized: true });
+    for (const bad of ["not a certificate", Buffer.from("not a certificate").toString("base64"), "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"]) {
+      const error = (() => { try { tigerClientConfig(URL_WITH_SECRET, bad); return null; } catch (error) { return error; } })();
+      expect(safeTigerFailure(error).code).toBe("HISTORY_NOT_CONFIGURED");
+      expect(safeTigerFailure(error).message).toContain("TIGER_DATABASE_CA");
+    }
   });
 
   it("hands pg a bare IPv6 address, not the bracketed URL form", () => {
