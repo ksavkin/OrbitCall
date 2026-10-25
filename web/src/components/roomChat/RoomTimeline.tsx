@@ -81,7 +81,8 @@ export function RoomTimeline({
 export function withValues(text: string, values: CallMessage["values"], onLight = false) {
   if (!values.length) return text;
   const parts: ReactNode[] = [];
-  let rest = text;
+  // a placeholder left in the text ("⟦v1⟧") reads as its exact value
+  let rest = values.reduce((t, v) => t.replaceAll(v.placeholder, v.text), text);
   let k = 0;
   for (const v of values) {
     const i = rest.indexOf(v.text);
@@ -115,7 +116,8 @@ function Refs({ m }: { m: CallMessage }) {
   );
 }
 
-export function Message({ m, myUserId }: { m: CallMessage; myUserId: string | null }) {
+/** `refs: false` hides the event chip, for a backend event id that reads as noise. */
+export function Message({ m, myUserId, refs = true }: { m: CallMessage; myUserId: string | null; refs?: boolean }) {
   const [original, setOriginal] = useState(false);
   const mine = m.author.kind === "human" && m.author.userId === myUserId;
   const who = m.author.kind === "human" ? (mine ? "You" : m.author.name) : m.author.kind === "agent" ? m.author.role : "System";
@@ -138,7 +140,7 @@ export function Message({ m, myUserId }: { m: CallMessage; myUserId: string | nu
           <span className="font-medium text-neutral-300">{who}</span>
           <span>· {hhmm(Date.parse(m.at))} UTC</span>
           {!mine && m.originalLang && <span>· {m.kind === "voice" ? "spoke" : "wrote"} {LANG_NAME[m.originalLang]}</span>}
-          <Refs m={m} />
+          {refs && <Refs m={m} />}
         </div>
         <div
           className={`inline-block rounded-[16px] px-4 py-2.5 text-left text-[15px] leading-[1.55] ${mine ? "rounded-tr-[4px] bg-white text-black" : "rounded-tl-[4px] bg-white/[0.06] text-neutral-100"}`}
