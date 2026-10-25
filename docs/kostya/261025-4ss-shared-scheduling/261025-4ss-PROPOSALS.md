@@ -1,16 +1,16 @@
 # Proposed changes for shared-mover scheduling
 
-Status: proposed; the doc edits below are not applied yet. The issue #6 text and the notes for the trajectory-plans branch and Andrew are still for the team to act on.
+Status: the doc edits below are applied on `kostya/r4-shared-scheduling`. The issue #6 text and the notes for the trajectory-plans branch and Andrew are still for the team to act on.
 
 The backend for this is on `kostya/r4-shared-scheduling` (summary: `261025-4ss-SUMMARY.md`).
 
-## Proposed for docs/specification.md
+## Applied in docs/specification.md
 
 1. **§4.1, last Maneuver Scheduler bullet.** Replaces "Until trajectory plans are connected, scheduling covers single-event intents only; a shared mover fails `SHARED_TRAJECTORY_REQUIRED`." with: "A shared mover is scheduled through its trajectory plan: one intent per plan version, every affected incident's approvals on that version re-checked, one re-screen per partner encounter and one schedule write. Without a covering plan it fails `SHARED_TRAJECTORY_REQUIRED`."
 
 The approve steps, "Shared maneuvers" and "Resets" are not touched; the trajectory-plans branch edits them.
 
-## Proposed for docs/functionality.md
+## Applied in docs/functionality.md
 
 1. **EXE-2.** Adds: "For a shared maneuver, every affected partner encounter is re-screened."
 
