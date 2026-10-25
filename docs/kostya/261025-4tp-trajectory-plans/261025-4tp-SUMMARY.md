@@ -67,7 +67,7 @@ key-files:
 
 The concurrency test interleaves calls; convex-test runs mutations one at a time, so it shows that repeated and interleaved approvals stay idempotent on one version, not OCC retries themselves. Without the hook 4 of the tests fail, and without the binding 6 fail.
 
-`npm run check`: 50 files and 1328 tests passed. The origin/main baseline was 49 files and 1317 tests.
+`npm run check`: 50 files and 1328 tests passed on the original base (49 files, 1317 tests). After merging main with the shared scheduling work (#74), 58 files and 1505 tests passed.
 
 ## Deviations
 
@@ -81,7 +81,10 @@ The concurrency test interleaves calls; convex-test runs mutations one at a time
 ## Known limits
 
 - **No app path links different pairs into one room yet.** `rooms.startWorkflow` links only rows of the same pair, and `providerReadiness` a single event. Plans therefore appear only once a writer (the demo launch, for example) links the pairs of a situation into one room, the same rule `advocates.linkedMovers` uses.
-- **The scheduler is not connected yet.** `maneuvers.ts` still refuses plan-bound approvals with `SHARED_TRAJECTORY_REQUIRED`. That check runs for every required side, so an affected event that selected the wait card is now refused too. Before, its approvals were unbound and it went to `monitoring`. Binding it follows the spec, because its geometry uses the moved trajectory. The scheduler also decides "shared" by a burn-time window across all events, not by room membership, so an event outside the room can trigger that error with no plan covering it.
+- **The scheduler reads plans on its own.** Since #74, `maneuvers.ts` reads the plan rows written here and checks that every approval is bound to the plan's version; it does not call `authorized`.
+  - An affected event that selected the wait card has no plan of its own in the scheduler, so its plan-bound approvals are refused with `SHARED_TRAJECTORY_REQUIRED`. Before, its approvals were unbound and it went to `monitoring`. Binding it follows the spec, because its geometry uses the moved trajectory.
+  - A refused re-screen marks the plan `review_required` there directly, without the event resets of `trajectoryPlans.refuse`.
+  - The scheduler decides "shared" by a burn-time window across all events, not by room membership, so an event outside the room can trigger that error with no plan covering it.
 - **One plan slot per approval.** An event whose two objects both have shared plans binds to the plan of its selected card's mover, or, with a wait card, to the first. The other plan cannot be authorized while that event is in it. The frozen schema has one plan slot per approval row.
 - **A later change to a scheduled plan.** A scheduled version is superseded like any other, and its write and the affected events are flagged for review. Nothing reopens it: the decision stays with the agents' republication.
 - **Linking an event into a room** does not write a selection. The plan follows on the next selection change or approve in an affected event, or through `internal.trajectoryPlans.sync({ eventId })`.
