@@ -46,6 +46,17 @@ async function seed() {
 }
 const provision = (t: Backend, args: ReturnType<typeof north>) => t.mutation(internal.operators.provision, args);
 const version = async (t: Backend, name = "ana") => (await as(t, name).query(me, {})).assignmentVersion;
+// A row written before assignmentVersion existed: Ana of North with 48211 active and no version.
+async function legacyNorth() {
+  const t = backend();
+  await t.run(async ctx => {
+    for (const id of ["48211", "48212"]) await ctx.db.insert("spaceObjects", catalogObject(id));
+    const companyId = await ctx.db.insert("companies", { key: "north", name: "North Orbital", simulated: false });
+    const userId = await ctx.db.insert("users", { tokenIdentifier: token("ana"), companyId, role: "operator" });
+    await ctx.db.insert("fleetAssignments", { userId, objectId: "48211", active: true });
+  });
+  return t;
+}
 
 describe("session.me", () => {
   it("rejects a caller without a sign-in, and a login that was never provisioned", async () => {
@@ -117,16 +128,42 @@ describe("assignment version", () => {
     expect(await as(t, "ana").query(me, {})).toMatchObject({ language: "zh", assignmentVersion: 1 });
   });
 
-  it("initializes a legacy user to 1 the first time provisioning sees it", async () => {
-    const t = backend();
-    await t.run(async ctx => {
-      await ctx.db.insert("spaceObjects", catalogObject("48211"));
-      const companyId = await ctx.db.insert("companies", { key: "north", name: "North Orbital", simulated: false });
-      const userId = await ctx.db.insert("users", { tokenIdentifier: token("ana"), companyId, role: "operator" });
-      await ctx.db.insert("fleetAssignments", { userId, objectId: "48211", active: true });
-    });
+  it("keeps a legacy user at 1 when its first provisioning leaves the set unchanged", async () => {
+    const t = await legacyNorth();
     await provision(t, { ...north([ana(["48211"])]), objectIds: ["48211"] });
     expect(await version(t)).toBe(1);
+  });
+
+  it("moves a legacy user to 2 when its first provisioning changes the set", async () => {
+    const t = await legacyNorth();
+    await provision(t, { ...north([ana(["48211", "48212"])]), objectIds: ["48211", "48212"] });
+    expect(await version(t)).toBe(2);
+  });
+
+  it("backfills legacy rows to 1 once, and leaves versioned rows alone", async () => {
+    const t = await legacyNorth();
+    await provision(t, { key: "south", name: "South Space", simulated: true, objectIds: [],
+      members: [{ tokenIdentifier: token("bo"), role: "operator", assignedObjectIds: [] }] });
+    await t.run(async ctx => {
+      const bo = (await ctx.db.query("users").withIndex("by_token_identifier", q => q.eq("tokenIdentifier", token("bo"))).unique())!;
+      await ctx.db.patch(bo._id, { assignmentVersion: 4 });
+    });
+    expect(await t.mutation(internal.operators.backfillAssignmentVersions, {})).toEqual({ updated: 1 });
+    expect(await t.mutation(internal.operators.backfillAssignmentVersions, {})).toEqual({ updated: 0 });
+    expect(await version(t)).toBe(1);
+    expect(await version(t, "bo")).toBe(4);
+    // After the backfill, an unchanged rerun keeps 1 and a change moves to 2, as for any other user.
+    await provision(t, { ...north([ana(["48211"])]), objectIds: ["48211", "48212"] });
+    expect(await version(t)).toBe(1);
+    await provision(t, { ...north([ana(["48211", "48212"])]), objectIds: ["48211", "48212"] });
+    expect(await version(t)).toBe(2);
+  });
+
+  it("starts a user created by fixture seeding at 1", async () => {
+    const { t, northId } = await seed();
+    const userId = await t.run(ctx => ctx.db.insert("users", { tokenIdentifier: token("fx"), companyId: northId, role: "operator" }));
+    await t.run(ctx => ensureAssignment(ctx, userId, "48211", true));
+    expect(await version(t, "fx")).toBe(1);
   });
 
   it("fixture seeding adds an assignment without reactivating a revoked one", async () => {

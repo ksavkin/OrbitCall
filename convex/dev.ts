@@ -41,7 +41,8 @@ export const prepareAdvocateFixture = internalMutation({
       const user = await ctx.db.query("users").withIndex("by_token_identifier", q => q.eq("tokenIdentifier", tokenIdentifier)).unique();
       if (user && user.companyId !== companyId) throw new ConvexError({ code: "INVALID_STATE", message: "Fixture user conflicts with existing data." });
       const userId = user?._id ?? await ctx.db.insert("users", { tokenIdentifier, companyId, role: "operator" });
-      await ensureAssignment(ctx, userId, policy.objectId);
+      const created = !user;
+      await ensureAssignment(ctx, userId, policy.objectId, created);
     }
     const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
     return { eventId, version: set?.version ?? null };

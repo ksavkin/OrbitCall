@@ -1,6 +1,6 @@
 import { internalMutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { contactPatch, lang, profileText, setActiveAssignments, userRole } from "./lib/accounts";
+import { contactPatch, lang, LEGACY_ASSIGNMENT_VERSION, profileText, setActiveAssignments, userRole } from "./lib/accounts";
 
 // Trusted account/ownership setup, not registration. No browser may claim a company or satellite.
 // Optional profile and settings fields: omitted keeps the stored value; provided overwrites it.
@@ -48,8 +48,25 @@ export const provision = internalMutation({
       };
       if (user) await ctx.db.patch(user._id, profile);
       const userId = user?._id ?? await ctx.db.insert("users", { tokenIdentifier: member.tokenIdentifier, companyId, ...profile });
-      await setActiveAssignments(ctx, (await ctx.db.get(userId))!, member.assignedObjectIds);
+      await setActiveAssignments(ctx, (await ctx.db.get(userId))!, member.assignedObjectIds, { created: !user });
     }
     return { companyId };
+  },
+});
+
+// One-off migration for rows created before users.assignmentVersion existed. Run once per deployment
+// after this schema lands: `npx convex run operators:backfillAssignmentVersions [--prod]`.
+// Idempotent: rows that already have a version are left alone, so a rerun updates nothing.
+export const backfillAssignmentVersions = internalMutation({
+  args: {},
+  returns: v.object({ updated: v.number() }),
+  handler: async ctx => {
+    let updated = 0;
+    for await (const user of ctx.db.query("users")) {
+      if (user.assignmentVersion !== undefined) continue;
+      await ctx.db.patch(user._id, { assignmentVersion: LEGACY_ASSIGNMENT_VERSION });
+      updated++;
+    }
+    return { updated };
   },
 });
