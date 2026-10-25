@@ -81,6 +81,13 @@ describe("Advocate memory integration", () => {
     expect(view.runs.A).toMatchObject({ memory: { status: "used", sourceEventIds: [previousId] } });
     expect(view.runs.B).toMatchObject({ memory: { status: "none" } });
     expect(JSON.stringify(view)).not.toContain(preference);
+    expect(JSON.stringify(view)).not.toContain("memorySources");
+    const run = await t.run(ctx => ctx.db.query("agentRuns").withIndex("by_event_role_company", q =>
+      q.eq("eventId", eventId).eq("role", "operator_advocate").eq("companyId", companyAId)).first());
+    expect(run!.checkedOutput).not.toContain(preference);
+    expect(JSON.parse(run!.checkedOutput!).memorySources).toEqual([
+      expect.objectContaining({ sourceEventId: previousId, fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) }),
+    ]);
     expect(await t.run(ctx => ctx.db.query("approvals").collect())).toEqual([]);
     expect(await t.run(ctx => ctx.db.query("memoryAssistants").collect())).toHaveLength(2);
     expect(createRunAssistant).toHaveBeenCalledWith({ companyId: companyBId, demoRunId });
@@ -355,6 +362,36 @@ describe("memory provenance and namespace lifecycle", () => {
     expect(await f.t.run(ctx => ctx.db.query("negotiationMessages").collect())).toEqual([]);
     expect(await f.t.run(ctx => ctx.db.query("approvals").collect())).toEqual([]);
     expect((await f.t.run(ctx => ctx.db.query("agentRuns").collect())).every(run => run.status === "superseded")).toBe(true);
+  });
+
+  it.each(["corrected", "revoked"] as const)("supersedes recalled work when its source is %s during Claude, then permits retry", async change => {
+    const f = await setup(), entered = gate(), release = gate();
+    const result = { raw: '{"preferredCandidateId":null}', model: "fixture", usage: { inputTokens: 1, outputTokens: 1 } };
+    vi.mocked(callClaude).mockImplementation(async () => { entered.resolve(); await release.promise; return result; });
+    const pending = f.t.action(internal.agents.advocate.start, { eventId: f.eventId, side: "A" });
+    await entered.promise;
+    expect(JSON.parse(vi.mocked(callClaude).mock.calls[0][0].user).memory).toContain(f.preference);
+    const assignmentId = await f.t.run(async ctx => {
+      const assignment = (await ctx.db.query("fleetAssignments").withIndex("by_user_object", q =>
+        q.eq("userId", f.userId).eq("objectId", policyA.objectId)).unique())!;
+      if (change === "corrected") await ctx.db.patch(f.understoodId, { status: "corrected" });
+      else await ctx.db.patch(assignment._id, { active: false });
+      return assignment._id;
+    });
+    release.resolve(); await pending;
+    const [old] = await f.t.run(ctx => ctx.db.query("agentRuns").collect());
+    expect(old.status).toBe("superseded");
+    expect(await f.t.run(ctx => ctx.db.query("negotiationMessages").collect())).toEqual([]);
+    expect(await f.t.run(ctx => ctx.db.query("approvals").collect())).toEqual([]);
+    expect(await f.t.run(ctx => ctx.db.query("maneuvers").collect())).toEqual([]);
+    if (change === "revoked") await f.t.run(ctx => ctx.db.patch(assignmentId, { active: true }));
+    vi.mocked(callClaude).mockResolvedValue(result);
+    await f.t.withIdentity({ tokenIdentifier: "a" }).mutation(api.advocates.rerun, { eventId: f.eventId });
+    await finish(f.t);
+    const view = await f.t.withIdentity({ tokenIdentifier: "a" }).query(api.advocates.list, { eventId: f.eventId });
+    expect(view.runs.A!.status).toBe("succeeded");
+    expect(view.runs.A!.memory.status).toBe(change === "corrected" ? "none" : "used");
+    expect((await f.t.run(ctx => ctx.db.query("negotiationMessages").collect())).some(message => message.runId === old._id)).toBe(false);
   });
 
   it.each(["create", "write"] as const)("does not automatically repeat uncertain provider %s requests", async failure => {

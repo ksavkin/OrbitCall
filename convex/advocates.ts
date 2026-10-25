@@ -16,7 +16,7 @@ import {
   type PublishInput, type PublishOutcome, type SharedMover, type SkipReason,
 } from "./lib/publishCandidates";
 import type { Side } from "./lib/policies";
-import { buildMemoryItem } from "./lib/advocateMemory";
+import { buildMemoryItem, memorySourceFingerprint } from "./lib/advocateMemory";
 import { countingApprovals, allApproved } from "./lib/approvalState";
 
 async function openDemo(ctx: QueryCtx, event: Doc<"events">) {
@@ -76,6 +76,10 @@ export const finish = internalMutation({
       set.version !== context.candidateVersion || set.evidenceKey !== inputKey(facts) ||
       (policyRow?.revision ?? 0) !== context.policyRevision || (policyRow?._id ?? null) !== context.policyId ||
       advocateKey(set, context.side, context.policyRevision) !== run.inputKey) {
+      await supersede(ctx, runId); return { published: false };
+    }
+    // Source corrections and authority changes can happen while Claude is running without changing orbital inputs.
+    if (!await memorySourcesCurrent(ctx, run)) {
       await supersede(ctx, runId); return { published: false };
     }
     const policy = policyRow?.satellites.find(p => p.objectId === (context.side === "A" ? facts.objectA.objectId : facts.objectB.objectId)) ?? null;
@@ -548,18 +552,47 @@ export const finishMemoryWrite = internalMutation({
 });
 export const noteMemory = internalMutation({
   args: { runId: v.id("agentRuns"), status: v.union(v.literal("used"), v.literal("none"), v.literal("unavailable")),
-    sourceEventIds: v.array(v.id("events")), writeFailed: v.boolean() },
-  handler: async (ctx, { runId, status, sourceEventIds, writeFailed }) => {
+    sources: v.array(v.object({ sourceEventId: v.id("events"), fingerprint: v.string() })), writeFailed: v.boolean() },
+  handler: async (ctx, { runId, status, sources, writeFailed }) => {
     const run = await ctx.db.get(runId);
     if (!run || run.role !== "operator_advocate" || run.status !== "running" || !run.companyId) return false;
     const event = await ctx.db.get(run.eventId);
     if (!event || !await openDemo(ctx, event) || (event.demoRunId && !await memoryParty(ctx, event._id, run.companyId))) { await supersede(ctx, runId); return false; }
-    const allowed: string[] = [];
-    for (const eventId of sourceEventIds.slice(0, 3)) {
-      const source = await ctx.db.get(eventId);
-      if (source?.demoRunId === event.demoRunId && (await outcomeItems(ctx, eventId, run.companyId)).length) allowed.push(eventId);
+    if (sources.length > 3 || (status === "used") !== (sources.length > 0)) { await supersede(ctx, runId); return false; }
+    const pins: MemorySourcePin[] = [];
+    for (const source of sources) {
+      const sourceEvent = await ctx.db.get(source.sourceEventId);
+      const candidates = sourceEvent?.demoRunId === event.demoRunId ? await outcomeItems(ctx, source.sourceEventId, run.companyId) : [];
+      let matched = false;
+      for (const candidate of candidates) {
+        if (await memorySourceFingerprint(candidate.item) !== source.fingerprint) continue;
+        pins.push({ ...source, understoodId: candidate.understoodId, outcomeKey: candidate.outcomeKey });
+        matched = true; break;
+      }
+      // Do not send a quote to Claude if it changed between recall and this atomic reservation.
+      if (!matched) { await supersede(ctx, runId); return false; }
     }
-    await ctx.db.patch(runId, { checkedOutput: JSON.stringify({ memory: sharedMemoryNote(status, allowed, writeFailed) }) });
+    await ctx.db.patch(runId, { checkedOutput: JSON.stringify({ memory: sharedMemoryNote(status, pins.map(pin => pin.sourceEventId), writeFailed), memorySources: pins }) });
     return true;
   },
 });
+
+type MemorySourcePin = { sourceEventId: Id<"events">; understoodId: Id<"understood">; fingerprint: string; outcomeKey: string };
+async function memorySourcesCurrent(ctx: QueryCtx, run: Doc<"agentRuns">): Promise<boolean> {
+  if (!run.checkedOutput) return true; // Legacy/direct completions did not recall memory.
+  try {
+    const stored = JSON.parse(run.checkedOutput);
+    if (stored.memory?.status !== "used") return true;
+    if (!run.companyId || !Array.isArray(stored.memorySources) || !stored.memorySources.length || stored.memorySources.length > 3) return false;
+    const event = await ctx.db.get(run.eventId);
+    for (const pin of stored.memorySources as MemorySourcePin[]) {
+      const sourceEventId = ctx.db.normalizeId("events", pin.sourceEventId);
+      const sourceEvent = sourceEventId && await ctx.db.get(sourceEventId);
+      if (!sourceEvent || sourceEvent.demoRunId !== event?.demoRunId) return false;
+      // outcomeItems rechecks the complete original source/correction chain and the speaker's current authority.
+      const source = (await outcomeItems(ctx, sourceEvent._id, run.companyId)).find(item => item.understoodId === pin.understoodId);
+      if (!source || source.outcomeKey !== pin.outcomeKey || await memorySourceFingerprint(source.item) !== pin.fingerprint) return false;
+    }
+    return true;
+  } catch { return false; }
+}

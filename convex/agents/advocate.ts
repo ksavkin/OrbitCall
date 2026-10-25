@@ -3,7 +3,7 @@
 import { internalAction, type ActionCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
-import { memoryNote, type MemoryNote } from "../lib/advocateMemory";
+import { memoryNote, memorySourceFingerprint, type MemoryNote } from "../lib/advocateMemory";
 import { createRunAssistant, recallMemory, writeMemory, closeRunAssistant } from "../lib/backboard";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
@@ -98,14 +98,14 @@ async function memoryForRun(ctx: ActionCtx, runId: Id<"agentRuns">): Promise<Mem
         // Recheck after external writes, and again after recall: a reset/correction never becomes fresh memory.
         const fresh = await ctx.runQuery(internal.advocates.memoryBatch, { eventId: scope.eventId, companyId: scope.companyId, previous: true });
         if (!fresh) {
-          await ctx.runMutation(internal.advocates.noteMemory, { runId, status: "unavailable", sourceEventIds: [], writeFailed });
+          await ctx.runMutation(internal.advocates.noteMemory, { runId, status: "unavailable", sources: [], writeFailed });
           return null;
         }
         const recalled = await recallMemory(assistant.assistantId, { companyId: scope.companyId, demoRunId: scope.demoRunId,
           query: "Previously stated maneuver timing and operational preferences relevant to this company's next incident.", limit: 3 });
         const current = await ctx.runQuery(internal.advocates.memoryBatch, { eventId: scope.eventId, companyId: scope.companyId, previous: true });
         if (!current) {
-          await ctx.runMutation(internal.advocates.noteMemory, { runId, status: "unavailable", sourceEventIds: [], writeFailed });
+          await ctx.runMutation(internal.advocates.noteMemory, { runId, status: "unavailable", sources: [], writeFailed });
           return null;
         }
         note = memoryNote(recalled.status === "unavailable" ? recalled : { status: "available", entries: recalled.entries.filter(entry =>
@@ -116,7 +116,8 @@ async function memoryForRun(ctx: ActionCtx, runId: Id<"agentRuns">): Promise<Mem
     } catch { note = memoryNote({ status: "unavailable", reason: "Memory unavailable" }, scope.companyId); }
   }
   const published = await ctx.runMutation(internal.advocates.noteMemory, { runId, status: note.status,
-    sourceEventIds: [...new Set(note.quotes.map(item => item.sourceEventId as Id<"events">))], writeFailed });
+    sources: await Promise.all(note.quotes.map(async item => ({ sourceEventId: item.sourceEventId as Id<"events">,
+      fingerprint: await memorySourceFingerprint(item) }))), writeFailed });
   return published ? note : null;
 }
 

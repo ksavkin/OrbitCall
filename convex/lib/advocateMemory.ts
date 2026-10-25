@@ -14,6 +14,13 @@ export interface MemoryNote {
 export interface MemoryItemDraft { companyId: string; demoRunId: string; text: string;
   sourceEventId: string; sourceMessageIds: string[] }
 
+// Bind the exact quote supplied to the model without retaining private text on the run.
+export async function memorySourceFingerprint(source: Pick<MemoryItemDraft, "text" | "sourceEventId" | "sourceMessageIds">): Promise<string> {
+  const material = JSON.stringify([source.sourceEventId, [...source.sourceMessageIds].sort(), source.text]);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(material));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 const MAX_TEXT = 280, MAX_SOURCE_MESSAGES = 20;
 // Source event IDs reach shareable text, so they must be opaque identifiers, never prose.
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_:.-]{0,127}$/;

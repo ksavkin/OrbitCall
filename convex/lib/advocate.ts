@@ -88,7 +88,7 @@ export interface SharedMemoryNote {
   shareable: string;
   writeFailed: boolean;
 }
-// This projection, never the private quotes/prompt, is the only memory data stored on an Advocate run.
+// Only this projection is public. Runs may also retain opaque source fingerprints, never private quotes/prompt.
 export function sharedMemoryNote(status: SharedMemoryNote["status"], sourceEventIds: string[] = [], writeFailed = false): SharedMemoryNote {
   const ids = status === "used" ? [...new Set(sourceEventIds)].filter(id => /^[A-Za-z0-9][A-Za-z0-9_:.-]{0,127}$/.test(id)).slice(0, 3) : [];
   const effective = status === "used" && ids.length === 0 ? "none" : status;

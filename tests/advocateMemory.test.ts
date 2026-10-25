@@ -266,7 +266,7 @@ describe("memory does not approve", () => {
   });
 
   it("exports only the memory API, none of which accepts or returns approval state", () => {
-    expect(Object.keys(memory).sort()).toEqual(["buildMemoryItem", "checkMemoryItem", "memoryNote"]);
+    expect(Object.keys(memory).sort()).toEqual(["buildMemoryItem", "checkMemoryItem", "memoryNote", "memorySourceFingerprint"]);
     const approvalShaped = /approv|authori|select|decision|veto/i;
     const note = memoryNote(available(entry()), "company-a");
     expect(keysDeep(note).filter(k => approvalShaped.test(k))).toEqual([]);
