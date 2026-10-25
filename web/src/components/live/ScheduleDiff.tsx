@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { FileDiff, Hourglass, Loader2, RotateCcw, TriangleAlert } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { diffForSelection, diffState, selectGate, selectionDiff, type DiffState } from "@/lib/backend/decision";
+import { diffForSelection, diffState, selectGate, selectionDiff, selectionFailures, type DiffState } from "@/lib/backend/decision";
 import { useLive, useRealMode } from "@/lib/backend/live";
 import type { ApprovalStatus, EventId, LogEntry, RoomProjection } from "@/lib/backend/types";
 
@@ -30,11 +30,14 @@ export function ScheduleDiff({
   const sel = real && status?.eventId === eventId ? status.selected : null;
   const selKey = sel ? `${sel.proposalId}:${sel.revision}` : null;
   const agreed = !!status?.allRequiredApproved;
-  const failures = attemptFailures(log, status);
-  const inputs = { flags, status, cards, maneuver, log: failures };
+  const inputs = { flags, status, cards, maneuver, log };
   // without a clock diffState never says "slow", so this asks only whether the selection still waits for its diff
   const waiting = !!sel && !agreed && diffState({ ...inputs, now: 0, waitingSince: null }) === "preparing";
   const clock = useWaitClock(selKey, waiting);
+  // the same rows diffState counts, so the failed note names the failure the state is about
+  const failures = selectionFailures(log, status, clock.since)?.filter(
+    (l) => sel && l.proposalId === sel.proposalId && (l.revision === null || l.revision === sel.revision),
+  );
   const state: DiffState = sel ? diffState({ ...inputs, now: clock.now, waitingSince: clock.since }) : "not_needed";
 
   let body: ReactNode = null;
@@ -93,23 +96,6 @@ function useWaitClock(selKey: string | null, waiting: boolean) {
     };
   }, [waiting, selKey]);
   return clock;
-}
-
-/**
- * The schedule_failed rows of the current selection's attempt, newest first. A retry (another plan, then this one) is a
- * new generation of the same revision, so an older failure must not show while the retry prepares. A per-incident row
- * names its generation in `after.intentKey`; a shared plan's key names the plan version instead, which the UI cannot
- * see, so those rows count until a diff arrives.
- */
-function attemptFailures(log: LogEntry[] | undefined, status: ApprovalStatus | undefined): LogEntry[] | undefined {
-  const sel = status?.selected;
-  if (!log || !sel) return log;
-  return log.filter((l) => {
-    if (l.action !== "schedule_failed" || l.proposalId !== sel.proposalId || (l.revision !== null && l.revision !== sel.revision)) return false;
-    const key = l.after?.intentKey;
-    const gen = typeof key === "string" ? /:generation:(\d+)$/.exec(key)?.[1] : undefined;
-    return gen === undefined || Number(gen) === sel.generation;
-  });
 }
 
 /** Selecting the current card again is a no-op on the server, so a retry goes through another plan first. */

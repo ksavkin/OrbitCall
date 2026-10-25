@@ -94,12 +94,14 @@ export function diffState(a: {
 }): DiffState {
   const card = selectedCard(a.status, a.cards);
   if (!card || card.latest.kind === "wait") return "not_needed";
+  // The approve gate keys on the revision's own preview (convex/approvals.ts), which a generation-only reset such as a
+  // veto keeps; the old preview row then reads reviewRequired only because its intent key names the old generation.
+  if (card.latest.schedulePreviewDiff) return "ready";
   const m = diffForSelection(a.maneuver, a.status);
   if (m?.diff) return m.status === "preview" && m.reviewRequired ? "stale" : "ready";
-  if (card.latest.schedulePreviewDiff) return "ready";
   if (a.flags && !a.flags.droid) return "not_needed";
-  const failed = a.log?.some(
-    (l) => l.action === "schedule_failed" && l.proposalId === card.proposalId && (l.revision === null || l.revision === card.latest.revision),
+  const failed = selectionFailures(a.log, a.status, a.waitingSince)?.some(
+    (l) => l.proposalId === card.proposalId && (l.revision === null || l.revision === card.latest.revision),
   );
   if (failed) return "failed";
   if (a.waitingSince !== null && a.now - a.waitingSince > DIFF_SLOW_MS) return "slow";
