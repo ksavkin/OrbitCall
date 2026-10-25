@@ -350,22 +350,14 @@ function CenterWarning({ ev, red, now }: { ev: ConjunctionEvent; red: number; no
       >
         <div className="hazard-stripes h-2.5 w-full" />
         <div className="flex flex-col items-center px-6 pb-5 pt-5 text-center">
-          <span className="relative grid h-16 w-16 place-items-center">
-            <span className="absolute inset-0 rounded-full border-2 border-red" style={{ animation: "ping 1s var(--ease-out) infinite" }} />
-            <span className="absolute inset-2 rounded-full bg-[rgba(255,90,79,0.18)]" />
-            <motion.svg
-              viewBox="0 0 24 24"
-              width="34"
-              height="34"
-              animate={{ scale: [1, 1.12, 1] }}
-              transition={{ duration: 0.75, repeat: Infinity }}
-              className="relative drop-shadow-[0_0_10px_rgba(255,90,79,0.9)]"
-            >
-              <path d="M12 3 L22 20 H2 Z" fill="none" stroke="#ff5a4f" strokeWidth="2" strokeLinejoin="round" />
-              <path d="M12 9.5 V14" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" />
-              <circle cx="12" cy="17" r="1.25" fill="#fff" />
-            </motion.svg>
-          </span>
+          {/* plain warning sign: no rings or glow, only the mark blinks */}
+          <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden>
+            <path d="M12 2.8 L22.4 20.6 H1.6 Z" fill="none" stroke="#ff5a4f" strokeWidth="1.6" strokeLinejoin="round" />
+            <motion.g animate={{ opacity: [1, 0.25, 1] }} transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut" }}>
+              <path d="M12 9.2 V14.2" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" />
+              <circle cx="12" cy="17.3" r="1.1" fill="#fff" />
+            </motion.g>
+          </svg>
           <div className="mt-3 text-[11px] font-bold uppercase tracking-[0.22em] text-red">High-priority conjunction</div>
           <div className="mt-1 text-[22px] font-semibold tracking-[-0.02em] text-white">
             {red} {red === 1 ? "event needs" : "events need"} action within 72 h
