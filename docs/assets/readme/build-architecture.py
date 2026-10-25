@@ -41,7 +41,7 @@ NODES = [
     ("orbit", 1515, 1380, 440, 220, "digitalocean.svg", "DigitalOcean", "Orbit", "compute", ["Python orbital API", "FastAPI + SGP4"]),
     ("memory", 45, 1745, 440, 205, "backboard.png", "Backboard", "BookOpen", "memory", ["Company memory"]),
     ("history", 535, 1745, 440, 205, "tigerdata.svg", "Tiger Data", "ChartNoAxesCombined", "history", ["Observation history"]),
-    ("schedule", 1025, 1745, 440, 205, "factory.svg", "Factory", "CalendarCheck", "artifact", ["Schedule artifacts", "Planned DigitalOcean worker"]),
+    ("schedule", 1025, 1745, 440, 205, "factory.svg", "Factory", "CalendarCheck", "artifact", ["Schedule artifacts", "Node.js + Droid SDK"]),
     ("data", 1515, 1745, 440, 205, "celestrak.png", "CelesTrak", "Globe2", "source", ["Pinned orbital data"]),
 ]
 
@@ -101,7 +101,7 @@ def node(spec: tuple) -> str:
 
 parts = [f'''<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}" role="img" aria-labelledby="title desc">
 <title id="title">OrbitCall system architecture</title>
-<desc id="desc">A layered architecture. Auth0 authenticates Vercel operator browsers and the read-only display. Convex is the central application database and job authority. LiveKit audio connects to a DigitalOcean translation worker using Grok recognition and Russian speech, Claude translation, and Cartesia English and Mandarin speech. Convex calls Claude, Gemini and Grok agents, a DigitalOcean orbital API, Backboard memory and Tiger Data history. A Factory schedule-artifact worker is planned. CelesTrak supplies pinned OMM to the orbital API.</desc>
+<desc id="desc">A layered architecture. Auth0 authenticates Vercel operator browsers and the read-only display. Convex is the central application database and job authority. LiveKit audio connects to a DigitalOcean translation worker using Grok recognition and Russian speech, Claude translation, and Cartesia English and Mandarin speech. Convex calls Claude, Gemini and Grok agents, a DigitalOcean orbital API, Backboard memory and Tiger Data history. A Factory Node.js worker prepares schedule artifacts. CelesTrak supplies pinned OMM to the orbital API.</desc>
 <defs>
   <style>
     text {{ font-family: Arial, Helvetica, sans-serif; fill: #19283f; }}
