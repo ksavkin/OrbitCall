@@ -22,6 +22,12 @@ const client = makeClient();
 /** True when a Convex client exists, so `useQuery` may run. */
 export const CONVEX_ENABLED = client !== null;
 
+/**
+ * True once the provider below carries a sign-in (ConvexProviderWithAuth0). Until then `useConvexAuth` has no
+ * auth context and throws, so components that read the signed-in identity must check this first.
+ */
+export const CONVEX_AUTH = false;
+
 export function ConvexClientProvider({ children }: { children: ReactNode }) {
   return client ? <ConvexProvider client={client}>{children}</ConvexProvider> : <>{children}</>;
 }

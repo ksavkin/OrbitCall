@@ -48,15 +48,15 @@ function Header({ me, onClose }: { me: Me; onClose: () => void }) {
   return (
     <div className="flex items-start gap-4 border-b border-white/[0.06] px-6 py-5">
       <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.16)]">
-        <Flag code={me.company?.country ?? me.dispatcherCountry} h={44} />
+        {(me.company?.country ?? me.dispatcherCountry) && <Flag code={(me.company?.country ?? me.dispatcherCountry)!} h={44} />}
       </span>
       <div className="min-w-0 flex-1">
-        <div className="text-[18px] font-semibold tracking-[-0.01em] text-white">{me.name}</div>
+        <div className="text-[18px] font-semibold tracking-[-0.01em] text-white">{me.name ?? "Name not set"}</div>
         <div className="text-[13px] text-neutral-500">{me.email}</div>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-neutral-400">
           {me.company && <span>{me.company.name}</span>}
           <span>{me.role === "operator" ? "Dispatcher" : me.role === "head_of_ops" ? "Head of operations" : "Observer"}</span>
-          <span>Speaks {LANG[me.language]}</span>
+          <span>{me.language ? `Speaks ${LANG[me.language]}` : "Language not set"}</span>
           {me.company?.simulated && <span className="text-orange">Demo account · simulated fleet</span>}
         </div>
       </div>
@@ -80,12 +80,17 @@ function Fleet({ fleet }: { fleet: FleetSatellite[] }) {
             <div className="min-w-0 flex-1">
               <div className="text-[14px] font-medium text-white">{f.object.name}</div>
               <div className="mono mt-0.5 text-[11.5px] text-neutral-500">
-                NORAD {f.object.norad} · {f.object.orbit}
+                {f.object.norad !== null ? `NORAD ${f.object.norad}` : f.object.objectId}
+                {f.object.orbit && ` · ${f.object.orbit}`}
               </div>
             </div>
             <span className={`text-[12px] ${f.freshness === "current" ? "text-neutral-400" : "text-amber"}`}>{f.freshness === "current" ? "Orbit data current" : f.freshness === "stale" ? "Orbit data stale" : "Orbit data unknown"}</span>
             <span className={`w-[96px] text-right text-[12.5px] font-medium ${f.unresolvedIncidentCount ? "text-[#ff8a80]" : "text-neutral-500"}`}>
-              {f.unresolvedIncidentCount ? `${f.unresolvedIncidentCount} open case${f.unresolvedIncidentCount > 1 ? "s" : ""}` : "No open cases"}
+              {f.unresolvedIncidentCount === null
+                ? "Cases not loaded"
+                : f.unresolvedIncidentCount
+                  ? `${f.unresolvedIncidentCount} open case${f.unresolvedIncidentCount > 1 ? "s" : ""}`
+                  : "No open cases"}
             </span>
           </div>
         ))}
