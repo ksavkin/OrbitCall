@@ -403,7 +403,7 @@ Names below are the implementation target, not a claim that all functions exist 
 | Discussion | `messages.list`, `messages.send`, `summary.request` | Persistent original/translated conversation with event references |
 | Proposals | `proposals.list`, `proposals.revisions`, `rooms.select` | Up to four cards and a shared event-specific selection |
 | Approval | `approvals.approve`, `approvals.veto` | Explicit current event-specific authorization |
-| Live media | `call.join`, `rooms.setInCall` | Authorized room token and presence |
+| Live media | `call.join`, `call.presence.setInCall` | Authorized room token and call presence |
 | Scheduling | `maneuvers.get`, internal schedule jobs | Re-screen, preview, reserved commit, retry status |
 | Evidence | `history.series`, `verifications.get`, `verifications.replay` | Tiger-backed history and numerical verification |
 | Memory | Internal company-memory read/write actions | Backboard context with source IDs |
