@@ -47,8 +47,10 @@ describe("proposals.select", () => {
       by: { kind: "human", userId: await userId(t, "a") }, lastReset: null });
     expect((await as(t, "b").query(fn.list, { eventId }) as Card[]).map(c => c.isSelected)).toEqual([false, true, false, false]);
     expect(await t.run(ctx => ctx.db.query("approvals").collect())).toEqual([]);
-    expect(await t.run(ctx => ctx.db.system.query("_scheduled_functions").collect())).toEqual([]);
+    // Selecting only asks Factory for the schedule diff; nothing approves or schedules a maneuver.
+    expect((await t.run(ctx => ctx.db.system.query("_scheduled_functions").collect())).map(f => [f.name, f.args])).toEqual([["maneuvers:requestPreview", [{ eventId }]]]);
     await as(t, "a").mutation(fn.select, { eventId, proposalId: P2, revision: 1, expectedGeneration: 1 });
+    expect(await t.run(ctx => ctx.db.system.query("_scheduled_functions").collect())).toHaveLength(1);
     expect((await selection(t, eventId))!.generation).toBe(1);
     expect(await pick(t, "a", eventId, "P4")).toBe(2);
   });

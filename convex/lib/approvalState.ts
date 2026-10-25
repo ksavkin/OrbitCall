@@ -1,3 +1,4 @@
+import { makeFunctionReference } from "convex/server";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { inputKey } from "./analyst";
@@ -8,6 +9,10 @@ type Side = "A" | "B";
 export type ResetReason = "selection_changed" | "revision_changed" | "proposal_withdrawn" | "vetoed" |
   "event_expired" | "policy_changed" | "assignment_revoked" | "evidence_changed" | "assignment_changed" | "authorization_changed" | "candidate_set_changed";
 type Next = { proposalId: Id<"proposals">; revision: number } | null;
+
+// Every selection write passes through advanceSelection, so the schedule preview for a newly selected plan is requested
+// here: Factory prepares its diff before anyone can approve it (EXE-4, ROOM-9). Wait cards and stale selections no-op.
+const requestPreview = makeFunctionReference<"mutation", { eventId: Id<"events"> }>("maneuvers:requestPreview");
 
 export const RESOLVED_STATUSES = new Set(["approved", "scheduled", "monitoring", "awaiting_verification_data", "verified", "no_action_needed"]);
 export const assignmentVersionOf = (user: Doc<"users">) => user.assignmentVersion ?? LEGACY_ASSIGNMENT_VERSION;
@@ -100,6 +105,7 @@ export async function advanceSelection(ctx: MutationCtx, event: Doc<"events">, n
   const value = { eventId: event._id, proposalId: next?.proposalId ?? null, revision: next?.revision ?? null,
     generation: (row?.generation ?? 0) + 1, by, at: now, lastReset: reset ? { at: now, reason } : row?.lastReset ?? null };
   if (row) await ctx.db.replace(row._id, value); else await ctx.db.insert("selections", value);
+  if (next) await ctx.scheduler.runAfter(0, requestPreview, { eventId: event._id });
   if (reset) {
     const summary = event.workflow === "unilateral_debris" ? "Approval reset." : "Both approvals reset.";
     for (const link of await ctx.db.query("roomEvents").withIndex("by_event", q => q.eq("eventId", event._id)).collect()) {
