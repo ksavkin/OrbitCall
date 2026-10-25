@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { fleetEvents, fleetIds, requireFleetScope, resolveFleet, type FleetScope } from "./fleetQuery";
-import { roomOfEvent } from "./rooms";
+import { isOpenRoom } from "./rooms";
 import { buildFacts, isoUtc } from "./lib/events";
 import { priorityReason, sectionOf, viewerSides } from "./lib/incident";
 import { color, eventStatus, probability, situation, sourceRef, spaceObject, workflow } from "./lib/validators";
@@ -52,18 +52,38 @@ export const inboxEntry = v.object({
   room: v.union(inboxRoom, v.null()),
 });
 
+type RoomPresence = { roomId: Id<"rooms">; joined: boolean; otherSideJoined: boolean; otherSidePresenceAt: string | null } | null;
+
 /**
- * Whether the caller and a member of another company are in the event's open room, from roomMembers presence (the
- * rooms module writes it; the inbox only reads). Staleness is the client's job: a query is not re-run by the clock.
+ * Whether the caller and a member of another company are in each event's open room, from roomMembers presence (the
+ * rooms module writes it; the inbox only reads). Rooms and their members are read once per page, not per entry. An
+ * event resolves through its own roomEvents link: startWorkflow links every row of the encounter. Staleness is the
+ * client's job: a query is not re-run by the clock.
  */
-async function roomPresenceFor(ctx: QueryCtx, event: Doc<"events">, scope: FleetScope) {
-  const room = await roomOfEvent(ctx, event);
-  if (!room) return null;
-  const members = await ctx.db.query("roomMembers").withIndex("by_room", q => q.eq("roomId", room._id)).collect();
-  const present = members.filter(m => m.companyId !== scope.company._id && m.inRoom).map(m => m.updatedAt).sort((x, y) => x - y);
-  return {
-    roomId: room._id, joined: members.some(m => m.userId === scope.user._id && m.inRoom),
-    otherSideJoined: present.length > 0, otherSidePresenceAt: present.length ? isoUtc(present[present.length - 1]) : null,
+function roomPresence(ctx: QueryCtx, scope: FleetScope) {
+  const rooms = new Map<Id<"rooms">, Promise<Doc<"rooms"> | null>>();
+  const openRoom = (roomId: Id<"rooms">) => {
+    if (!rooms.has(roomId)) rooms.set(roomId, ctx.db.get(roomId).then(async room => room && await isOpenRoom(ctx, room) ? room : null));
+    return rooms.get(roomId)!;
+  };
+  const presence = new Map<Id<"rooms">, Promise<RoomPresence>>();
+  const presenceOf = (room: Doc<"rooms">) => {
+    if (!presence.has(room._id)) presence.set(room._id, ctx.db.query("roomMembers").withIndex("by_room", q => q.eq("roomId", room._id)).collect()
+      .then(members => {
+        const present = members.filter(m => m.companyId !== scope.company._id && m.inRoom).map(m => m.updatedAt).sort((x, y) => x - y);
+        return {
+          roomId: room._id, joined: members.some(m => m.userId === scope.user._id && m.inRoom),
+          otherSideJoined: present.length > 0, otherSidePresenceAt: present.length ? isoUtc(present[present.length - 1]) : null,
+        };
+      }));
+    return presence.get(room._id)!;
+  };
+  return async (event: Doc<"events">): Promise<RoomPresence> => {
+    for (const link of await ctx.db.query("roomEvents").withIndex("by_event", q => q.eq("eventId", event._id)).collect()) {
+      const room = await openRoom(link.roomId);
+      if (room) return presenceOf(room);
+    }
+    return null;
   };
 }
 
@@ -79,9 +99,9 @@ function readState(event: Doc<"events">, row: Doc<"inbox"> | null) {
   };
 }
 
-// Each entry costs about twelve reads: snapshot and two objects (deduplicated across the page), the inbox row, owner
-// rows and companies (memoized), the room lookup through its linked rows, and the room's members and presence.
-// 300 x 12 stays under the 4096 reads a query may issue.
+// Each entry costs about four reads of its own: the inbox row, its roomEvents links and its share of the snapshot,
+// objects, owners, companies, rooms and room members, which are read once per page. 300 entries stay well under the
+// 4096 reads a query may issue.
 const MAX_ENTRIES = 300;
 const byId = (a: { _id: string }, b: { _id: string }) => a._id < b._id ? -1 : a._id > b._id ? 1 : 0;
 
@@ -90,6 +110,7 @@ async function entriesFor(ctx: QueryCtx, scope: FleetScope, events: Doc<"events"
   const company = fleetIds(await resolveFleet(ctx, scope.companyObjects));
   // The page keeps the most recently updated events. A color-only change by the recolor cron has no stored time, so it
   // does not reorder; it still flags the entry unread through the summary line.
+  const presenceFor = roomPresence(ctx, scope);
   const page = [...events].sort((x, y) => y.updatedAt - x.updatedAt || byId(x, y)).slice(0, MAX_ENTRIES);
   const unique = <T>(items: T[]) => [...new Set(items)];
   const [snapshots, objects] = await Promise.all([
@@ -112,7 +133,7 @@ async function entriesFor(ctx: QueryCtx, scope: FleetScope, events: Doc<"events"
     const facts = buildFacts(event, a, b, snapshot.sources);
     const sides = viewerSides(event, assigned, company);
     const [first, second] = sides.mySide === "B" ? [b, a] : [a, b];
-    const room = await roomPresenceFor(ctx, event, scope);
+    const room = await presenceFor(event);
     const row = await ctx.db.query("inbox").withIndex("by_user_event", q =>
       q.eq("userId", scope.user._id).eq("eventId", event._id)).unique();
     const read = readState(event, row);
