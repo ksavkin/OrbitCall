@@ -53,7 +53,7 @@ export function SignInScreen() {
                 className={`group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.04] ${i ? "border-t border-white/[0.06]" : ""}`}
               >
                 <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.16)]">
-                  <Flag code={me.company?.country ?? me.dispatcherCountry} h={32} />
+                  {(me.company?.country ?? me.dispatcherCountry) && <Flag code={(me.company?.country ?? me.dispatcherCountry)!} h={32} />}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px] font-medium text-white">{me.company?.name ?? "New account, no access yet"}</span>
