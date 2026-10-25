@@ -44,20 +44,21 @@ it("changing another offered card resets approval of the selected card", async (
   expect(await t.run(ctx => ctx.db.query("approvals").collect())).toEqual([expect.objectContaining({ current: false, status: "approved" })]);
 });
 
-it("backfills decided records without reopening or resetting the approved plan", async () => {
+it.each(["P2", "P4"])("backfills decided %s records without reopening or resetting the approved plan", async candidateId => {
   const { t, eventId } = await seed();
   await pick(t, "a", eventId, "P2");
   await as(t, "a").mutation(fn.approve, await tick(t, eventId));
   await as(t, "b").mutation(fn.approve, await tick(t, eventId));
   const before = await selection(t, eventId);
   await t.run(async ctx => {
-    const p4 = await ctx.db.query("proposals").withIndex("by_event_candidate", q => q.eq("eventId", eventId).eq("candidateId", "P4")).unique();
+    const p4 = await ctx.db.query("proposals").withIndex("by_event_candidate", q => q.eq("eventId", eventId).eq("candidateId", candidateId)).unique();
     const revision = await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q => q.eq("proposalId", p4!._id)).unique();
     await ctx.db.delete(revision!._id);
   });
+  vi.setSystemTime(FIXTURE_NOW + 1000);
   await t.mutation(internal.candidates.publish, { eventId, baseVersion: 1, candidates: advocateCandidates, start: false });
   expect(await as(t, "a").query(fn.list, { eventId })).toHaveLength(4);
   expect(await selection(t, eventId)).toEqual(before);
   expect(await t.run(ctx => ctx.db.get(eventId))).toMatchObject({ status: "approved" });
+  expect((await as(t, "a").query(fn.status, { eventId })).allRequiredApproved).toBe(true);
 });
-

@@ -28,7 +28,8 @@ export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, cand
     if (!stored) await ctx.db.insert("proposalRevisions", {
       proposalId, eventId: event._id, revision: card.revision, candidateRevisionId: id,
       changeSummary: null, sourceMessageIds: [], rationale: null, schedulePreviewDiff: null, schedulePreviewHash: null,
-      simulated: card.simulated, createdAt: now,
+      // A repair preserves the immutable candidate's time; repair time is not a new human decision input.
+      simulated: card.simulated, createdAt: options.preserveDecision ? Math.floor(card._creationTime) : now,
     });
     offered.add(proposalId);
   }
