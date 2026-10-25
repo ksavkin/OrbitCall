@@ -1,10 +1,12 @@
 "use client";
 
+import { Play } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { fmtCountdown, fmtMiss } from "@/lib/ops/format";
 import { useOps } from "@/lib/ops/store";
 import type { ConjunctionEvent } from "@/lib/ops/types";
 import { sceneRef } from "@/lib/sceneRef";
+import { useOrbit } from "@/lib/store";
 import { sfx } from "@/lib/sound";
 import { RESOLVED } from "./meta";
 
@@ -84,6 +86,7 @@ function Marker({ e, bind }: { e: ConjunctionEvent; bind: (k: "tca" | "b" | "a" 
           }}
           onPointerEnter={() => sfx.hover()}
           aria-label={`Focus ${e.id}`}
+          title={focused ? undefined : `${e.id} · click to draw both orbits`}
         >
           <ConjunctionIcon color={c} focused={focused} live={!quiet && e.risk === "red"} />
         </button>
@@ -100,8 +103,23 @@ function Marker({ e, bind }: { e: ConjunctionEvent; bind: (k: "tca" | "b" | "a" 
           </span>
         )}
         {focused && (
-          <span className="absolute left-[26px] top-[10px] whitespace-nowrap text-[10px] text-muted [text-shadow:0_1px_2px_rgba(0,0,0,0.8)]">
-            TCA point · <span ref={(el) => bind("range", el)} className="mono tnum" />
+          // the drawn orbits are each object's path on the day of TCA; the dots are where they are now, so
+          // a real satellite can sit off its line until then (Earth's bulge turns its orbit a few degrees a day)
+          <span className="absolute left-[26px] top-[10px] flex items-center gap-1.5 whitespace-nowrap text-[10px] text-muted [text-shadow:0_1px_2px_rgba(0,0,0,0.8)]">
+            <span>
+              Orbits at TCA · now <span ref={(el) => bind("range", el)} className="mono tnum" />
+            </span>
+            <button
+              className="pointer-events-auto flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-px text-fg-2 backdrop-blur-sm transition-colors hover:bg-white/15 hover:text-white"
+              title="Jump the clock to 70 s before closest approach and watch both objects pass. Live in the footer returns to now."
+              onClick={() => {
+                sfx.whoosh();
+                useOrbit.getState().set({ paused: false, speed: 1 });
+                sceneRef.get()?.previewTca(e.id);
+              }}
+            >
+              <Play size={8} fill="currentColor" /> Play to TCA
+            </button>
           </span>
         )}
       </div>
@@ -124,8 +142,8 @@ function Marker({ e, bind }: { e: ConjunctionEvent; bind: (k: "tca" | "b" | "a" 
 }
 
 /**
- * Conjunction mark: two short trajectory strokes crossing at the TCA point (A in pale
- * blue, B in the risk color), a slowly turning dashed range ring, and a ping when red.
+ * Conjunction mark: the TCA point, a slowly turning dashed range ring, and a ping when red. No stroke here may
+ * look like a trajectory: the real orbits are drawn on the globe, for the focused event only.
  */
 function ConjunctionIcon({ color, focused, live }: { color: string; focused: boolean; live: boolean }) {
   return (
@@ -136,8 +154,6 @@ function ConjunctionIcon({ color, focused, live }: { color: string; focused: boo
         <g style={{ transformOrigin: "15px 15px", animation: "spin 9s linear infinite" }}>
           <circle cx="15" cy="15" r="10.5" fill="none" stroke={color} strokeOpacity="0.75" strokeWidth="1.1" strokeDasharray="3.2 2.3" />
         </g>
-        <line x1="5" y1="21" x2="25" y2="9" stroke="#9cc2ff" strokeWidth="1.6" strokeLinecap="round" strokeOpacity="0.95" />
-        <line x1="5" y1="9" x2="25" y2="21" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
         <circle cx="15" cy="15" r="2.6" fill="#fff" style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
         {focused &&
           [0, 90, 180, 270].map((r) => (

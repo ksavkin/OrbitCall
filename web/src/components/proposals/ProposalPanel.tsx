@@ -66,6 +66,12 @@ export function ProposalPanel({
   };
   const select = (c: Card) => {
     sfx.whoosh();
+    // the first pick of a published set is a plain selection; changing a selected plan is a counter the agents recompute
+    if (!sel) {
+      engine.select(e.id, viewer, c.option.id);
+      setLook(c.option.id);
+      return;
+    }
     engine.decide(e.id, viewer, { decision: "countered", via: "select", label: c.label, preferred: { mover: c.option.mover, action: c.option.action } });
   };
   const message = () => {
@@ -77,7 +83,15 @@ export function ProposalPanel({
 
   return (
     <div className="text-fg">
-      <div className="flex items-start gap-3 px-5 pb-3 pt-5">
+      {/* in the Decision Center the page header already names the case, the side and the countdown */}
+      {embedded ? (
+        <div className="flex items-baseline gap-3 px-5 pb-3 pt-4">
+          <span className="text-[15px] font-semibold tracking-[-0.01em] text-white">{readOnly ? "Plans on the table" : "Choose a plan"}</span>
+          <span className="text-[12.5px] text-neutral-500">{sel ? `${selName} selected` : "none selected yet"}</span>
+          <span className="ml-auto truncate text-[12px] text-neutral-600">Changing the plan resets every approval</span>
+        </div>
+      ) : (
+        <div className="flex items-start gap-3 px-5 pb-3 pt-5">
         {!readOnly && (
           <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-[8px] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
             {me?.country ? <Flag code={me.country} h={36} square /> : null}
@@ -98,6 +112,7 @@ export function ProposalPanel({
           <div className="mt-1 text-[11px] text-neutral-500">until closest approach</div>
         </div>
       </div>
+      )}
 
       {!embedded && e.summary && (
         <div className="mx-5 mb-3 rounded-[12px] bg-white/[0.03] p-3.5">

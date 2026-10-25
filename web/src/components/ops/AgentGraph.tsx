@@ -2,7 +2,7 @@
 
 import { motion } from "motion/react";
 import { Check, User, X } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtMs, fmtUsd } from "@/lib/ops/format";
 import { AGENTS, HUMANS, MODELS, TOOLS } from "@/lib/ops/roster";
 import { useOps } from "@/lib/ops/store";
@@ -59,9 +59,11 @@ const SKELETON: [NodeId, NodeId][] = [
 ];
 
 /** Orthogonal route with rounded corners, like the reference graph. */
-function route(a: NodeId, b: NodeId) {
-  const [ax, ay] = POS[a];
-  const [bx, by] = POS[b];
+function route(a: NodeId, b: NodeId, k = 1) {
+  const [ax, ay0] = POS[a];
+  const [bx, by0] = POS[b];
+  const ay = ay0 * k;
+  const by = by0 * k;
   if (Math.abs(ay - by) < 2) return `M${ax},${ay}H${bx}`;
   if (Math.abs(ax - bx) < 2) return `M${ax},${ay}V${by}`;
   const my = (ay + by) / 2;
@@ -82,7 +84,26 @@ const edgeKey = (a: NodeId, b: NodeId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 type EdgeState = "idle" | "used" | "call" | "human" | "failed";
 
-export function AgentGraph({ big = false }: { big?: boolean }) {
+/** With `fill`, the graph takes its container's full height and spreads the rows over it (never tighter than the base layout). */
+export function AgentGraph({ big = false, fill = false }: { big?: boolean; fill?: boolean }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState({ k: 1, roomy: true });
+  const k = fit.k;
+  useEffect(() => {
+    const el = box.current?.parentElement;
+    if (!fill || !el) return;
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w <= 0) return;
+      const nk = Math.max(1, Math.min(1.8, (h / w) * (GW / GH)));
+      // large nodes need ~84 px between rows; a short column falls back to the small ones
+      setFit({ k: nk, roomy: 82 * nk * (w / GW) >= 84 });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fill]);
+  const H = GH * k;
   const spans = useOps((s) => s.spans);
   const humans = useOps((s) => s.humans);
   const focusAgent = useOps((s) => s.focusAgent);
@@ -116,14 +137,14 @@ export function AgentGraph({ big = false }: { big?: boolean }) {
       if (!prev || rank[state] >= rank[prev.state]) edges.set(key, { a: s.agent, b: s.target, state, from: s.agent });
       bump(s.agent, s.status === "running" ? "running" : s.status === "error" ? "err" : "ok", s);
       if (s.status === "running") bump(s.target, "running", s);
-      if (s.status === "ok" && s.t1 && now - s.t1 < 900) answers.push({ id: s.id, d: route(s.agent, s.target), color: EDGE.answer });
+      if (s.status === "ok" && s.t1 && now - s.t1 < 900) answers.push({ id: s.id, d: route(s.agent, s.target, k), color: EDGE.answer });
     }
     for (const h of humans) {
       const id: NodeId = h.side === "a" ? "humanA" : "humanB";
       edges.set(edgeKey("host", id), { a: "host", b: id, state: "human", from: "host" });
     }
     return { edges, answers, nodeState };
-  }, [spans, humans, now, focusAgent]);
+  }, [spans, humans, now, focusAgent, k]);
 
   const waitingHuman = new Set<NodeId>(humans.map((h) => (h.side === "a" ? "humanA" : "humanB")));
   // people come from the focused event: two deciding operators plus anyone the fix affects
@@ -135,15 +156,15 @@ export function AgentGraph({ big = false }: { big?: boolean }) {
   const nodes = (Object.keys(POS) as NodeId[]).filter((id) => !id.startsWith("human") || partyById.has(id as HumanId));
 
   return (
-    <div className="relative w-full select-none" style={{ aspectRatio: `${GW} / ${GH}` }}>
-      <svg viewBox={`0 0 ${GW} ${GH}`} className="absolute inset-0 h-full w-full overflow-visible">
+    <div ref={box} className="relative w-full select-none" style={{ aspectRatio: `${GW} / ${H}` }}>
+      <svg viewBox={`0 0 ${GW} ${H}`} className="absolute inset-0 h-full w-full overflow-visible">
         <defs>
           <filter id="pulse-glow" x="-200%" y="-200%" width="500%" height="500%">
             <feGaussianBlur stdDeviation="2.4" />
           </filter>
         </defs>
         {[...edges.values()].map(({ a, b, state, from }) => {
-          const d = route(from, from === a ? b : a);
+          const d = route(from, from === a ? b : a, k);
           const color = state === "call" ? EDGE.call : state === "human" ? EDGE.human : state === "failed" ? EDGE.failed : "#ffffff";
           const op = state === "idle" ? 0.07 : state === "used" ? 0.16 : 0.75;
           return (
@@ -187,7 +208,7 @@ export function AgentGraph({ big = false }: { big?: boolean }) {
         <GraphNode
           key={id}
           id={id}
-          big={big}
+          big={big && (!fill || fit.roomy)}
           st={nodeState.get(id)}
           waiting={waitingHuman.has(id)}
           dim={focusAgent !== null && id !== focusAgent}

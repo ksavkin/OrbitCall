@@ -405,7 +405,10 @@ function optionsFor(e: ConjunctionEvent, pr: Proposal, pick: { mover: "a" | "b" 
   return out.sort((x, y) => Number(y.recommended) - Number(x.recommended));
 }
 
-/** Publish a revision: it becomes the shared selection and every required approval resets (ROOM-11). */
+/**
+ * Publish a revision and reset every required approval (ROOM-11). A set the agents publish arrives with nothing
+ * selected: their pick is only marked, and the side in turn selects. A plan a person selected stays selected.
+ */
 async function openRoom(eng: Engine, gen: number, e: ConjunctionEvent, pr: Proposal, by: "a" | "b" | "agents" = "agents") {
   const id = e.id;
   const prev = eng.event(id);
@@ -422,7 +425,7 @@ async function openRoom(eng: Engine, gen: number, e: ConjunctionEvent, pr: Propo
     proposal: pr,
     options,
     agentPick: pick,
-    selection: { optionId: selected.id, generation: (ev.selection?.generation ?? 0) + 1, by, at: Date.now() },
+    selection: by === "agents" ? undefined : { optionId: selected.id, generation: (ev.selection?.generation ?? 0) + 1, by, at: Date.now() },
     lastReset: pr.version > 1 ? { at: Date.now(), reason: `${label} · R${revision} ${by === "agents" ? "created by the agents" : "selected for review"}, ${e.b.kind === "debris" ? "approval reset" : "both approvals reset"}` } : ev.lastReset,
     status: "proposal",
     approvals: { a: "pending", b: e.b.kind === "debris" ? "approved" : "pending" },

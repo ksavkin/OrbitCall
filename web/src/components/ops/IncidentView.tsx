@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
+import { useMemo, useState } from "react";
 import { Check, Loader2, Maximize2, Minimize2, ShieldAlert } from "lucide-react";
 import { fmtCountdown, fmtMiss, fmtChance, fmtOdds, fmtWhen } from "@/lib/ops/format";
 import { AGENTS, MODELS } from "@/lib/ops/roster";
@@ -13,7 +14,7 @@ import { Flag } from "@/components/ui/OwnerBadge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { AgentGraph, GraphLegend } from "./AgentGraph";
 import { CallFeed } from "./AgentTrace";
-import { PcChart } from "./PcChart";
+import { PcTrend } from "./PcTrend";
 import { Decide, Done, TheirReply, Waiting, optionText, useRoomState } from "./DecisionDock";
 import { ObjectChip, RichLine } from "./Entity";
 import { RoomCall } from "@/components/rooms/RoomsScreen";
@@ -73,9 +74,14 @@ export function IncidentView() {
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
           className="pointer-events-auto absolute inset-x-2.5 bottom-[42px] top-[58px] z-[38] flex flex-col overflow-hidden rounded-[18px] bg-[rgba(4,4,5,0.94)] text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_40px_100px_-30px_rgba(0,0,0,0.9)] backdrop-blur-2xl"
         >
-          <Header e={e!} now={now} decide={room.state?.mode === "decide"} />
-          <Stepper e={e!} />
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(290px,1fr)_minmax(380px,1.4fr)_minmax(290px,0.95fr)]">
+          <Header e={e!} now={now} />
+          {/* who is on the case, always in view, beside where the case stands */}
+          <div className="flex items-center gap-6 border-b border-white/[0.06] px-7 pb-3">
+            <PartiesBar e={e!} room={room} />
+            <Stepper e={e!} />
+          </div>
+          {/* the case is narrow; the decision and the agents' run get the room */}
+          <div className="grid min-h-0 flex-1 grid-cols-[300px_minmax(0,1fr)_minmax(320px,380px)]">
             <CaseColumn e={e!} />
             <CenterColumn e={e!} now={now} room={room} />
             <AgentsColumn />
@@ -89,71 +95,66 @@ export function IncidentView() {
 
 /* ---------------------------------------------------------------- header */
 
-function Header({ e, now, decide }: { e: ConjunctionEvent; now: number; decide: boolean }) {
+function Header({ e, now }: { e: ConjunctionEvent; now: number }) {
   const red = e.risk === "red";
   return (
-    <div className="flex items-center gap-3 px-5 pb-3 pt-4">
-      <span
-        className="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]"
-        style={{ color: red ? "#ff8a80" : "var(--amber)", background: red ? "rgba(255,90,79,0.12)" : "rgba(245,196,81,0.12)", boxShadow: `inset 0 0 0 1px ${red ? "rgba(255,90,79,0.35)" : "rgba(245,196,81,0.3)"}` }}
-      >
-        <ShieldAlert size={11} /> {red ? "High priority" : "Watch"}
-      </span>
-      <span className="mono shrink-0 text-[11px] text-muted">{e.id}</span>
-      <div className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold">
-        <ObjectChip e={e} side="a" />
-        <span className="text-faint">×</span>
-        <ObjectChip e={e} side="b" />
-      </div>
-      {decide && (
-        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-[rgba(255,159,64,0.14)] px-2 py-0.5 text-[10.5px] font-semibold text-orange shadow-[inset_0_0_0_1px_rgba(255,159,64,0.35)]">
-          <span className="pulse-dot" style={{ width: 5, height: 5 }} /> Your decision is needed
-        </span>
-      )}
-      <div className="ml-auto text-right">
-        <div className="mono tnum text-[18px] font-semibold leading-none tracking-[-0.02em]" style={{ color: e.tca - now < 24 * 3600_000 ? "var(--orange)" : "var(--fg)" }}>
-          {now ? fmtCountdown(e.tca - now) : "—"}
+    <div className="flex items-end gap-6 px-7 pb-4 pt-5">
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5 text-[12px] text-neutral-500">
+          <span>Decision Center</span>
+          <span className="text-neutral-700">/</span>
+          <span className="mono text-neutral-400">{e.id}</span>
+          <span className="ml-1 h-1.5 w-1.5 rounded-full" style={{ background: red ? "var(--red)" : "var(--amber)" }} />
+          <span>{red ? "High priority" : "Watch"}</span>
         </div>
-        <div className="mt-1 text-[10px] text-muted">to closest approach · {fmtWhen(e.tca)}</div>
+        <h1 className="mt-1.5 flex min-w-0 items-center gap-2 text-[26px] font-semibold leading-tight tracking-[-0.025em] text-white">
+          <ObjectChip e={e} side="a" />
+          <span className="font-normal text-neutral-600">×</span>
+          <ObjectChip e={e} side="b" />
+        </h1>
+        <div className="tnum mt-1.5 text-[13px] text-neutral-500">
+          {fmtMiss(e.missM)} apart · closest approach {fmtWhen(e.tca)}
+        </div>
       </div>
-      <Tooltip label="Show the globe; the case keeps running" hint="E">
-        <button className="btn btn-ghost-line h-8 gap-1.5 px-2.5 text-[11.5px]" onClick={() => setIncidentView("collapsed")}>
-          <Minimize2 size={12} /> Globe view
-        </button>
-      </Tooltip>
+      <div className="ml-auto flex shrink-0 items-center gap-5">
+        <div className="text-right">
+          <div className="mono tnum text-[22px] font-semibold leading-none tracking-[-0.02em]" style={{ color: e.tca - now < 24 * 3600_000 ? "var(--orange)" : "#fff" }}>
+            {now ? fmtCountdown(e.tca - now).replace("T−", "") : "—"}
+          </div>
+          <div className="mt-1 text-[11px] text-neutral-500">until closest approach</div>
+        </div>
+        <Tooltip label="Back to the globe; the case keeps running" hint="E">
+          <button className="btn btn-ghost-line h-9 gap-1.5 px-3 text-[12px]" onClick={() => setIncidentView("collapsed")}>
+            <Minimize2 size={12} /> Globe view
+          </button>
+        </Tooltip>
+      </div>
     </div>
   );
 }
 
+/** Six thin segments: done, current, ahead. Only the current step is named, so the line stays quiet. */
 function Stepper({ e }: { e: ConjunctionEvent }) {
   const cur = stepOf(e);
-  const working = e.agentsWorking;
   return (
-    <div className="flex items-center gap-1 border-y border-white/[0.06] px-5 py-2.5">
-      {STEPS.map((label, i) => {
-        const done = i < cur;
-        const active = i === cur;
-        return (
-          <div key={label} className="flex min-w-0 flex-1 items-center gap-1.5">
-            <span
-              className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-[10px] font-semibold transition-colors duration-500"
-              style={{
-                background: done ? "var(--green)" : active ? "rgba(79,140,255,0.18)" : "rgba(255,255,255,0.05)",
-                color: done ? "#000" : active ? "var(--blue)" : "var(--faint)",
-                boxShadow: active ? "inset 0 0 0 1.5px var(--blue), 0 0 14px -2px rgba(79,140,255,0.6)" : "inset 0 0 0 1px rgba(255,255,255,0.08)",
-              }}
-            >
-              {done ? <Check size={11} strokeWidth={3} /> : active && working ? <Loader2 size={11} className="animate-spin" /> : i + 1}
-            </span>
-            <span className={`truncate text-[12px] ${done ? "text-neutral-400" : active ? "font-semibold text-white" : "text-neutral-600"}`}>{label}</span>
-            {i < STEPS.length - 1 && (
-              <span className="relative mx-1 h-px flex-1 overflow-hidden bg-white/[0.08]">
-                <motion.span className="absolute inset-y-0 left-0 bg-green" initial={false} animate={{ width: done ? "100%" : "0%" }} transition={{ duration: 0.6 }} />
-              </span>
-            )}
-          </div>
-        );
-      })}
+    <div className="w-[280px] shrink-0">
+      <div className="mb-2 text-right text-[12px] text-neutral-500">
+        Step {Math.min(cur + 1, STEPS.length)} of {STEPS.length} · <span className="text-neutral-200">{STEPS[Math.min(cur, STEPS.length - 1)]}</span>
+        {e.agentsWorking && <Loader2 size={11} className="ml-1.5 inline animate-spin text-[#9cc2ff]" />}
+      </div>
+      <div className="flex gap-1.5">
+        {STEPS.map((label, i) => (
+          <span key={label} title={label} className="relative h-1 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
+            <motion.span
+              className="absolute inset-y-0 left-0 rounded-full"
+              style={{ background: i < cur ? "var(--green)" : "#9cc2ff" }}
+              initial={false}
+              animate={{ width: i < cur ? "100%" : i === cur ? "50%" : "0%" }}
+              transition={{ duration: 0.6 }}
+            />
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -161,79 +162,61 @@ function Stepper({ e }: { e: ConjunctionEvent }) {
 /* ------------------------------------------------------------------ case */
 
 function CaseColumn({ e }: { e: ConjunctionEvent }) {
-  const now = useNow(1000);
   const cross = engine.encounters.get(e.id)?.crossDeg;
   const lat = `${Math.abs(Math.round(e.where.lat))}°${e.where.lat >= 0 ? "N" : "S"}`;
   const lon = `${Math.abs(Math.round(e.where.lon))}°${e.where.lon >= 0 ? "E" : "W"}`;
   const red = e.risk === "red";
   return (
-    <div className="thin-scroll min-h-0 overflow-y-auto border-r border-white/[0.06] px-6 py-5">
-      {/* the headline says the whole incident in one line */}
-      <h2 className="text-[21px] font-semibold leading-[1.3] tracking-[-0.02em] text-white">
-        <ObjectChip e={e} side="a" /> passes <span className="tnum">{fmtMiss(e.missM)}</span> from <ObjectChip e={e} side="b" />
-      </h2>
-      <p className="tnum mt-2 text-[13px] leading-relaxed text-neutral-400">
-        {fmtWhen(e.tca)} · over {lat} {lon} at {Math.round(e.where.altKm)} km
-      </p>
-
-      <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5">
-        <Fact label="Chance of collision" value={fmtOdds(e.pc)} tone={red ? "var(--red)" : "var(--amber)"} note={`${fmtChance(e.pc)} · ${e.pcSource} · ${e.trend}`} />
-        <Fact label="Miss distance" value={fmtMiss(e.missM)} note={`±${fmtMiss(e.uncertaintyM)} between data sources`} />
-        <Fact label="Relative speed" value={`${e.relVelKms.toFixed(1)} km/s`} note={cross ? `crossing at ${cross}°` : undefined} />
-        <Fact label="Until closest approach" value={now ? fmtCountdown(e.tca - now).replace("T−", "") : "—"} note={red ? "inside the 72 h action window" : undefined} />
+    <div className="thin-scroll min-h-0 overflow-y-auto border-r border-white/[0.06]">
+      {/* four figures, one grid, thin dividers */}
+      <div className="grid grid-cols-2 border-b border-white/[0.06]">
+        <Fact label="Chance" value={fmtOdds(e.pc)} tone={red ? "#ff8a80" : "var(--amber)"} note={`${fmtChance(e.pc)} · ${e.pcSource}`} />
+        <Fact label="Miss distance" value={fmtMiss(e.missM)} note={`±${fmtMiss(e.uncertaintyM)} between sources`} right />
+        <Fact label="Relative speed" value={`${e.relVelKms.toFixed(1)} km/s`} note={cross ? `crossing at ${cross}°` : undefined} bottom />
+        <Fact label="Where" value={`${Math.round(e.where.altKm)} km`} note={`over ${lat} ${lon}`} right bottom />
       </div>
 
-      <div className="mt-6">
-        <PcChart e={e} />
+      <div className="border-b border-white/[0.06] px-5 py-4">
+        <PcTrend e={e} />
       </div>
 
       <Section title="Analyst notes" note={`${AGENTS.analyst.name} · ${MODELS[AGENTS.analyst.model].label}`}>
         {e.summary ? (
-          <ul className="space-y-2.5">
+          <ol className="space-y-2.5">
             {e.summary.slice(1).map((l, i) => (
-              <li key={i} className="flex gap-2.5 text-[13.5px] leading-[1.6] text-neutral-300">
-                <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-neutral-600" />
+              <li key={i} className="flex gap-3 text-[13px] leading-[1.6] text-neutral-300">
+                <span className="mono mt-[2px] w-3 shrink-0 text-[11px] text-neutral-600">{i + 1}</span>
                 <span>
                   <RichLine e={e} text={l} />
                 </span>
               </li>
             ))}
-          </ul>
+          </ol>
         ) : (
           <div className="shimmer text-[13px] font-medium">The Incident Analyst is reading both orbits…</div>
         )}
       </Section>
-
-      <Section title="Parties">
-        <PartyList e={e} />
-      </Section>
-
-      {e.proposal && (
-        <Section title={`Current plan · v${e.proposal.version}`}>
-          <PlanSummary e={e} />
-        </Section>
-      )}
     </div>
   );
 }
 
-function Fact({ label, value, note, tone }: { label: string; value: string; note?: string; tone?: string }) {
+function Fact({ label, value, note, tone, right, bottom }: { label: string; value: string; note?: string; tone?: string; right?: boolean; bottom?: boolean }) {
   return (
-    <div>
+    <div className={`px-5 py-4 ${right ? "border-l border-white/[0.06]" : ""} ${bottom ? "border-t border-white/[0.06]" : ""}`}>
       <div className="text-[11.5px] text-neutral-500">{label}</div>
-      <div className="tnum mt-1 text-[24px] font-semibold leading-none tracking-[-0.025em]" style={{ color: tone ?? "#fff" }}>
+      <div className="mono tnum mt-1.5 text-[22px] font-medium leading-none tracking-[-0.02em]" style={{ color: tone ?? "#fff" }}>
         {value}
       </div>
-      {note && <div className="mt-1.5 text-[11.5px] text-neutral-500">{note}</div>}
+      {note && <div className="mt-1.5 truncate text-[11px] text-neutral-500">{note}</div>}
     </div>
   );
 }
 
 function Section({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
-    <section className="mt-7">
-      <div className="mb-3 flex items-baseline justify-between border-b border-white/[0.06] pb-2">
-        <span className="text-[12px] font-semibold text-neutral-200">{title}</span>
+    <section className="border-b border-white/[0.06] px-5 py-4">
+      <div className="mb-3 flex items-baseline justify-between">
+        <span className="text-[13px] font-medium text-white">{title}</span>
         {note && <span className="text-[11px] text-neutral-600">{note}</span>}
       </div>
       {children}
@@ -241,55 +224,88 @@ function Section({ title, note, children }: { title: string; note?: string; chil
   );
 }
 
-function PartyList({ e }: { e: ConjunctionEvent }) {
+/**
+ * Everyone on the case, always in view: who is in the call and speaking (from the call), whose turn it is and how
+ * each side answered (from the case). Where a person is in the app is known only for this screen's own side.
+ */
+function PartiesBar({ e, room }: { e: ConjunctionEvent; room: ReturnType<typeof useRoomState> }) {
+  const humans = useOps((s) => s.humans);
+  const live = useOps((s) => (s.callLive?.eventId === e.id ? s.callLive : null));
   const parties: Party[] = e.parties ?? [];
+  const deciding = humans.filter((h) => h.eventId === e.id).map((h) => h.side);
   return (
-    <div className="space-y-3">
+    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none]" data-testid="parties-bar">
       {parties.map((p) => {
-        const state = p.role === "affected" ? "notified" : e.approvals[p.role];
-        const label = state === "vetoed" ? "Rejected" : state === "pending" ? "Waiting" : state.charAt(0).toUpperCase() + state.slice(1);
-        const color = state === "approved" || state === "notified" ? "var(--green)" : state === "vetoed" ? "var(--red)" : state === "countered" ? "var(--orange)" : "#737373";
+        const me = p.role === room.viewer;
+        const inCall = live?.inCall.includes(p.id) ?? false;
+        const speaking = live?.speaking.includes(p.id) ?? false;
+        const answer = p.role === "affected" ? "notified" : e.approvals[p.role];
+        // decisions go in turn (A, then B): B's prompt may already be open while A decides, so B waits
+        const waitsTurn = p.role === "b" && deciding.includes("a");
+        const turn = p.role !== "affected" && deciding.includes(p.role) && !waitsTurn;
+        const st = turn
+          ? { text: me ? "Your turn to decide" : "Deciding", color: "var(--orange)", pulse: true }
+          : answer === "approved"
+            ? { text: "Approved", color: "var(--green)" }
+            : answer === "vetoed"
+              ? { text: "Vetoed", color: "var(--red)" }
+              : answer === "notified"
+                ? { text: "Notified", color: "#a3a3a3" }
+                : waitsTurn
+                  ? { text: "Waits for side A", color: "#8a8a8a" }
+                  : { text: e.agentsWorking ? "Agents working" : "Waiting", color: "#8a8a8a" };
+        const where = me ? "Decision Center" : inCall ? "In the call" : "Not in the call";
         return (
-          <div key={p.id} className="flex items-center gap-3">
-            <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-[6px] shadow-[0_0_0_1px_rgba(255,255,255,0.14)]">
-              {p.country && <Flag code={p.country} h={28} square />}
+          <div
+            key={p.id}
+            data-party={p.id}
+            data-speaking={speaking}
+            className="flex shrink-0 items-center gap-2.5 rounded-[12px] py-1.5 pl-1.5 pr-3.5 transition-colors"
+            style={{ background: turn ? "rgba(255,159,64,0.07)" : "rgba(255,255,255,0.03)", boxShadow: turn ? "inset 0 0 0 1px rgba(255,159,64,0.35)" : "inset 0 0 0 1px rgba(255,255,255,0.06)" }}
+          >
+            <span
+              className="relative grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-[8px] transition-shadow duration-200"
+              style={{ boxShadow: speaking ? "0 0 0 2px var(--green), 0 0 16px -2px rgba(61,220,151,0.8)" : "0 0 0 1px rgba(255,255,255,0.14)" }}
+            >
+              {p.country && <Flag code={p.country} h={32} square />}
             </span>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13.5px] font-medium text-white">{p.operator.replace(/\s*\(synthetic\)/i, "")}</div>
-              <div className="text-[11.5px] text-neutral-500">
-                {p.role === "affected" ? "Affected operator" : `Side ${p.role.toUpperCase()}`}
-                {p.language ? ` · ${p.language}` : ""}
-              </div>
-            </div>
-            <span className="flex items-center gap-1.5 text-[12px] font-medium" style={{ color }}>
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-              {label}
+            <span className="min-w-0">
+              <span className="flex items-center gap-1.5 text-[13px] font-medium leading-tight text-white">
+                <span className="max-w-[150px] truncate">{p.operator.replace(/\s*\(synthetic\)/i, "")}</span>
+                {me && <span className="text-[11px] font-normal text-neutral-500">you</span>}
+              </span>
+              <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px] leading-tight">
+                {speaking ? (
+                  <span className="flex items-center gap-1 font-medium text-green">
+                    <SpeakingBars /> Speaking
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 font-medium" style={{ color: st.color }}>
+                    {st.pulse ? <span className="pulse-dot" style={{ width: 5, height: 5 }} /> : <span className="h-1.5 w-1.5 rounded-full" style={{ background: st.color }} />}
+                    {st.text}
+                  </span>
+                )}
+                <span className="text-neutral-700">·</span>
+                <span className="text-neutral-500">{p.role === "affected" ? "Affected" : `Side ${p.role.toUpperCase()}`}</span>
+                <span className="text-neutral-700">·</span>
+                <span className="text-neutral-500">{where}</span>
+              </span>
             </span>
           </div>
         );
       })}
-      {e.b.kind === "debris" && <div className="text-[12px] text-neutral-500">Debris has no operator. This is a single-operator avoidance.</div>}
+      {e.b.kind === "debris" && <span className="shrink-0 text-[12px] text-neutral-500">Debris has no operator · single-operator avoidance</span>}
     </div>
   );
 }
 
-function PlanSummary({ e }: { e: ConjunctionEvent }) {
-  const p = e.proposal!;
-  const t = optionText(e, p);
+function SpeakingBars() {
   return (
-    <div>
-      <div className="flex flex-wrap items-baseline gap-x-1.5 text-[15px] font-semibold text-white">
-        {t.verb} {t.who ? <ObjectChip e={e} side={t.who} /> : "for the next CDM"}
-        {p.action !== "wait" && <span className="tnum font-normal text-neutral-400">by {p.dvMs} m/s</span>}
-      </div>
-      <div className="tnum mt-2 flex items-baseline gap-2 text-[13px] text-neutral-400">
-        Miss <span className="text-neutral-500 line-through decoration-neutral-600">{fmtMiss(p.missBeforeM)}</span>
-        <span className="text-[18px] font-semibold text-white">{fmtMiss(p.missAfterM)}</span>
-        {p.burnAt && <span className="ml-auto">burn {fmtWhen(p.burnAt)}</span>}
-      </div>
-      <p className="mt-2 text-[13px] leading-[1.6] text-neutral-400">{p.rationale}</p>
-      {p.reason && <p className="mt-1.5 text-[12px] text-orange">Revised: {p.reason}</p>}
-    </div>
+    <span className="flex h-2.5 items-end gap-[2px]">
+      {[0, 0.2, 0.1].map((d, i) => (
+        <span key={i} className="w-[2px] rounded-full bg-green" style={{ height: "100%", animation: `eq 0.9s ${d}s ease-in-out infinite` }} />
+      ))}
+    </span>
   );
 }
 
@@ -297,23 +313,59 @@ function PlanSummary({ e }: { e: ConjunctionEvent }) {
 
 function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room: ReturnType<typeof useRoomState> }) {
   const st = room.state;
+  const due = st?.mode === "decide";
+  // Decision and the agents' run share the main area; a decision that becomes due brings Decision forward
+  const [view, setView] = useState<"decision" | "run">(st ? "decision" : "run");
+  const [wasDue, setWasDue] = useState(due);
+  if (due !== wasDue) {
+    setWasDue(due);
+    if (due) setView("decision");
+  }
+  const spans = useOps((s) => s.spans);
+  const runCount = useMemo(() => spans.filter((x) => x.eventId === e.id).length, [spans, e.id]);
   return (
     <div className="flex min-h-0 flex-col border-r border-white/[0.06]">
-      {/* a fixed slot for the room's state, so changes crossfade in place instead of moving the calls */}
-      {/* the decision box scrolls inside this slot; its pinned Approve bar sits flush with the slot's bottom */}
-      <div className={`shrink-0 px-5 pt-4 ${st?.mode === "decide" ? "thin-scroll max-h-[52%] overflow-y-auto" : ""}`}>
-        <div className="relative min-h-[76px]">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={st ? st.mode + (e.proposal?.version ?? 0) : "working"}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.22 }}
+      <div className="flex shrink-0 items-center gap-3 px-6 pb-3 pt-4">
+        <div className="flex rounded-full bg-white/[0.05] p-1 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]" role="tablist">
+          {(
+            [
+              { id: "decision", label: "Decision" },
+              { id: "run", label: "Agent run" },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={view === t.id}
+              className={`relative flex h-8 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${view === t.id ? "text-black" : "text-neutral-400 hover:text-white"}`}
+              onClick={() => {
+                sfx.click();
+                setView(t.id);
+              }}
             >
+              {view === t.id && <motion.span layoutId={`center-tab-${e.id}`} className="absolute inset-0 rounded-full bg-white" transition={{ type: "spring", stiffness: 520, damping: 38 }} />}
+              <span className="relative flex items-center gap-2">
+                {t.label}
+                {t.id === "decision" && due && <span className="h-1.5 w-1.5 rounded-full bg-orange" />}
+                {t.id === "run" && <span className={`tnum text-[11.5px] ${view === t.id ? "text-black/50" : "text-neutral-600"}`}>{runCount}</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+        <span className="ml-auto text-[12px] text-neutral-600">{view === "run" ? "Every model and tool call · newest first · with latency" : "Both sides approve the same selected plan"}</span>
+      </div>
+
+      <div className="relative min-h-0 flex-1">
+        <AnimatePresence mode="wait" initial={false}>
+          {view === "run" ? (
+            <motion.div key="run" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="absolute inset-0 flex flex-col">
+              <CallFeed className="min-h-0 flex-1 [&_.px-3]:px-6" eventId={e.id} />
+            </motion.div>
+          ) : (
+            // the plans scroll here; the panel's Approve bar stays pinned to the bottom of this area
+            <motion.div key={`decision-${st?.mode ?? "working"}-${e.proposal?.version ?? 0}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="thin-scroll absolute inset-0 overflow-y-auto px-6 pb-5">
               {st?.mode === "decide" ? (
-                // no overflow-hidden here: it would stop the Approve bar from staying pinned while the plans scroll
-                <div className="rounded-[16px] bg-white/[0.02] shadow-[inset_0_0_0_1px_rgba(255,159,64,0.38),inset_0_0_32px_-14px_rgba(255,159,64,0.35)]">
+                <div className="rounded-[16px] bg-white/[0.02] shadow-[inset_0_0_0_1px_rgba(255,159,64,0.32)]">
                   <Decide e={e} viewer={room.viewer} now={now} embedded />
                 </div>
               ) : st?.mode === "waiting" ? (
@@ -329,35 +381,35 @@ function CenterColumn({ e, now, room }: { e: ConjunctionEvent; now: number; room
                   <Done e={e} />
                 </Card>
               ) : (
-                <WorkingLine e={e} />
+                <WorkingLine e={e} onRun={() => setView("run")} />
               )}
             </motion.div>
-          </AnimatePresence>
-        </div>
+          )}
+        </AnimatePresence>
       </div>
-      {/* the agents' work, for everyone in the case: every model and tool call with its latency */}
-      <div className="flex shrink-0 items-baseline justify-between px-5 pb-2 pt-4">
-        <span className="text-[12px] font-semibold text-neutral-200">Agent and tool calls</span>
-        <span className="text-[11px] text-neutral-600">newest first · with latency</span>
-      </div>
-      <CallFeed className="min-h-0 flex-1 [&_.px-3]:px-5" eventId={e.id} />
-      {/* the coordination channel, docked small at the bottom: voice by default, text on the switch */}
-      <div className="flex h-[200px] shrink-0 flex-col border-t border-white/[0.08] bg-black/20">
+
+      {/* the coordination channel, docked: the sphere is the talk button */}
+      <div className="shrink-0 border-t border-white/[0.07] bg-black/25">
         <RoomCall e={e} compact />
       </div>
     </div>
   );
 }
 
-/** What the agents are on while nobody needs to answer. */
-function WorkingLine({ e }: { e: ConjunctionEvent }) {
+/** Nothing to decide yet: say what the agents are on, and offer their run. */
+function WorkingLine({ e, onRun }: { e: ConjunctionEvent; onRun: () => void }) {
   const step = STEPS[Math.min(stepOf(e), STEPS.length - 1)];
   return (
-    <div className="flex h-[76px] items-center gap-3 rounded-[14px] bg-white/[0.025] px-4">
-      {e.agentsWorking ? <Loader2 size={16} className="animate-spin text-blue" /> : <Check size={16} className="text-green" />}
+    <div className="grid h-full min-h-[220px] place-items-center text-center">
       <div>
-        <div className="text-[14px] font-semibold text-white">{e.agentsWorking ? "Agents are working" : "Waiting for the next step"}</div>
-        <div className="text-[12.5px] text-neutral-500">{step} · you will be asked when a decision is needed</div>
+        <div className="mx-auto grid h-10 w-10 place-items-center rounded-full bg-white/[0.04]">
+          {e.agentsWorking ? <Loader2 size={18} className="animate-spin text-[#9cc2ff]" /> : <Check size={18} className="text-green" />}
+        </div>
+        <div className="mt-3 text-[16px] font-medium text-white">{e.agentsWorking ? "The agents are working" : "Waiting for the next step"}</div>
+        <div className="mt-1 text-[13px] text-neutral-500">{step} · the plans appear here when they need your decision</div>
+        <button className="btn btn-ghost-line mt-4 h-8 px-3 text-[12px]" onClick={onRun}>
+          Watch the agent run
+        </button>
       </div>
     </div>
   );
@@ -381,10 +433,9 @@ function AgentsColumn() {
         <span className="text-[12px] font-semibold text-neutral-200">Agents</span>
         <span className="text-[11px] text-neutral-600">click an agent to filter its calls</span>
       </div>
-      <div className="flex flex-1 items-start justify-center">
-        <div className="w-full max-w-[460px]">
-          <AgentGraph big />
-        </div>
+      {/* the graph spreads over the whole column height, so the nodes keep their room */}
+      <div className="flex min-h-0 flex-1 items-start justify-center">
+        <AgentGraph big fill />
       </div>
       <div className="pt-3">
         <GraphLegend />

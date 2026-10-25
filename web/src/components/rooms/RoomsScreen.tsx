@@ -112,6 +112,15 @@ export function RoomCall({ e, compact = false }: { e: ConjunctionEvent; compact?
     void call.join();
   }, [compact, call]);
 
+  // the parties bar shows who is in the call and who is speaking; only the case's docked call reports it
+  const inCallKey = call.participants.filter((p) => !p.isTranslator).map((p) => p.identity.replace(/^user-/, "")).join(",");
+  const speakingKey = call.participants.filter((p) => p.speaking).map((p) => p.identity.replace(/^user-/, "")).join(",");
+  useEffect(() => {
+    if (!compact) return;
+    useOps.setState({ callLive: { eventId: e.id, inCall: inCallKey ? inCallKey.split(",") : [], speaking: speakingKey ? speakingKey.split(",") : [] } });
+  }, [compact, e.id, inCallKey, speakingKey]);
+  useEffect(() => (compact ? () => useOps.setState({ callLive: null }) : undefined), [compact]);
+
   // "option B", "P2", "вариант Б": a plan named in the call is offered for confirmation in the plan panel
   const lastSaid = useRef<string | null>(null);
   useEffect(() => {

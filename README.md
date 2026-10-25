@@ -1,12 +1,44 @@
+<div align="center">
+
 # OrbitCall
 
-**A shared workspace for satellite operators to review close approaches, compare maneuvers, and agree on a plan across languages.**
+**Helping dispatchers avoid satellite collisions**<br>
+**through multilingual communication and AI-assisted decisions.**
 
-OrbitCall combines a 3D orbital view, calculation services, AI agents, and translated voice calls. Each dispatcher works with an assigned fleet. Operators share the evidence and proposed maneuver while keeping their company policies private. People make the final decision.
+<p>
+  <a href="https://orbitcall.vercel.app/"><img src="docs/assets/readme/links/live-demo.png" height="38" alt="Open the live OrbitCall demo"></a>
+  <a href="https://devpost.com/software/orbitcall"><img src="docs/assets/readme/links/devpost.png" height="38" alt="Read the Cal Hacks submission on Devpost"></a>
+  <a href="https://www.youtube.com/watch?v=M4Y5Gk3190E"><img src="docs/assets/readme/links/video.png" height="38" alt="Watch the OrbitCall demo video"></a>
+</p>
 
-[Try the demo](https://orbitcall.vercel.app/) · [Read our Devpost story](https://devpost.com/software/orbitcall) · [Architecture](#architecture) · [Run locally](#run-locally) · [Technical roadmap](docs/master-roadmap.md)
+**Cal Hacks 13.0** · October 23-25, 2026 · Hackathon submission
 
-Built at **Cal Hacks 13.0**, October 23-25, 2026. This is a hackathon prototype. The globe, orbital services, agent calls, voice worker, and supporting backend components are implemented. We are connecting them into the complete shared operator workflow. [Current scope](#current-scope) separates that work from the planned Factory integration.
+[![Watch OrbitCall: a shared workspace for satellite dispatchers](docs/assets/readme/demo-video.jpg)](https://www.youtube.com/watch?v=M4Y5Gk3190E)
+
+[Overview](#why-we-built-it) · [Workflow](#the-operator-workflow) · [Architecture](#architecture) · [Tech stack](#technology-and-sponsor-contributions) · [Data](#real-data-and-reproducible-calculations) · [Run locally](#run-locally) · [Vision](#vision)
+
+</div>
+
+OrbitCall brings fleet monitoring, orbital calculations, AI agents, and translated calls into a shared workspace for satellite operators. Each dispatcher works with an assigned fleet. Operators compare maneuver options, discuss the same evidence, and explicitly approve the plan while keeping company policies private.
+
+### Built with
+
+<p align="center">
+  <a href="https://www.convex.dev/"><img src="docs/assets/readme/logos/convex.png" width="44" height="44" alt="Convex" title="Convex: shared state and backend jobs"></a>&nbsp;
+  <a href="https://www.anthropic.com/"><img src="docs/assets/readme/logos/claude.png" width="44" height="44" alt="Claude" title="Claude: analysis, policies, and translation"></a>&nbsp;
+  <a href="https://ai.google.dev/"><img src="docs/assets/readme/logos/gemini.png" width="44" height="44" alt="Gemini" title="Gemini: coordination host"></a>&nbsp;
+  <a href="https://x.ai/"><img src="docs/assets/readme/logos/grok.png" width="44" height="44" alt="Grok" title="Grok: reasoning checks and speech"></a>&nbsp;
+  <a href="https://livekit.io/"><img src="docs/assets/readme/logos/livekit.png" width="44" height="44" alt="LiveKit" title="LiveKit: shared audio rooms"></a>&nbsp;
+  <a href="https://cartesia.ai/"><img src="docs/assets/readme/logos/cartesia.png" width="44" height="44" alt="Cartesia" title="Cartesia: English and Mandarin speech"></a>
+</p>
+<p align="center">
+  <a href="https://www.digitalocean.com/"><img src="docs/assets/readme/logos/digitalocean.png" width="44" height="44" alt="DigitalOcean" title="DigitalOcean: orbital and voice services"></a>&nbsp;
+  <a href="https://vercel.com/"><img src="docs/assets/readme/logos/vercel.png" width="44" height="44" alt="Vercel" title="Vercel: frontend hosting"></a>&nbsp;
+  <a href="https://auth0.com/"><img src="docs/assets/readme/logos/auth0.png" width="44" height="44" alt="Auth0" title="Auth0: operator identity"></a>&nbsp;
+  <a href="https://backboard.io/"><img src="docs/assets/readme/logos/backboard.png" width="44" height="44" alt="Backboard" title="Backboard: company memory"></a>&nbsp;
+  <a href="https://www.tigerdata.com/"><img src="docs/assets/readme/logos/tigerdata.png" width="44" height="44" alt="Tiger Data" title="Tiger Data: observation history"></a>&nbsp;
+  <a href="https://factory.com/"><img src="docs/assets/readme/logos/factory.png" width="44" height="44" alt="Factory" title="Factory: schedule artifacts"></a>
+</p>
 
 ## Why we built it
 
@@ -26,7 +58,7 @@ Our focus is the coordination between those steps: a place where operators can u
 | **4. Approve** | Selects a plan and explicitly approves its current revision | Separate selection and approval records, a catalog re-screen, and an authorized schedule artifact |
 | **5. Review** | Returns to the incident record and later observations | Source history, the agreed plan, and evidence that is consistent, conflicting, or insufficient |
 
-The planned demonstration uses three dispatcher laptops and a read-only globe on a large display. Each dispatcher has four assigned spacecraft. A room groups linked pair incidents and all operators they involve. There is no fixed participant cap. Each incident keeps its own proposals and approvals.
+Three dispatchers share one case across English, Russian, and Mandarin, while a read-only globe shows the activity on a large display. Each dispatcher has four assigned spacecraft. Rooms group linked pair incidents and their responsible operators. Each incident keeps its own proposals and approvals.
 
 The main screens are **Orbit**, **Decision Center**, **Policy**, and **Inbox**. Starting a workflow creates the shared case, joins the responsible operators, and sends their notifications. The two sides take decision turns. A maneuver affecting several incidents uses one trajectory plan, with current approvals required for every affected pair.
 
@@ -40,7 +72,7 @@ Selecting a card does not approve it. Speech does not approve it. A changed prop
 
 **Convex owns the application state.** Browsers read authorized queries and send commands through mutations. Actions call the orbital service and AI providers, then publish checked results. The shared state updates the operator screens and observer display.
 
-**DigitalOcean hosts the long-running services.** The Python orbital API runs calculation jobs. A separate Python worker joins LiveKit rooms, transcribes speech, translates checked text, and publishes audio. Docker Compose and Caddy define the deployment. The deployed orbital API and voice worker have passed recorded infrastructure checks. The website rehearsal remains separate. The Factory worker is a planned addition. [Deployment evidence](deploy/demo-status.md)
+**DigitalOcean hosts the long-running services.** The Python orbital API runs calculation jobs. A separate Python worker joins LiveKit rooms, transcribes speech, translates checked text, and publishes audio. Docker Compose and Caddy define the deployment. The deployed orbital API and voice worker have passed recorded infrastructure checks. A separate Node.js worker uses Factory to prepare reviewable schedule files. [Deployment evidence](deploy/demo-status.md)
 
 **The browser draws the orbits.** Three.js renders the globe, and satellite.js propagates the pinned orbital elements in a Web Worker. The numerical service handles authoritative screening and maneuver calculations. Browser animation never creates an approval or a screening result.
 
@@ -48,9 +80,9 @@ Selecting a card does not approve it. Speech does not approve it. A changed prop
 
 | Provider | Role | Input and output |
 |---|---|---|
-| <img src="docs/assets/readme/icons/claude.svg" width="24" height="24" alt="Claude"> **Claude** | Incident Analyst and Operator Advocates | Explains checked incident facts and evaluates candidates against each company's private policy. Shared results contain feasibility outcomes and categories rather than private limits |
-| <img src="docs/assets/readme/icons/gemini.png" width="24" height="24" alt="Gemini"> **Gemini** | Coordination Host | Uses shared room context to ask clarifying questions and produce summaries tied to current events, messages, and candidate revisions |
-| <img src="docs/assets/readme/icons/grok.png" width="24" height="24" alt="Grok"> **Grok** | Independent rationale check | Reviews shared explanations and reports agreement or disagreement. It supplements deterministic checks and has no approval authority |
+| <a href="https://www.anthropic.com/"><img src="docs/assets/readme/logos/claude.png" width="28" height="28" alt="Claude"></a> **Claude** | Incident Analyst and Operator Advocates | Explains checked incident facts and evaluates candidates against each company's private policy. Shared results contain feasibility outcomes and categories rather than private limits |
+| <a href="https://ai.google.dev/"><img src="docs/assets/readme/logos/gemini.png" width="28" height="28" alt="Gemini"></a> **Gemini** | Coordination Host | Uses shared room context to ask clarifying questions and produce summaries tied to current events, messages, and candidate revisions |
+| <a href="https://x.ai/"><img src="docs/assets/readme/logos/grok.png" width="28" height="28" alt="Grok"></a> **Grok** | Independent rationale check | Reviews shared explanations and reports agreement or disagreement. It supplements deterministic checks and has no approval authority |
 
 Claude also translates text. Grok also supplies speech recognition and Russian speech. Provider calls record their model, input version, result, and available usage information. Stale or invalid output is rejected before publication.
 
@@ -82,31 +114,31 @@ The translation worker handles this pipeline on DigitalOcean. It listens only to
 
 | Technology | Where we use it |
 |---|---|
-| <img src="docs/assets/readme/icons/nextjs.svg" width="22" height="22" alt="Next.js"> **Next.js** · <img src="docs/assets/readme/icons/react.svg" width="22" height="22" alt="React"> **React** · <img src="docs/assets/readme/icons/typescript.svg" width="22" height="22" alt="TypeScript"> **TypeScript** | App Router frontend, operator interface, typed backend contracts |
-| <img src="docs/assets/readme/icons/threejs.svg" width="22" height="22" alt="Three.js"> **Three.js** · **satellite.js** | Custom globe, satellite rendering, orbit paths, and browser propagation |
-| <img src="docs/assets/readme/icons/tailwind.svg" width="22" height="22" alt="Tailwind CSS"> **Tailwind CSS** · **Motion** · **Zustand** · **Lucide** | Styling, animation, local interface state, and controls |
-| <img src="docs/assets/readme/icons/convex.svg" width="24" height="24" alt="Convex"> [**Convex**](https://www.convex.dev/) | Reactive database, server functions, job scheduling, shared messages, agent-run records, and authorization checks |
-| <img src="docs/assets/readme/icons/auth0.svg" width="24" height="24" alt="Auth0"> [**Auth0**](https://auth0.com/) | Operator identity and the sign-in bridge to Convex. Fleet assignments determine which objects a user can act for |
-| <img src="docs/assets/readme/icons/python.svg" width="22" height="22" alt="Python"> **Python** · <img src="docs/assets/readme/icons/fastapi.svg" width="22" height="22" alt="FastAPI"> **FastAPI** · <img src="docs/assets/readme/icons/numpy.svg" width="22" height="22" alt="NumPy"> **NumPy** · **SGP4** | Fleet screening, candidate geometry, re-screening, simulation, and verification calculations |
-| <img src="docs/assets/readme/icons/vercel.svg" width="24" height="24" alt="Vercel"> [**Vercel**](https://vercel.com/) | Next.js frontend and versioned orbital files served to the browser |
-| <img src="docs/assets/readme/icons/digitalocean.svg" width="24" height="24" alt="DigitalOcean"> [**DigitalOcean**](https://www.digitalocean.com/) · <img src="docs/assets/readme/icons/docker.svg" width="22" height="22" alt="Docker"> **Docker** · <img src="docs/assets/readme/icons/caddy.svg" width="22" height="22" alt="Caddy"> **Caddy** | Deployment configuration for the orbital API, voice worker, persistent data, and HTTPS routing |
+| <a href="https://nextjs.org/"><img src="docs/assets/readme/logos/nextjs.png" width="28" height="28" alt="Next.js">&nbsp;<strong>Next.js</strong></a><br><a href="https://react.dev/"><img src="docs/assets/readme/logos/react.png" width="28" height="28" alt="React">&nbsp;<strong>React</strong></a><br><a href="https://www.typescriptlang.org/"><img src="docs/assets/readme/logos/typescript.png" width="28" height="28" alt="TypeScript">&nbsp;<strong>TypeScript</strong></a> | App Router frontend, operator interface, typed backend contracts |
+| <a href="https://threejs.org/"><img src="docs/assets/readme/logos/threejs.png" width="28" height="28" alt="Three.js">&nbsp;<strong>Three.js</strong></a><br>[**satellite.js**](https://github.com/shashwatak/satellite-js) | Custom globe, satellite rendering, orbit paths, and browser propagation |
+| <a href="https://tailwindcss.com/"><img src="docs/assets/readme/logos/tailwind.png" width="28" height="28" alt="Tailwind CSS">&nbsp;<strong>Tailwind&nbsp;CSS</strong></a><br>[**Motion**](https://motion.dev/)<br><a href="https://zustand.docs.pmnd.rs/"><img src="docs/assets/readme/logos/zustand.png" width="28" height="28" alt="Zustand">&nbsp;<strong>Zustand</strong></a><br>[**Lucide**](https://lucide.dev/) | Styling, animation, local interface state, and controls |
+| <a href="https://www.convex.dev/"><img src="docs/assets/readme/logos/convex.png" width="28" height="28" alt="Convex">&nbsp;<strong>Convex</strong></a> | Reactive database, server functions, job scheduling, shared messages, agent-run records, and authorization checks |
+| <a href="https://auth0.com/"><img src="docs/assets/readme/logos/auth0.png" width="28" height="28" alt="Auth0">&nbsp;<strong>Auth0</strong></a> | Operator identity and the sign-in bridge to Convex. Fleet assignments determine which objects a user can act for |
+| <a href="https://www.python.org/"><img src="docs/assets/readme/logos/python.png" width="28" height="28" alt="Python">&nbsp;<strong>Python</strong></a><br><a href="https://fastapi.tiangolo.com/"><img src="docs/assets/readme/logos/fastapi.png" width="28" height="28" alt="FastAPI">&nbsp;<strong>FastAPI</strong></a><br><a href="https://numpy.org/"><img src="docs/assets/readme/logos/numpy.png" width="28" height="28" alt="NumPy">&nbsp;<strong>NumPy</strong></a><br>[**SGP4**](https://celestrak.org/publications/AIAA/2006-6753/) | Fleet screening, candidate geometry, re-screening, simulation, and verification calculations |
+| <a href="https://vercel.com/"><img src="docs/assets/readme/logos/vercel.png" width="28" height="28" alt="Vercel">&nbsp;<strong>Vercel</strong></a> | Next.js frontend and versioned orbital files served to the browser |
+| <a href="https://www.digitalocean.com/"><img src="docs/assets/readme/logos/digitalocean.png" width="28" height="28" alt="DigitalOcean">&nbsp;<strong>DigitalOcean</strong></a><br><a href="https://www.docker.com/"><img src="docs/assets/readme/logos/docker.png" width="28" height="28" alt="Docker">&nbsp;<strong>Docker</strong></a><br><a href="https://caddyserver.com/"><img src="docs/assets/readme/logos/caddy.png" width="28" height="28" alt="Caddy">&nbsp;<strong>Caddy</strong></a> | Deployment configuration for the orbital API, voice worker, persistent data, and HTTPS routing |
 
 ### AI, voice, memory, and history
 
-| Technology | Contribution | Implementation boundary |
+| Technology | Contribution | How it fits |
 |---|---|---|
-| <img src="docs/assets/readme/icons/claude.svg" width="24" height="24" alt="Claude"> [**Anthropic Claude**](https://www.anthropic.com/) | Incident analysis, private-policy evaluation, and checked translation | Agent and translation implementations are present. Models do not compute orbital evidence or approve plans |
-| <img src="docs/assets/readme/icons/gemini.png" width="24" height="24" alt="Gemini"> [**Google Gemini**](https://ai.google.dev/) | Coordination clarifications and per-event summaries | Uses the official Google GenAI SDK in a Convex Node action with validated structured output |
-| <img src="docs/assets/readme/icons/grok.png" width="24" height="24" alt="Grok"> [**xAI Grok**](https://x.ai/) | Rationale checking, streaming speech recognition, and Russian TTS | Text and audio integrations have separate roles and configuration |
-| <img src="docs/assets/readme/icons/livekit.svg" width="24" height="24" alt="LiveKit"> [**LiveKit**](https://livekit.io/) | Shared audio rooms and translated tracks | A Python worker joins the room. LiveKit transports audio, while final text is stored in Convex |
-| <img src="docs/assets/readme/icons/cartesia.svg" width="24" height="24" alt="Cartesia"> [**Cartesia**](https://cartesia.ai/) | English and Mandarin translated speech | Configured voices are selected by language and speaker voice profile. Missing voices leave text available |
-| <img src="docs/assets/readme/icons/backboard.png" width="24" height="24" alt="Backboard"> [**Backboard**](https://backboard.io/) | Company-scoped memory across incidents | Memory components are implemented. Recalled preferences are context, never standing approval |
-| <img src="docs/assets/readme/icons/tigerdata.svg" width="24" height="24" alt="Tiger Data"> [**Tiger Data**](https://www.tigerdata.com/) · <img src="docs/assets/readme/icons/postgresql.svg" width="22" height="22" alt="PostgreSQL"> **PostgreSQL** | Historical observations and time-series queries | The adapter preserves source, evidence version, observation time, and simulation labels. Convex remains the application authority |
-| <img src="docs/assets/readme/icons/factory.svg" width="24" height="24" alt="Factory"> [**Factory Droid SDK**](https://factory.com/) | Planned schedule preview and authorized file artifact | The dedicated scheduling worker remains to build. It must write the exact approved revision after re-screening |
+| <a href="https://www.anthropic.com/"><img src="docs/assets/readme/logos/claude.png" width="28" height="28" alt="Claude">&nbsp;<strong>Anthropic&nbsp;Claude</strong></a> | Incident analysis, private-policy evaluation, and checked translation | Explains calculated evidence, checks company policies, and translates messages while preserving numerical values |
+| <a href="https://ai.google.dev/"><img src="docs/assets/readme/logos/gemini.png" width="28" height="28" alt="Gemini">&nbsp;<strong>Google&nbsp;Gemini</strong></a> | Coordination clarifications and per-event summaries | Uses the official Google GenAI SDK in a Convex Node action with validated structured output |
+| <a href="https://x.ai/"><img src="docs/assets/readme/logos/grok.png" width="28" height="28" alt="Grok">&nbsp;<strong>xAI&nbsp;Grok</strong></a> | Rationale checking, streaming speech recognition, and Russian TTS | Text and audio integrations have separate roles and configuration |
+| <a href="https://livekit.io/"><img src="docs/assets/readme/logos/livekit.png" width="28" height="28" alt="LiveKit">&nbsp;<strong>LiveKit</strong></a> | Shared audio rooms and translated tracks | A Python worker joins the room. LiveKit transports audio, while final text is stored in Convex |
+| <a href="https://cartesia.ai/"><img src="docs/assets/readme/logos/cartesia.png" width="28" height="28" alt="Cartesia">&nbsp;<strong>Cartesia</strong></a> | English and Mandarin translated speech | Configured voices are selected by language and speaker voice profile. Missing voices leave text available |
+| <a href="https://backboard.io/"><img src="docs/assets/readme/logos/backboard.png" width="28" height="28" alt="Backboard">&nbsp;<strong>Backboard</strong></a> | Company-scoped memory across incidents | Recalls operator preferences and past context for the agents. Every proposal still requires current human approval |
+| <a href="https://www.tigerdata.com/"><img src="docs/assets/readme/logos/tigerdata.png" width="28" height="28" alt="Tiger Data">&nbsp;<strong>Tiger&nbsp;Data</strong></a> · <a href="https://www.postgresql.org/"><img src="docs/assets/readme/logos/postgresql.png" width="28" height="28" alt="PostgreSQL">&nbsp;<strong>PostgreSQL</strong></a> | Historical observations and time-series queries | The adapter preserves source, evidence version, observation time, and simulation labels. Convex remains the application authority |
+| <a href="https://factory.com/"><img src="docs/assets/readme/logos/factory.png" width="28" height="28" alt="Factory">&nbsp;<strong>Factory&nbsp;Droid&nbsp;SDK</strong></a> | Schedule preview and authorized file artifact | A Node.js worker prepares the schedule file with Droid and commits the reserved preview. Approvals and re-screening stay with the application |
 
 ### Development tools
 
-<img src="docs/assets/readme/icons/cursor.svg" width="24" height="24" alt="Cursor"> **Cursor** was part of our development workflow for writing, refactoring, and debugging the frontend, Convex backend, and Python services. We also used **Grok Bot** to plan the project and coordinate work between teammates. Git and <img src="docs/assets/readme/icons/github.svg" width="22" height="22" alt="GitHub"> **GitHub** keep the independently developed components together.
+<a href="https://cursor.com/"><img src="docs/assets/readme/logos/cursor.png" width="28" height="28" alt="Cursor">&nbsp;<strong>Cursor</strong></a> was part of our development workflow for writing, refactoring, and debugging the frontend, Convex backend, and Python services. We also used [**Grok Bot**](https://x.ai/) to plan the project and coordinate work between teammates. Git and <a href="https://github.com/"><img src="docs/assets/readme/logos/github.png" width="28" height="28" alt="GitHub">&nbsp;<strong>GitHub</strong></a> keep the independently developed components together.
 
 ## Real data and reproducible calculations
 
@@ -114,11 +146,11 @@ The main catalog contains **19,468 unique space objects** in the pinned CelesTra
 
 | Source | What it supplies | How we use it |
 |---|---|---|
-| <img src="docs/assets/readme/icons/celestrak.png" width="24" height="24" alt="CelesTrak"> [**CelesTrak GP**](https://celestrak.org/NORAD/documentation/gp-data-formats.php) | OMM orbital elements for active spacecraft and selected debris groups | The shared real-mode catalog and SGP4 calculations |
+| <a href="https://celestrak.org/"><img src="docs/assets/readme/logos/celestrak.png" width="28" height="28" alt="CelesTrak"></a> [**CelesTrak GP**](https://celestrak.org/NORAD/documentation/gp-data-formats.php) | OMM orbital elements for active spacecraft and selected debris groups | The shared real-mode catalog and SGP4 calculations |
 | **CelesTrak SATCAT** | Object metadata, including ownership, launch information, and object type | Satellite details and classification. Demo assignments remain separate from real ownership |
 | [**CelesTrak SOCRATES**](https://celestrak.org/SOCRATES/) | Reference conjunction records and supplied maximum probability | An independent comparison for our screening, with source and epoch differences visible |
-| <img src="docs/assets/readme/icons/nasa.svg" width="24" height="24" alt="NASA"> [**NASA ISS ephemeris**](https://spotthestation.nasa.gov/trajectory_data.cfm) | Public ISS trajectory data | Input to the separately labeled, simulated maneuver-verification replay |
-| <img src="docs/assets/readme/icons/nasa.svg" width="24" height="24" alt="NASA"> **NASA GIBS** · <img src="docs/assets/readme/icons/esri.svg" width="24" height="24" alt="Esri"> **Esri** · **NOAA** · **GDACS** · **EUMETSAT** | Earth imagery and weather/context layers | Visual context on the globe, separate from collision evidence |
+| <a href="https://www.nasa.gov/"><img src="docs/assets/readme/logos/nasa.png" width="28" height="28" alt="NASA"></a> [**NASA ISS ephemeris**](https://spotthestation.nasa.gov/trajectory_data.cfm) | Public ISS trajectory data | Input to the separately labeled, simulated maneuver-verification replay |
+| <a href="https://www.nasa.gov/"><img src="docs/assets/readme/logos/nasa.png" width="28" height="28" alt="NASA"></a> **NASA GIBS** · <a href="https://www.esri.com/"><img src="docs/assets/readme/logos/esri.png" width="28" height="28" alt="Esri"></a> **Esri** · **NOAA** · **GDACS** · **EUMETSAT** | Earth imagery and weather/context layers | Visual context on the globe, separate from collision evidence |
 
 Real mode uses OMM directly. Development mode keeps the TLE catalog and synthetic scenarios for interface work. OMM is a data format, not an automatic accuracy improvement. Source quality, epoch, and the propagation method still matter.
 
@@ -130,21 +162,21 @@ The orbital service calculates geometry. It does not invent covariance, calculat
 
 The orbital-service documentation records a comparison against **200 SOCRATES rows with matching orbital inputs**: 200 matched, a 0.001-second 95th-percentile closest-approach-time error, and a 7-metre 95th-percentile miss-distance error. The other 38,190 rows have different orbital inputs and are reported separately as data differences.
 
-That comparison uses the pinned TLE validation snapshot, not the later OMM catalog shown in real mode. It measures a comparable reference subset. It is not a flight-safety certification or a claim that every catalog encounter has that accuracy. [Method and limitations](services/orbit/README.md#limits-say-them-in-the-pitch)
+That comparison uses the pinned TLE validation snapshot, separate from the later OMM catalog shown in real mode. The figures describe the matching-input subset. Other source and epoch differences remain visible in the results. [Method and limitations](services/orbit/README.md#limits-say-them-in-the-pitch)
 
-## Current scope
+## Inside the submission
 
-| Area | What is present | What still needs to happen |
-|---|---|---|
-| Globe and catalog | Interactive Three.js view, pinned OMM loading, direct propagation, satellite details, and a TLE development mode | Rehearse the deployed operator workflow with the same catalog and assignments |
-| Orbital API | Screening, candidate generation, re-screening, verification, simulation, persisted jobs, and service tests | Complete the application wiring and deployment checks for the full sequence |
-| Shared backend | Assigned-fleet scans, workflow rooms, inbox, proposal selection, approval invalidation, maneuver records, and observer projections | Connect and rehearse the frontend with the current shared contracts |
-| Agents and identity | Claude, Gemini, and Grok call implementations, private policies, Auth0 integration, assignments, and checked results | Verify the connected discussion, revision, and approval flow across the operator screens |
-| Voice | LiveKit room integration and a tested three-language translation worker | Rehearse speech recognition, values, track routing, and recovery on the demo network |
-| Memory and history | Backboard components and Tiger Data observation/query adapters | Complete their incident-workflow integration and visible demonstration |
-| Scheduling | Defined approval, re-screening, preview, and artifact contracts | Implement and connect the dedicated Factory worker |
+| Component | What it provides |
+|---|---|
+| **Globe and catalog** | A Three.js orbital view, satellite details, source-linked OMM data, and a TLE development mode |
+| **Fleet screening** | Assigned-spacecraft scans, calculated maneuver candidates, catalog re-screening, persisted jobs, and coverage records |
+| **Shared decisions** | Workflow rooms, notifications, proposal selection, current-revision approvals, and a read-only observer view |
+| **AI agents** | Claude analysis and policy evaluation, Gemini coordination, and independent Grok reasoning checks |
+| **Multilingual calls** | LiveKit audio with English, Russian, and Mandarin translation, original text, checked values, and translated speech |
+| **Memory and history** | Company-scoped Backboard context and Tiger Data observations with timestamps and source labels |
+| **Schedule artifacts** | A Factory Droid worker that prepares a reviewable file and records an exact, versioned commit |
 
-The demo uses simulated encounters, policies, assignments, and proposed maneuvers alongside real catalog data. Verification uses a separately labeled simulated replay. A scheduled artifact records an agreement, not evidence that a spacecraft executed a maneuver. OrbitCall does not command spacecraft.
+The hackathon scenarios use simulated encounters, policies, assignments, and maneuvers alongside real catalog data. The verification replay is labeled simulated. Schedule artifacts record coordination decisions. Spacecraft execution stays with the operator.
 
 ## Run locally
 
@@ -187,6 +219,7 @@ Keep provider keys in the server that uses them. The backend requires the config
 | Backend, models, and data contracts | [Master roadmap](docs/master-roadmap.md), [API specification](docs/specification.md), [Analyst guide](docs/phase1-andrew.md) |
 | Python orbital service and pinned data | [Orbital-service README](services/orbit/README.md) |
 | Voice worker, provider configuration, and smoke checks | [Voice-worker README](services/voice/README.md) |
+| Factory schedule worker and SDK | [Scheduler README](services/scheduler/README.md) |
 | DigitalOcean, Docker Compose, and Caddy | [Deployment runbook](deploy/README.md) |
 | Frontend and design conventions | [Web README](web/README.md), [UI design system](docs/adil/design-system.md) |
 
@@ -210,7 +243,11 @@ Small details can change an orbital verdict. A distance just below a threshold m
 
 AI output needs the same care. Numerical values come from tools, references must identify real records, and a result can become stale while a model is answering. Clear ownership of data and explicit human decisions made the individual components easier to reason about and test.
 
-Our next milestone is the complete three-operator demonstration: one shared case, discussion in three languages, a checked revision, current human approvals, and a traceable schedule artifact.
+## Vision
+
+OrbitCall brings people, orbital evidence, and AI assistance into the same decision. We see it growing into an international coordination network where operators of a few spacecraft and teams managing large constellations can work through encounters together.
+
+The wider goal is fewer avoidable maneuvers, less fuel spent resolving orbital conflicts, and a lower risk of creating more debris. Connecting operator-supplied trajectories and standard Conjunction Data Messages would give those discussions better evidence, while explicit approvals keep each operator responsible for their spacecraft.
 
 ## Project documents
 
@@ -225,6 +262,6 @@ The [master roadmap](docs/master-roadmap.md) is the source of truth for the agre
 
 ## Team
 
-**Adilbek Bazarkulov** · **Konstantin Savkin** · **Andrew Yu** · **Freja R**
+[**Adilbek Bazarkulov**](https://devpost.com/bazarkua) · [**Konstantin Savkin**](https://devpost.com/k-e-savkin) · [**Andrew Yu**](https://devpost.com/AndrewYYu) · [**Freja R**](https://devpost.com/96528025)
 
 [Live demo](https://orbitcall.vercel.app/) · [Devpost](https://devpost.com/software/orbitcall) · [Source](https://github.com/ksavkin/OrbitCall)

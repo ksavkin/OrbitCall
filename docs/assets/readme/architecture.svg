@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1995" viewBox="0 0 2000 1995" role="img" aria-labelledby="title desc">
 <title id="title">OrbitCall system architecture</title>
-<desc id="desc">A layered architecture. Auth0 authenticates Vercel operator browsers and the read-only display. Convex is the central application database and job authority. LiveKit audio connects to a DigitalOcean translation worker using Grok recognition and Russian speech, Claude translation, and Cartesia English and Mandarin speech. Convex calls Claude, Gemini and Grok agents, a DigitalOcean orbital API, Backboard memory and Tiger Data history. A Factory schedule-artifact worker is planned. CelesTrak supplies pinned OMM to the orbital API.</desc>
+<desc id="desc">A layered architecture. Auth0 authenticates Vercel operator browsers and the read-only display. Convex is the central application database and job authority. LiveKit audio connects to a DigitalOcean translation worker using Grok recognition and Russian speech, Claude translation, and Cartesia English and Mandarin speech. Convex calls Claude, Gemini and Grok agents, a DigitalOcean orbital API, Backboard memory and Tiger Data history. A Factory Node.js worker prepares schedule artifacts. CelesTrak supplies pinned OMM to the orbital API.</desc>
 <defs>
   <style>
     text { font-family: Arial, Helvetica, sans-serif; fill: #19283f; }
@@ -224,7 +224,7 @@
 <text x="1149" y="1822" class="brand" font-size="33">Factory</text>
 <image class="role-icon" x="1052" y="1869" width="25" height="25" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyOCIgaGVpZ2h0PSIyOCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM3YjZhNTUiIHN0cm9rZS13aWR0aD0iMS44IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLWNhbGVuZGFyLWNoZWNrIiBhcmlhLWhpZGRlbj0idHJ1ZSI+PHBhdGggZD0iTTggMnYzIj48L3BhdGg+PHBhdGggZD0iTTE2IDJ2MyI+PC9wYXRoPjxyZWN0IHg9IjMiIHk9IjMiIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgcng9IjIiPjwvcmVjdD48cGF0aCBkPSJNMyA5aDE4Ij48L3BhdGg+PHBhdGggZD0ibTkgMTUgMiAyIDQtNCI+PC9wYXRoPjwvc3ZnPgo="/>
 <text x="1090" y="1890" class="detail" font-size="24">Schedule artifacts</text>
-<text x="1090" y="1925" class="detail" font-size="21">Planned DigitalOcean worker</text>
+<text x="1090" y="1925" class="detail" font-size="21">Node.js + Droid SDK</text>
 </g>
 <g id="data" class="node" data-label="CelesTrak">
 <rect class="card" x="1515" y="1745" width="440" height="205" rx="22" fill="#f0f8f6" stroke="#b9d9cf" stroke-width="1.8"/>

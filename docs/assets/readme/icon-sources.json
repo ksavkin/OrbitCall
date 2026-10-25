@@ -25,44 +25,9 @@
       "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/nextdotjs.svg"
     },
     {
-      "file": "react.svg",
-      "slug": "react",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/react.svg"
-    },
-    {
-      "file": "typescript.svg",
-      "slug": "typescript",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/typescript.svg"
-    },
-    {
       "file": "threejs.svg",
       "slug": "threedotjs",
       "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/threedotjs.svg"
-    },
-    {
-      "file": "tailwind.svg",
-      "slug": "tailwindcss",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/tailwindcss.svg"
-    },
-    {
-      "file": "python.svg",
-      "slug": "python",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/python.svg"
-    },
-    {
-      "file": "fastapi.svg",
-      "slug": "fastapi",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/fastapi.svg"
-    },
-    {
-      "file": "docker.svg",
-      "slug": "docker",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/docker.svg"
-    },
-    {
-      "file": "postgresql.svg",
-      "slug": "postgresql",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/postgresql.svg"
     },
     {
       "file": "cursor.svg",
@@ -80,19 +45,14 @@
       "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/github.svg"
     },
     {
-      "file": "nasa.svg",
-      "slug": "nasa",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/nasa.svg"
-    },
-    {
       "file": "esri.svg",
       "slug": "esri",
       "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/esri.svg"
     },
     {
-      "file": "numpy.svg",
-      "slug": "numpy",
-      "source": "https://github.com/simple-icons/simple-icons/blob/16.35.0/icons/numpy.svg"
+      "file": "devpost.svg",
+      "slug": "devpost",
+      "source": "https://raw.githubusercontent.com/simple-icons/simple-icons/16.35.0/icons/devpost.svg"
     }
   ],
   "vendorAssets": [
@@ -161,6 +121,23 @@
         "#EE342F"
       ],
       "bytes": 948
+    },
+    {
+      "file": "react.svg",
+      "source": "https://react.dev/images/brand/logo_dark.svg",
+      "bytes": 6773,
+      "colors": [
+        "#58C4DC"
+      ]
+    },
+    {
+      "file": "nasa.svg",
+      "source": "https://www.nasa.gov/wp-content/themes/nasa/assets/images/nasa-logo.svg",
+      "bytes": 6592,
+      "colors": [
+        "#0b3d91",
+        "#fc3d21"
+      ]
     }
   ],
   "roleIcons": {
@@ -170,5 +147,102 @@
     "version": "1.61.0",
     "license": "ISC, with MIT notices for Feather-derived icons",
     "licenseFile": "icons/roles/LICENSE.txt"
+  },
+  "devicon": {
+    "collection": "Devicon",
+    "revision": "6a37858047b0e8d9c9c0e68f4a071fc410652e89",
+    "license": "MIT",
+    "licenseFile": "icons/DEVICON-LICENSE.txt",
+    "icons": [
+      {
+        "file": "typescript.svg",
+        "source": "https://raw.githubusercontent.com/devicons/devicon/6a37858047b0e8d9c9c0e68f4a071fc410652e89/icons/typescript/typescript-original.svg",
+        "bytes": 944,
+        "colors": [
+          "#007acc"
+        ]
+      },
+      {
+        "file": "tailwind.svg",
+        "source": "https://raw.githubusercontent.com/devicons/devicon/6a37858047b0e8d9c9c0e68f4a071fc410652e89/icons/tailwindcss/tailwindcss-original.svg",
+        "bytes": 689,
+        "colors": [
+          "#38bdf8"
+        ]
+      },
+      {
+        "file": "python.svg",
+        "source": "https://raw.githubusercontent.com/devicons/devicon/6a37858047b0e8d9c9c0e68f4a071fc410652e89/icons/python/python-original.svg",
+        "bytes": 2300,
+        "colors": [
+          "#306998",
+          "#5A9FD4",
+          "#7F7F7F",
+          "#B8B8B8",
+          "#FFD43B",
+          "#FFE873"
+        ]
+      },
+      {
+        "file": "fastapi.svg",
+        "source": "https://raw.githubusercontent.com/devicons/devicon/6a37858047b0e8d9c9c0e68f4a071fc410652e89/icons/fastapi/fastapi-original.svg",
+        "bytes": 3065,
+        "colors": [
+          "#049688"
+        ]
+      },
+      {
+        "file": "numpy.svg",
+        "source": "https://raw.githubusercontent.com/devicons/devicon/6a37858047b0e8d9c9c0e68f4a071fc410652e89/icons/numpy/numpy-original.svg",
+        "bytes": 758,
+        "colors": [
+          "#4DABCF",
+          "#4c75cf"
+        ]
+      },
+      {
+        "file": "docker.svg",
+        "source": "https://raw.githubusercontent.com/devicons/devicon/6a37858047b0e8d9c9c0e68f4a071fc410652e89/icons/docker/docker-original.svg",
+        "bytes": 4453,
+        "colors": [
+          "#00AADA",
+          "#00ACD3",
+          "#019BC6",
+          "#028BB8",
+          "#23C2EE",
+          "#28B8EB",
+          "#3A4D54",
+          "#BFDBE0",
+          "#D4EEF1"
+        ]
+      },
+      {
+        "file": "postgresql.svg",
+        "source": "https://raw.githubusercontent.com/devicons/devicon/6a37858047b0e8d9c9c0e68f4a071fc410652e89/icons/postgresql/postgresql-original.svg",
+        "bytes": 9179,
+        "colors": [
+          "#336791"
+        ]
+      },
+      {
+        "file": "zustand.svg",
+        "source": "https://raw.githubusercontent.com/devicons/devicon/6a37858047b0e8d9c9c0e68f4a071fc410652e89/icons/zustand/zustand-original.svg",
+        "bytes": 123894,
+        "colors": [
+          "#050504",
+          "#090706",
+          "#111512",
+          "#13100e",
+          "#25211c",
+          "#2c2925",
+          "#312f2a",
+          "#3a3630",
+          "#3b3732",
+          "#403222",
+          "#443e38",
+          "#524c41"
+        ]
+      }
+    ]
   }
 }

@@ -554,3 +554,9 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* speaking bars beside a party's name */
+@keyframes eq {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}

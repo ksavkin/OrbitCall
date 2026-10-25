@@ -8,9 +8,10 @@ From the repository root:
 
 ```sh
 python3 docs/assets/readme/build-architecture.py
+node docs/assets/readme/build-readme-assets.mjs
 ```
 
-Open `architecture.svg` in a browser at its native 2000 by 1995 size. Wait for all embedded images and fonts, then capture the SVG element as `architecture.png`. The committed PNG is a Chromium screenshot of the complete SVG element at CSS pixel scale.
+The Node.js script uses the frontend's Sharp dependency to export `architecture.svg` as `architecture.png` at its native 2000 by 1995 size. Install the frontend dependencies before running it. Inspect the export in a browser after rebuilding.
 
 Keep the PNG and SVG together. The README embeds the PNG for consistent GitHub rendering and links to the editable SVG. All logo and role images in the SVG are embedded as data URLs, so it makes no network requests.
 
@@ -20,7 +21,7 @@ Keep the PNG and SVG together. The README embeds the PNG for consistent GitHub r
 - Convex is the largest card because it owns shared application state and coordinates backend work.
 - Each service has its original brand artwork in a circular badge and a separate role icon.
 - Color identifies a service family. Orthogonal connections show the communication paths.
-- The Factory worker is marked planned until its implementation is present.
+- The Factory card identifies the Node.js and Droid schedule worker.
 
 Check text padding, line spacing, connector crossings, and logo rendering after any change. Keep labels out of connector paths and leave enough room for both Mandarin and English speech labels.
 
@@ -30,3 +31,11 @@ Check text padding, line spacing, connector crossings, and logo rendering after 
 - Claude, DigitalOcean, Convex, Factory, Cartesia, Grok, Gemini, Backboard, CelesTrak, and Tiger Data artwork comes from their vendor-hosted assets. Exact download URLs are in the manifest. Claude uses its original orange symbol, DigitalOcean uses its official blue icon, and Convex uses the original multicolor symbol from its brand kit. These files retain their vendor colors. Gemini uses the Gemini sparkle, and Factory and Cartesia use their own symbols.
 - Role icons come from the repository's installed [Lucide](https://lucide.dev/) package. Its ISC and applicable MIT notices are included in [icons/roles/LICENSE.txt](icons/roles/LICENSE.txt). These symbols describe service functions and are separate from company logos.
 - Brand names and marks belong to their respective owners. Their inclusion identifies the project's technologies and integrations.
+
+## README presentation assets
+
+Run `node docs/assets/readme/build-readme-assets.mjs` from the repository root after installing the frontend dependencies. It uses the frontend's Sharp package to generate `logos/*.png`, the linked navigation images in `links/`, and the architecture PNG. The circles provide a consistent light surface for original brand artwork on both GitHub themes. Brand paths and colors stay intact.
+
+Color stack icons come from pinned [Devicon source artwork](https://github.com/devicons/devicon). The revision and file URLs are in `icon-sources.json`, with its MIT notice in `icons/DEVICON-LICENSE.txt`. React and NASA use assets from their own websites. These third-party asset licenses do not assign a license to OrbitCall.
+
+The video cover comes from the team's published OrbitCall demo. Its source and video URL are recorded in `link-sources.json`. The navigation badge layout is authored locally and displays links, not build-status or license claims.
