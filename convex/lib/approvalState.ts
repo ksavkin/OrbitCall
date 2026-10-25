@@ -150,7 +150,8 @@ export async function invalidateEventApprovals(ctx: MutationCtx, supplied: Doc<"
   const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
   const decided = reserved || set?.state === "scheduled" || RESOLVED_STATUSES.has(event.status ?? "new");
   if ((decided || reason === "evidence_changed") && set && !set.reviewRequired) await ctx.db.patch(set._id, { reviewRequired: true });
-  if (!selection?.proposalId && !current.length) return;
+  // Nothing to reset, but a plan may still list the event (affected without a selection): bring it up to date.
+  if (!selection?.proposalId && !current.length) { if (!reason.startsWith("trajectory_")) await syncPlans(ctx, event); return; }
   await advanceSelection(ctx, event, selection?.proposalId && selection.revision !== null ?
     { proposalId: selection.proposalId, revision: selection.revision } : null, { kind: "agents" }, reason);
   if (!decided && event.active) {
@@ -173,7 +174,8 @@ export async function expireUndecidedApprovals(ctx: MutationCtx, supplied: Doc<"
   }
   const selection = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
   const current = await ctx.db.query("approvals").withIndex("by_event_current", q => q.eq("eventId", event._id).eq("current", true)).collect();
-  if (!selection?.proposalId && !current.length) return;
+  // An expired event listed in a plan without a selection would otherwise keep the plan waiting for its ref.
+  if (!selection?.proposalId && !current.length) { await syncPlans(ctx, event); return; }
   await advanceSelection(ctx, event, selection?.proposalId && selection.revision !== null ?
     { proposalId: selection.proposalId, revision: selection.revision } : null, { kind: "agents" }, "event_expired");
 }
