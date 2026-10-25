@@ -56,18 +56,17 @@ describe("session.me", () => {
 
   it("returns the stored profile, the company and the active assignments", async () => {
     const { t, northId } = await seed();
-    expect(await as(t, "ana", { name: "Auth0 Name" }).query(me, {})).toEqual({
+    expect(await as(t, "ana").query(me, {})).toEqual({
       userId: expect.any(String), name: "Ana Ortiz", role: "operator", language: "ru", dispatcherCountry: "RU",
       company: { companyId: northId, name: "North Orbital", country: "US", simulated: false },
       assignedObjectIds: ["48211", "48212"], assignmentVersion: 1,
     });
   });
 
-  it("falls back from the stored name to the Auth0 name, then to null", async () => {
+  it("shows only the provisioned name, never the self-editable Auth0 name", async () => {
     const { t } = await seed();
-    expect((await as(t, "hoa", { name: "Hoa Tran" }).query(me, {})).name).toBe("Hoa Tran");
-    expect((await as(t, "hoa").query(me, {})).name).toBeNull();
-    expect((await as(t, "hoa", { name: "   " }).query(me, {})).name).toBeNull();
+    expect((await as(t, "ana", { name: "Dispatch Control" }).query(me, {})).name).toBe("Ana Ortiz");
+    expect((await as(t, "hoa", { name: "Hoa Tran" }).query(me, {})).name).toBeNull();
   });
 
   it("reads a legacy row without the new fields as null", async () => {
@@ -151,6 +150,20 @@ describe("provisioning", () => {
     expect(await as(t, "ana").query(getMySettings, {})).toEqual({ language: "en", contact: "ops@north.example" });
   });
 
+  it("refuses a satellite that another company already operates", async () => {
+    const { t } = await seed();
+    const south = { key: "south", name: "South Space", simulated: true, objectIds: ["48211"],
+      members: [{ tokenIdentifier: token("bo"), role: "operator" as const, assignedObjectIds: ["48211"] }] };
+    expect(await code(t.mutation(internal.operators.provision, south))).toBe("FORBIDDEN");
+    expect((await as(t, "bo").query(me, {})).assignedObjectIds).toEqual(["25544"]);
+  });
+
+  it("rejects overlong profile text", async () => {
+    const { t } = await seed();
+    expect(await code(provision(t, north([ana(["48211"], { name: "x".repeat(101) })])))).toBe("VALIDATION");
+    expect(await code(provision(t, north([ana(["48211"])], { country: "x".repeat(101) })))).toBe("VALIDATION");
+  });
+
   it("rejects the same account twice in one request, and a padded identifier", async () => {
     const { t } = await seed();
     expect(await code(provision(t, north([ana(["48211"]), ana(["48212"])])))).toBe("VALIDATION");
@@ -195,7 +208,8 @@ describe("company settings", () => {
 describe("auth.config", () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
 
-  it("trusts exactly one Auth0 tenant and audience from the deployment environment", async () => {
+  // Wiring only: Convex evaluates this file with the deployment's variables, which a unit test cannot see.
+  it("builds one Auth0 provider from the two environment values", async () => {
     vi.stubEnv("AUTH0_DOMAIN", "orbitcall.us.auth0.com");
     vi.stubEnv("AUTH0_CLIENT_ID", "client-test");
     const { default: config } = await import("../convex/auth.config");

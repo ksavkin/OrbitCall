@@ -8,6 +8,14 @@ export const userRole = v.union(v.literal("operator"), v.literal("head_of_ops"),
 export type Lang = "en" | "ru" | "zh";
 
 export const MAX_CONTACT = 200;
+export const MAX_PROFILE_TEXT = 100;
+
+/** Trims a provisioned profile value. Blank clears it; longer than MAX_PROFILE_TEXT is rejected, never truncated. */
+export function profileText(field: string, value: string): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length > MAX_PROFILE_TEXT) throw new ConvexError({ code: "VALIDATION", message: `${field} must be at most ${MAX_PROFILE_TEXT} characters.` });
+  return trimmed || undefined;
+}
 
 /**
  * Normalizes a contact value for a patch. undefined: leave the stored value alone.

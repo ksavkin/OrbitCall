@@ -1,6 +1,6 @@
 import { internalMutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { contactPatch, lang, setActiveAssignments, userRole } from "./lib/accounts";
+import { contactPatch, lang, profileText, setActiveAssignments, userRole } from "./lib/accounts";
 
 // Trusted account/ownership setup, not registration. No browser may claim a company or satellite.
 // Optional profile and settings fields: omitted keeps the stored value; provided overwrites it.
@@ -21,7 +21,7 @@ export const provision = internalMutation({
     const companyId = existing?._id ?? await ctx.db.insert("companies", { key, name, simulated });
     const contactChange = contactPatch(contact);
     const companyPatch = {
-      ...(country === undefined ? {} : { country: country.trim() || undefined }),
+      ...(country === undefined ? {} : { country: profileText("Country", country) }),
       ...(language === undefined ? {} : { language }),
       ...(contactChange === null ? {} : { contact: "clear" in contactChange ? undefined : contactChange.contact }),
     };
@@ -42,9 +42,9 @@ export const provision = internalMutation({
       if (user && user.companyId !== companyId) throw new ConvexError({ code: "FORBIDDEN", message: "This account already belongs to a different company." });
       const profile = {
         role: member.role,
-        ...(member.name === undefined ? {} : { name: member.name.trim() || undefined }),
+        ...(member.name === undefined ? {} : { name: profileText("Name", member.name) }),
         ...(member.language === undefined ? {} : { language: member.language }),
-        ...(member.dispatcherCountry === undefined ? {} : { dispatcherCountry: member.dispatcherCountry.trim() || undefined }),
+        ...(member.dispatcherCountry === undefined ? {} : { dispatcherCountry: profileText("Dispatcher country", member.dispatcherCountry) }),
       };
       if (user) await ctx.db.patch(user._id, profile);
       const userId = user?._id ?? await ctx.db.insert("users", { tokenIdentifier: member.tokenIdentifier, companyId, ...profile });

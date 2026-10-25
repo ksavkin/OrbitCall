@@ -29,15 +29,16 @@ async function requireSettingsOperator(ctx: QueryCtx) {
 export const me = query({
   args: {},
   handler: async ctx => {
-    const { identity, user, company } = await requireUser(ctx);
+    const { user, company } = await requireUser(ctx);
     const assignments = await ctx.db.query("fleetAssignments")
       .withIndex("by_user_object", q => q.eq("userId", user._id)).collect();
     // Only current assignments grant responsibility; inactive rows are history.
-    const assignedObjectIds = assignments.filter(a => a.active).map(a => a.objectId).sort();
+    const assignedObjectIds = [...new Set(assignments.filter(a => a.active).map(a => a.objectId))].sort();
     return {
       userId: user._id,
-      // Stored display name first, then the Auth0 profile name, else unavailable.
-      name: user.name ?? (identity.name?.trim() || null),
+      // Only the provisioned name. The Auth0 profile name can be edited by its owner, and this name is
+      // shown next to approvals, so it is never used as a fallback.
+      name: user.name ?? null,
       role: user.role,
       language: user.language ?? null,
       dispatcherCountry: user.dispatcherCountry ?? null,
