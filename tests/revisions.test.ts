@@ -353,31 +353,33 @@ describe("publication freshness and authorization", () => {
     expect(fetch).not.toHaveBeenCalled(); expect(await cards(s)).toEqual(before);
   });
 
-  it("refuses a shared mover without publishing independent per-event revisions", async () => {
+  it("refuses to change a burn shared by the horizon without publishing independent per-event revisions", async () => {
     const s = await setup();
-    const other = await insertEvent(s.t, { ...advocateEvent, objectB: { ...advocateEvent.objectB, objectId: "SIM-3001" } });
-    await s.t.run(ctx => ctx.db.insert("roomEvents", { roomId: s.roomId, eventId: other, linkedAt: Date.now() }));
+    // No room link: the other encounter of SIM-1001 inside the new burn's 72 h horizon makes the burn shared.
+    await insertEvent(s.t, { ...advocateEvent, objectB: { ...advocateEvent.objectB, objectId: "SIM-3001" } });
     const before = await cards(s); orbit();
     expect(await run(s)).toEqual([expect.objectContaining({ status: "failed", code: "TRAJECTORY_PLAN_REQUIRED" })]);
     expect(await cards(s)).toEqual(before);
     expect(await s.t.run(ctx => ctx.db.query("trajectoryPlans").collect())).toEqual([]);
   });
 
-  it("rechecks a shared-mover link that appears while the numerical request is in flight", async () => {
+  it("rechecks a shared mover's encounter that appears while the numerical request is in flight", async () => {
     const s = await setup();
-    const other = await insertEvent(s.t, { ...advocateEvent, objectB: { ...advocateEvent.objectB, objectId: "SIM-3001" } });
     const before = await cards(s);
-    orbit(() => s.t.run(async ctx => { await ctx.db.insert("roomEvents", { roomId: s.roomId, eventId: other, linkedAt: Date.now() }); }));
+    orbit(async () => { await insertEvent(s.t, { ...advocateEvent, objectB: { ...advocateEvent.objectB, objectId: "SIM-3001" } }); });
     expect(await run(s)).toEqual([expect.objectContaining({ status: "failed", code: "TRAJECTORY_PLAN_REQUIRED" })]);
     expect(await cards(s)).toEqual(before);
   });
 
-  it("cannot remove a plan-bound mover by replacing its cards with wait", async () => {
+  it("lets a plan-bound incident fall back to wait; the plan, not the revision, guards the shared burn", async () => {
+    // Only a changed shared burn is refused. The revision never edits a plan row: syncPlans retires it on the next
+    // selection write, and scheduling stays blocked until every affected incident selects the same burn (maneuvers.ts scope()).
     const s = await setup({ text: "Move SIM-1001 only; delta-v at most 0.001 m/s" });
-    await s.t.run(ctx => ctx.db.insert("trajectoryPlans", { objectId: "SIM-1001", planVersion: 4, state: "authorizing",
+    const planId = await s.t.run(ctx => ctx.db.insert("trajectoryPlans", { objectId: "SIM-1001", planVersion: 4, state: "authorizing",
       affectedEventIds: [s.eventId], eventRefs: [], maneuverId: null, demoRunId: null, createdAt: Date.now(), updatedAt: Date.now() }));
-    orbit(); expect(await run(s)).toEqual([expect.objectContaining({ status: "failed", code: "TRAJECTORY_PLAN_REQUIRED" })]);
-    expect((await cards(s)).length).toBe(4);
+    orbit(); expect(await run(s)).toEqual([expect.objectContaining({ status: "published", changed: true })]);
+    expect((await cards(s)).map(c => c.kind)).toEqual(["wait"]);
+    expect((await s.t.run(ctx => ctx.db.get(planId)))!.state).toBe("authorizing");
   });
 
   it("refuses mismatched numerical geometry and leaves current options unchanged", async () => {
