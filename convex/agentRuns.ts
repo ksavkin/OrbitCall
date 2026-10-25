@@ -5,12 +5,22 @@ import { checkAndRenderSummary, inputKey, STALLED_AFTER_MS, validateFacts } from
 import { loadFacts } from "./lib/events";
 import { currentSummary, latestRun, runFlags, runsWithAttempt, stageOf, supersede } from "./lib/runs";
 import { runStage } from "./lib/validators";
+import type { QueryCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
+
+async function demoIsOpen(ctx: QueryCtx, event: Doc<"events">) {
+  if (!event.demoRunId) return true;
+  const demo = await ctx.db.get(event.demoRunId);
+  return demo !== null && demo.state === "open" && demo.closedAt === null;
+}
 
 export const begin = internalMutation({
   args: { eventId: v.id("events") },
   handler: async (ctx, { eventId }) => {
     const event = await ctx.db.get(eventId);
     if (!event) throw new ConvexError({ code: "NOT_FOUND", message: "Event not found." });
+    // A queued action may already be executing when reset cancels the remaining scheduled work.
+    if (!await demoIsOpen(ctx, event)) return null;
     const input = await loadFacts(ctx, event);
     validateFacts(input);
     const key = inputKey(input);
@@ -62,6 +72,11 @@ export const finish = internalMutation({
     const run = await ctx.db.get(runId);
     if (!run || run.status !== "running" || run.role === "operator_advocate") return { published: false };
     const event = await ctx.db.get(run.eventId);
+    // Demo state is not part of the orbital input key. Recheck it in the publishing transaction.
+    if (event && !await demoIsOpen(ctx, event)) {
+      await supersede(ctx, runId);
+      return { published: false };
+    }
     const latest = await latestRun(ctx, run.eventId);
     const facts = event && await loadFacts(ctx, event);
     if (!facts || latest?._id !== runId || inputKey(facts) !== run.inputKey) {
