@@ -49,6 +49,9 @@ export function ScanButton() {
   const dev = useOps((s) => s.dev);
   const real = useRealMode();
   const live = useLiveScan();
+  const fleetSize = useLive((s) => s.fleet?.satellites.length);
+  // user-flow §2: in real mode the button names the scope it scans
+  const idle = !real ? "Run scan" : fleetSize === undefined ? "Scan my fleet" : `Scan my fleet (${fleetSize})`;
   const phase = useOps((s) => s.scan.phase);
   const ready = useOrbit((s) => !!s.catalog);
   const me = useMe();
@@ -85,12 +88,12 @@ export function ScanButton() {
       {real && !locked ? (
         <>
           {live.waiting || live.running ? <Loader2 size={13} className="animate-spin" /> : <Radar size={13} />}
-          {live.waiting ? "Starting scan…" : live.running ? phaseLabel(live.running) : "Run scan"}
+          {live.waiting ? "Starting scan…" : live.running ? phaseLabel(live.running) : idle}
         </>
       ) : (
         <>
           {scanning || busy ? <Loader2 size={13} className="animate-spin" /> : locked ? <Lock size={12} /> : <Radar size={13} />}
-          {scanning ? "Scanning 18k objects…" : busy ? `Case in progress · ${busy}` : "Run scan"}
+          {scanning ? "Scanning 18k objects…" : busy ? `Case in progress · ${busy}` : idle}
         </>
       )}
     </button>
