@@ -39,6 +39,11 @@ here; Dev mode keeps its own TLE copy in `web/` ([integration status](../docs/in
   app checks each file against its pinned sha256 in a secure context. This code is merged. Shared-deployment validation remains a separate check.
 - `build_catalog_pairs.py` keeps only pairs whose objects are both in the `gp-*` OMM snapshot, and writes its
   `catalog.json` path into `catalog-pairs.json` (`omm.url`), which `load_snapshot.mjs` registers as `ommUrl`.
+- `build_catalog_pairs.py` drops pairs whose two objects belong to one operator (a Starlink with a Starlink):
+  one operator needs no coordination call, and such rows are 4 of 5 that would otherwise qualify. The operator is
+  read from the object-name prefix (`FLEETS` in the script: STARLINK, ONEWEB, KUIPER), because SATCAT `OWNER` is a
+  country code; replace it with operator metadata when a source exists. `--keep-same-fleet` switches it off, and
+  `counts.droppedSameFleet` / `filter.sameFleet` in `catalog-pairs.json` record what the build did.
 - The globe and the queue are not one screening: SOCRATES ran on CelesTrak's own elements at its run time, while
   the globe propagates the later GP download. The pair list is SOCRATES's; positions are ours.
 

@@ -2,6 +2,7 @@ import { defineTable } from "convex/server";
 import { v } from "convex/values";
 import { runStage, runStatus } from "../lib/validators";
 import { candidate, category, satellitePolicy, sharedEvaluation, side } from "../lib/policyValidators";
+import { lang, userRole } from "../lib/accounts";
 
 // Andrew owns these tables. No client receives private agent input or model responses.
 export const agentTables = {
@@ -21,9 +22,17 @@ export const agentTables = {
     checkedOutput: v.optional(v.string()),
   }).index("by_event", ["eventId"]).index("by_event_status", ["eventId", "status"])
     .index("by_event_role_company", ["eventId", "role", "companyId"]),
-  companies: defineTable({ key: v.string(), name: v.string(), simulated: v.boolean() }).index("by_key", ["key"]),
+  // Optional profile and settings fields were added after rows existed on prod; a missing value reads as null.
+  // language/contact here are the company's shareable settings (spec §3.5), apart from each user's own language.
+  companies: defineTable({
+    key: v.string(), name: v.string(), simulated: v.boolean(),
+    country: v.optional(v.string()), language: v.optional(lang), contact: v.optional(v.string()),
+  }).index("by_key", ["key"]),
+  // assignmentVersion is per user and changes only when the active assignment set changes (lib/accounts.ts).
   users: defineTable({
-    tokenIdentifier: v.string(), companyId: v.id("companies"), role: v.union(v.literal("operator"), v.literal("head_of_ops")),
+    tokenIdentifier: v.string(), companyId: v.id("companies"), role: userRole,
+    name: v.optional(v.string()), language: v.optional(lang), dispatcherCountry: v.optional(v.string()),
+    assignmentVersion: v.optional(v.number()),
   }).index("by_token_identifier", ["tokenIdentifier"]),
   satelliteOwners: defineTable({ objectId: v.string(), companyId: v.id("companies") })
     .index("by_object", ["objectId"]).index("by_company", ["companyId"]),

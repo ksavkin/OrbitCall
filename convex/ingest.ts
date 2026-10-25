@@ -1,7 +1,9 @@
+import type { Id } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { AnalystError } from "./lib/analyst";
-import { ingestEncounter } from "./lib/events";
+import { ingestEncounter, TCA_MATCH_MS } from "./lib/events";
+import { supersede } from "./lib/runs";
 import { objectInput, sourceRef } from "./lib/validators";
 
 // Bulk loading of a pinned catalog snapshot (scripts/load_snapshot.mjs). Rows are real, never simulated,
@@ -50,5 +52,49 @@ export const upsertBatch = internalMutation({
       }
     }
     return result;
+  },
+});
+
+// After a full load: this snapshot's active real pairs that the file no longer lists leave the queue
+// (a rebuilt file drops rows, for example same-fleet pairs). Events keep their _id and history; only
+// `active` changes, and an Analyst still running on them is superseded. The same pair within ±60 s of
+// TCA counts as listed, as in ingestEncounter. Fixtures and other snapshots are never touched.
+const pairKey = v.object({ objectA: v.string(), objectB: v.string(), tcaUtc: v.string() });
+const MAX_ACTIVE = 5000;   // same bound as events.catalogPairs
+const RETIRE_LIMIT = 200;  // writes per call; the loader calls again until fewer are retired
+
+export const retireMissing = internalMutation({
+  args: { snapshot: v.id("snapshots"), pairs: v.array(pairKey), limit: v.optional(v.number()) },
+  returns: v.object({ checked: v.number(), retired: v.number() }),
+  handler: async (ctx, { snapshot, pairs, limit }) => {
+    if (!await ctx.db.get(snapshot)) throw new ConvexError({ code: "NOT_FOUND", message: "Snapshot not found." });
+    const max = Math.max(1, Math.floor(limit ?? RETIRE_LIMIT));
+    const unordered = (a: string, b: string) => (a < b ? `${a}/${b}` : `${b}/${a}`);
+    const listed = new Map<string, number[]>();
+    for (const { objectA, objectB, tcaUtc } of pairs) {
+      const tcaMs = Date.parse(tcaUtc);
+      if (!Number.isFinite(tcaMs)) throw new ConvexError({ code: "INVALID_INPUT", message: `Invalid tcaUtc ${tcaUtc} for ${objectA}/${objectB}.` });
+      const key = unordered(objectA, objectB);
+      listed.set(key, [...(listed.get(key) ?? []), tcaMs]);
+    }
+    const active = await ctx.db.query("events").withIndex("by_active", q => q.eq("active", true)).take(MAX_ACTIVE);
+    const mine = active.filter(e => e.snapshotId === snapshot && !e.simulated);
+    const objectIds = new Map<Id<"spaceObjects">, string>();
+    const objectId = async (id: Id<"spaceObjects">) => {
+      if (!objectIds.has(id)) objectIds.set(id, (await ctx.db.get(id))?.objectId ?? "");
+      return objectIds.get(id)!;
+    };
+    let retired = 0;
+    for (const event of mine) {
+      if (retired >= max) break;
+      const times = listed.get(unordered(await objectId(event.objectAId), await objectId(event.objectBId)));
+      if (times?.some(t => Math.abs(t - event.tcaMs) <= TCA_MATCH_MS)) continue;
+      await ctx.db.patch(event._id, { active: false });
+      const running = await ctx.db.query("agentRuns").withIndex("by_event_status", q =>
+        q.eq("eventId", event._id).eq("status", "running")).collect();
+      for (const run of running) await supersede(ctx, run._id);
+      retired++;
+    }
+    return { checked: mine.length, retired };
   },
 });

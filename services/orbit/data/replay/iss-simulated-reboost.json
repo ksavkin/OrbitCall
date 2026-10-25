@@ -1,0 +1,64 @@
+{
+ "name": "iss-simulated-reboost",
+ "objectId": "25544",
+ "simulated": true,
+ "label": "SIMULATED replay: real ISS drag trend (NASA OEM) + simulated 0.5 m/s reboost; not a real maneuver",
+ "burnTimeUtc": "2026-10-22T18:00:00Z",
+ "deltaVMs": 0.5,
+ "direction": "prograde",
+ "series": [
+  {
+   "epochUtc": "2026-10-21T14:00:00Z",
+   "smaKm": 6798.4182
+  },
+  {
+   "epochUtc": "2026-10-21T22:00:00Z",
+   "smaKm": 6798.2679
+  },
+  {
+   "epochUtc": "2026-10-22T06:00:00Z",
+   "smaKm": 6798.3734
+  },
+  {
+   "epochUtc": "2026-10-22T14:00:00Z",
+   "smaKm": 6798.3841
+  },
+  {
+   "epochUtc": "2026-10-22T22:00:00Z",
+   "smaKm": 6799.1161
+  },
+  {
+   "epochUtc": "2026-10-23T06:00:00Z",
+   "smaKm": 6799.1767
+  },
+  {
+   "epochUtc": "2026-10-23T14:00:00Z",
+   "smaKm": 6799.175
+  },
+  {
+   "epochUtc": "2026-10-23T22:00:00Z",
+   "smaKm": 6799.0503
+  },
+  {
+   "epochUtc": "2026-10-24T06:00:00Z",
+   "smaKm": 6799.0852
+  },
+  {
+   "epochUtc": "2026-10-24T14:00:00Z",
+   "smaKm": 6799.0918
+  }
+ ],
+ "sources": [
+  {
+   "name": "simulated",
+   "url": "https://nasa-public-data.s3.amazonaws.com/iss-coords/current/ISS_OEM/ISS.OEM_J2K_EPH.txt",
+   "epochUtc": null,
+   "fetchedAt": "2026-10-24T18:02:03Z",
+   "note": "trend from NASA ISS OEM sha256 7c4f78b7f3e4bb5f\u2026; noise \u03c3 40 m seed 20261024; burn simulated"
+  }
+ ],
+ "limitations": [
+  "SIMULATED: the burn and the noise are generated; only the drag trend comes from NASA's ephemeris.",
+  "NASA's OEM is a predicted ephemeris, not observations."
+ ]
+}

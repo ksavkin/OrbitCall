@@ -1,0 +1,157 @@
+{
+ "snapshotId": "celestrak-gp-2026-10-24T08:02:43Z-7990d64b",
+ "snapshotUtc": "2026-10-24T08:02:43Z",
+ "snapshotFormat": "tle",
+ "referenceRunUtc": "2026-10-24T01:47:21Z",
+ "referenceSha256": "9fe9b11f6a1000dc0afbe1c9c68912841301fcb42ceeecdc520275cfaad616a2",
+ "scope": "SOCRATES run 2026-10-24T01:47:21Z vs validation snapshot celestrak-gp-2026-10-24T08:02:43Z-7990d64b (tle); TCA within 72 h of the run; both objects in the snapshot; relative speed >= 0.1 km/s; eligible = all 200 in-scope rows whose two element sets equal SOCRATES' (epoch within 45 s); detection by screening 73 of 73 covering primaries against the whole catalog.",
+ "scopeComplete": true,
+ "horizonH": 72,
+ "matchToleranceS": 60,
+ "epochToleranceS": 45.0,
+ "referenceRows": 195064,
+ "inScopeRows": 38390,
+ "eligible": 200,
+ "matched": 200,
+ "unmatched": 0,
+ "notScreened": 0,
+ "recall": 1.0,
+ "dataDiffers": 38190,
+ "excluded": [
+  {
+   "reason": "TCA outside 72 h after the SOCRATES run",
+   "count": 115092
+  },
+  {
+   "reason": "an object is not in the validation snapshot",
+   "count": 41000
+  },
+  {
+   "reason": "co-located or formation pair (relative speed < 0.1 km/s)",
+   "count": 582
+  },
+  {
+   "reason": "data differs (element-set epoch not SOCRATES')",
+   "count": 38190
+  }
+ ],
+ "tcaErrorS": {
+  "median": 0.0,
+  "p95": 0.001,
+  "max": 0.003,
+  "n": 200
+ },
+ "missErrorKm": {
+  "median": 0.0007,
+  "p95": 0.007,
+  "max": 0.0114,
+  "n": 200
+ },
+ "geometryFailed": 0,
+ "detectionErrors": {
+  "tcaErrorS": {
+   "median": 0.0,
+   "p95": 0.001,
+   "max": 0.003,
+   "n": 200
+  },
+  "missErrorKm": {
+   "median": 0.0007,
+   "p95": 0.007,
+   "max": 0.0114,
+   "n": 200
+  }
+ },
+ "oursNotInReference": {
+  "total": 748,
+  "sameData": 12,
+  "sameDataSample": [
+   {
+    "objectA": "59209",
+    "objectB": "69355",
+    "tcaUtc": "2026-10-26T14:59:40Z",
+    "missKm": 1.649
+   },
+   {
+    "objectA": "59209",
+    "objectB": "69355",
+    "tcaUtc": "2026-10-26T04:50:04Z",
+    "missKm": 1.815
+   },
+   {
+    "objectA": "59209",
+    "objectB": "69355",
+    "tcaUtc": "2026-10-26T06:23:51Z",
+    "missKm": 3.448
+   },
+   {
+    "objectA": "59209",
+    "objectB": "69355",
+    "tcaUtc": "2026-10-26T13:25:53Z",
+    "missKm": 4.461
+   },
+   {
+    "objectA": "49746",
+    "objectB": "59209",
+    "tcaUtc": "2026-10-25T12:04:16Z",
+    "missKm": 3.6
+   },
+   {
+    "objectA": "31666",
+    "objectB": "35996",
+    "tcaUtc": "2026-10-24T13:24:15Z",
+    "missKm": 4.042
+   },
+   {
+    "objectA": "29836",
+    "objectB": "35793",
+    "tcaUtc": "2026-10-25T01:48:43Z",
+    "missKm": 4.419
+   },
+   {
+    "objectA": "30080",
+    "objectB": "38824",
+    "tcaUtc": "2026-10-25T03:07:04Z",
+    "missKm": 4.383
+   },
+   {
+    "objectA": "30080",
+    "objectB": "31566",
+    "tcaUtc": "2026-10-26T15:09:49Z",
+    "missKm": 4.712
+   },
+   {
+    "objectA": "32169",
+    "objectB": "38486",
+    "tcaUtc": "2026-10-26T02:28:01Z",
+    "missKm": 4.696
+   },
+   {
+    "objectA": "32222",
+    "objectB": "35915",
+    "tcaUtc": "2026-10-24T22:59:50Z",
+    "missKm": 4.923
+   },
+   {
+    "objectA": "32464",
+    "objectB": "35014",
+    "tcaUtc": "2026-10-25T12:50:44Z",
+    "missKm": 4.364
+   }
+  ]
+ },
+ "primaries": {
+  "planned": 73,
+  "screened": 73,
+  "failed": []
+ },
+ "unmatchedSample": [],
+ "limitations": [
+  "Eligible rows are those whose element sets equal SOCRATES' (epoch within 45 s); our snapshot is 6 h younger than the run, so most in-scope rows are 'data differs'. Space-Track gp_history would make more rows comparable; it needs an account and is not used.",
+  "tcaErrorS / missErrorKm are geometry and time errors of every eligible pair refined around the reference TCA, separate from recall; detectionErrors are the same errors for the encounters our screening found.",
+  "Our encounters not in SOCRATES are reported, not judged: either side can be wrong on mean elements, and SOCRATES' own inputs for operator pairs are not visible here."
+ ],
+ "configVersion": 5,
+ "runtimeS": 744.0,
+ "simulated": false
+}

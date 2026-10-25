@@ -1,17 +1,31 @@
 import { internalMutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
+import { contactPatch, lang, LEGACY_ASSIGNMENT_VERSION, profileText, setActiveAssignments, userRole } from "./lib/accounts";
 
 // Trusted account/ownership setup, not registration. No browser may claim a company or satellite.
+// Optional profile and settings fields: omitted keeps the stored value; provided overwrites it.
 export const provision = internalMutation({
   args: {
     key: v.string(), name: v.string(), simulated: v.boolean(), objectIds: v.array(v.string()),
-    members: v.array(v.object({ tokenIdentifier: v.string(), role: v.union(v.literal("operator"), v.literal("head_of_ops")), assignedObjectIds: v.array(v.string()) })),
+    country: v.optional(v.string()), language: v.optional(lang), contact: v.optional(v.string()),
+    members: v.array(v.object({
+      tokenIdentifier: v.string(), role: userRole, assignedObjectIds: v.array(v.string()),
+      name: v.optional(v.string()), language: v.optional(lang), dispatcherCountry: v.optional(v.string()),
+    })),
   },
-  handler: async (ctx, { key, name, simulated, objectIds, members }) => {
+  handler: async (ctx, { key, name, simulated, objectIds, country, language, contact, members }) => {
     if (!key.trim() || !name.trim() || objectIds.length > 100 || members.length > 100) throw new ConvexError({ code: "VALIDATION", message: "Invalid company setup." });
+    if (new Set(members.map(m => m.tokenIdentifier)).size !== members.length) throw new ConvexError({ code: "VALIDATION", message: "Each account may appear only once." });
     const existing = await ctx.db.query("companies").withIndex("by_key", q => q.eq("key", key)).unique();
-    const companyId = existing?._id ?? await ctx.db.insert("companies", { key, name, simulated });
     if (existing && (existing.name !== name || existing.simulated !== simulated)) throw new ConvexError({ code: "INVALID_STATE", message: "Company identity changes require a separate migration." });
+    const companyId = existing?._id ?? await ctx.db.insert("companies", { key, name, simulated });
+    const contactChange = contactPatch(contact);
+    const companyPatch = {
+      ...(country === undefined ? {} : { country: profileText("Country", country) }),
+      ...(language === undefined ? {} : { language }),
+      ...(contactChange === null ? {} : { contact: "clear" in contactChange ? undefined : contactChange.contact }),
+    };
+    if (Object.keys(companyPatch).length) await ctx.db.patch(companyId, companyPatch);
     for (const objectId of objectIds) {
       const object = await ctx.db.query("spaceObjects").withIndex("by_object_id", q => q.eq("objectId", objectId)).unique();
       if (!object) throw new ConvexError({ code: "NOT_FOUND", message: "Register the satellite before assigning its operator." });
@@ -20,18 +34,39 @@ export const provision = internalMutation({
       if (!owner) await ctx.db.insert("satelliteOwners", { objectId, companyId });
     }
     for (const member of members) {
-      if (!member.tokenIdentifier.trim()) throw new ConvexError({ code: "VALIDATION", message: "A verified issuer and subject identifier is required." });
+      // Auth0 never emits padding, so a padded identifier could never sign in; refuse it instead of storing an orphan.
+      if (!member.tokenIdentifier.trim() || member.tokenIdentifier !== member.tokenIdentifier.trim()) throw new ConvexError({ code: "VALIDATION", message: "A verified issuer and subject identifier is required." });
+      if (member.role === "demo_observer" && member.assignedObjectIds.length) throw new ConvexError({ code: "VALIDATION", message: "Observers cannot hold fleet assignments." });
+      if (member.assignedObjectIds.some(id => !objectIds.includes(id))) throw new ConvexError({ code: "FORBIDDEN", message: "Assignments must belong to the registered company." });
       const user = await ctx.db.query("users").withIndex("by_token_identifier", q => q.eq("tokenIdentifier", member.tokenIdentifier)).unique();
       if (user && user.companyId !== companyId) throw new ConvexError({ code: "FORBIDDEN", message: "This account already belongs to a different company." });
-      if (member.assignedObjectIds.some(id => !objectIds.includes(id))) throw new ConvexError({ code: "FORBIDDEN", message: "Assignments must belong to the registered company." });
-      if (user) await ctx.db.patch(user._id, { role: member.role });
-      const userId = user?._id ?? await ctx.db.insert("users", { tokenIdentifier: member.tokenIdentifier, role: member.role, companyId });
-      const existingAssignments = await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", userId)).collect();
-      for (const assignment of existingAssignments) await ctx.db.patch(assignment._id, { active: member.assignedObjectIds.includes(assignment.objectId) });
-      for (const objectId of new Set(member.assignedObjectIds)) {
-        if (!existingAssignments.some(a => a.objectId === objectId)) await ctx.db.insert("fleetAssignments", { userId, objectId, active: true });
-      }
+      const profile = {
+        role: member.role,
+        ...(member.name === undefined ? {} : { name: profileText("Name", member.name) }),
+        ...(member.language === undefined ? {} : { language: member.language }),
+        ...(member.dispatcherCountry === undefined ? {} : { dispatcherCountry: profileText("Dispatcher country", member.dispatcherCountry) }),
+      };
+      if (user) await ctx.db.patch(user._id, profile);
+      const userId = user?._id ?? await ctx.db.insert("users", { tokenIdentifier: member.tokenIdentifier, companyId, ...profile });
+      await setActiveAssignments(ctx, (await ctx.db.get(userId))!, member.assignedObjectIds, { created: !user });
     }
     return { companyId };
+  },
+});
+
+// One-off migration for rows created before users.assignmentVersion existed. Run once per deployment
+// after this schema lands: `npx convex run operators:backfillAssignmentVersions [--prod]`.
+// Idempotent: rows that already have a version are left alone, so a rerun updates nothing.
+export const backfillAssignmentVersions = internalMutation({
+  args: {},
+  returns: v.object({ updated: v.number() }),
+  handler: async ctx => {
+    let updated = 0;
+    for await (const user of ctx.db.query("users")) {
+      if (user.assignmentVersion !== undefined) continue;
+      await ctx.db.patch(user._id, { assignmentVersion: LEGACY_ASSIGNMENT_VERSION });
+      updated++;
+    }
+    return { updated };
   },
 });
