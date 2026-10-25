@@ -131,7 +131,8 @@ function resetParts(reason: string, sides: number): { head: string; detail: stri
 
 /**
  * The reset banner from approvals.status.lastReset (wiring map §1.3 point 9, "Shared maneuvers"). It shows for every
- * reset of this case, also one started in a linked incident while this side did nothing. `compact` fits the room chat.
+ * reset of this case, also one started in a linked incident while this side did nothing, until every required side
+ * has approved again. `compact` fits the room chat.
  */
 export function ResetBanner({ eventId, compact = false }: { eventId: EventId; compact?: boolean }) {
   const status = useStatus(eventId);
@@ -145,7 +146,7 @@ export function ResetBanner({ eventId, compact = false }: { eventId: EventId; co
   };
   return (
     <AnimatePresence initial={false} mode="wait">
-      {reset && parts && reset.at !== dismissed && (
+      {reset && parts && reset.at !== dismissed && !status?.allRequiredApproved && (
         <motion.div
           key={reset.at}
           initial={{ opacity: 0, height: 0 }}
