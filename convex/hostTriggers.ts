@@ -8,6 +8,8 @@ import { checkResultValidator, type CheckResult } from "./lib/checker";
 import { buildHostContext } from "./lib/hostContext";
 import { publishHostOutput } from "./lib/hostPublish";
 import { requireFleetScope } from "./fleetQuery";
+import { checkedTexts, speakRef } from "./call/hostSpeech";
+import { recordAutomaticQueue } from "./revisions";
 
 // Coordination Host runs (roadmap §6 Gemini Host contract). A caller asks explicitly; nothing here watches messages.
 // One run per room, input version and trigger; a failed or superseded run may be retried, at most MAX_ATTEMPTS failures.
@@ -179,7 +181,8 @@ export const run = internalAction({
 /**
  * Stores a run's result after rechecking its inputs. Stale results are superseded with their spans for the trace
  * and no publication. Checked conversation output and its audit are posted atomically with success.
- * Requested revisions remain stored suggestions; they never change proposals or approvals here.
+ * A checked request queues numerical revision work after publication; that work revalidates original human
+ * sources and publishes through the canonical candidate path. No Host output can select or approve a plan.
  */
 export const finish = internalMutation({
   args: {
@@ -207,6 +210,21 @@ export const finish = internalMutation({
       (hostOutput.summaries.length === 0 || (check?.span.status === "succeeded" && check.result !== null));
     if (checked && hostOutput) await publishHostOutput(ctx, run, context, hostOutput, check?.span.status === "succeeded" ? check.result : null);
     await ctx.db.patch(hostRunId, { status: checked ? "succeeded" : "failed", span, output: hostOutput, check, finishedAt });
+    // Delivery begins after this transaction commits. The voice entry rechecks the succeeded run,
+    // open room/demo and current listeners; a provider failure cannot undo the written conversation.
+    // Worker delivery IDs dedupe the same run/text, including a repeated scheduled delivery.
+    if (checked && hostOutput && checkedTexts(hostOutput).some(text => text.trim())) {
+      const room = (await ctx.db.get(run.roomId))!;
+      const expectedInputVersion = (await buildHostContext(ctx, room, run.trigger)).inputVersion;
+      for (const text of new Set(checkedTexts(hostOutput))) {
+        if (text.trim()) await ctx.scheduler.runAfter(0, speakRef, { roomId: run.roomId, hostRunId, text, expectedInputVersion });
+      }
+    }
+    if (checked && hostOutput && (hostOutput.requestedRevisions.length > 0 ||
+      hostOutput.understood?.some(row => (row.hard && row.kind === "constraint") || row.kind === "correction"))) {
+      const scheduledId = await ctx.scheduler.runAfter(0, internal.revisions.fromHost, { hostRunId });
+      await recordAutomaticQueue(ctx, { hostRunId, scheduledId });
+    }
     return null;
   },
 });

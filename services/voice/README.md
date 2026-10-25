@@ -29,8 +29,10 @@ first member creates the room). One worker job per room.
    there is no provider substitution and no cross-gender substitution.
 
 ## Host speech (Coordination Host voice)
-1. Convex `internal.call.hostSpeech.speak({ roomId, hostRunId, text })` accepts only a checked text of a succeeded host
-   run (a summary or a clarification question) of an open room, and only when someone is in the call. It sends one
+1. Convex `internal.call.hostSpeech.speak({ roomId, hostRunId, text, expectedInputVersion })` accepts only a checked text of a succeeded host
+   run (a summary or a clarification question) of an open room, and only when someone is in the call. The caller
+   captures `expectedInputVersion` after publishing the Host result; delivery rejects subsequent discussion,
+   evidence, selection or responsibility changes. It sends one
    reliable data packet through the LiveKit server API (`RoomService/SendData`) to `translator`, topic
    `orbit.host-speech`, payload `{ v: 1, id, roomId, hostRunId, lang: "en", text }`.
 2. The room job accepts a packet only when `DataPacket.participant is None` (sent by a server SDK) and the topic

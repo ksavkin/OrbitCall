@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdtemp, readFile, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,17 +9,20 @@ import { parsePrepare, content, hash } from "../src/protocol.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.map(p => rm(p, { recursive: true, force: true }))); roots.length = 0; });
-export const request = (n = 1) => ({ intentKey: `event:e${n}:proposal:p${n}:revision:1:generation:1`,
+export const request = (n = 1, filePath = "operators/company-a/schedule.json") => ({ intentKey: `event:e${n}:proposal:p${n}:revision:1:generation:1`,
   ref: { eventId: `e${n}`, proposalId: `p${n}`, revision: 1, selectionGeneration: 1, approvalRuleVersion: 1 }, trajectory: null,
-  filePath: "operators/company-a/schedule.json", entry: { eventId: `e${n}`, proposalId: `p${n}`, revision: 1,
+  filePath, entry: { eventId: `e${n}`, proposalId: `p${n}`, revision: 1,
     objectId: "SIM-1001", burnTimeUtc: "2030-01-01T00:00:00Z", deltaVMs: 0.01, direction: "prograde", simulated: true } });
 async function setup(provider = vi.fn(async ({ file, expected }: { file: string; expected: string }) => {
   await writeFile(file, expected); return { sessionId: "factory-session", modelId: "test-model", toolWrites: 1 };
 })) { const root = await mkdtemp(join(tmpdir(), "orbit-scheduler-")); roots.push(root); return { root, provider, engine: await Engine.open(root, provider) }; }
-async function prepared(engine: Engine, n = 1) { const job = await engine.prepare(request(n)); await engine.idle(); return (await engine.get(job.jobId))!; }
+async function prepared(engine: Engine, n = 1, filePath?: string) { const job = await engine.prepare(request(n, filePath)); await engine.idle(); return (await engine.get(job.jobId))!; }
 const commitRequest = (job: Awaited<ReturnType<typeof prepared>>) => ({ intentKey: job.intentKey, preparedJobId: job.jobId,
   contentHash: job.result!.contentHash, expectedPreviousHash: job.result!.expectedPreviousHash,
   expectedPreviousCommit: job.result!.expectedPreviousCommit, ref: request(Number(job.request.ref.eventId.slice(1))).ref, trajectory: null });
+const companyB = "operators/company-b/schedule.json";
+const maneuvers = async (root: string, filePath: string) => JSON.parse(await readFile(join(root, "repo", filePath), "utf8")).maneuvers;
+const log = async (root: string) => (await promisify(execFile)("git", ["log", "--format=%s"], { cwd: join(root, "repo") })).stdout.trimEnd().split("\n");
 
 it("requires exact paths, finite approved values, and intent-bound references", () => {
   for (const filePath of ["../schedule.json", "operators/../schedule.json", "/operators/a/schedule.json", "operators/a/b/schedule.json"]) expect(() => parsePrepare({ ...request(), filePath })).toThrow();
@@ -64,6 +69,26 @@ it("serializes writes and rejects a second preview based on an old repository ve
   const d = await engine.commit(commitRequest(b)); await engine.idle(); expect((await engine.get(d.jobId))!).toMatchObject({ status: "failed", error: { code: "STALE_WORKSPACE" } });
   expect(JSON.parse(await readFile(join(root, "repo", request().filePath), "utf8")).maneuvers).toHaveLength(1);
 });
+it.each([["a", "b"], ["b", "a"]])("commits previews of different operator files in either order (%s first)", async (...order) => {
+  const { engine, root } = await setup(); const previews = { a: await prepared(engine), b: await prepared(engine, 2, companyB) };
+  expect(previews.b.result!.expectedPreviousCommit).toBe(previews.a.result!.expectedPreviousCommit);
+  for (const key of order as ("a" | "b")[]) {
+    const c = await engine.commit(commitRequest(previews[key])); await engine.idle();
+    // The client checks that the commit result echoes the commit base from the preview.
+    expect(await engine.get(c.jobId)).toMatchObject({ status: "completed", result: { expectedPreviousCommit: previews[key].result!.expectedPreviousCommit } });
+  }
+  expect(await maneuvers(root, request().filePath)).toEqual([request().entry]);
+  expect(await maneuvers(root, companyB)).toEqual([request(2, companyB).entry]);
+  expect((await log(root)).filter(s => s.startsWith("OrbitCall intent "))).toHaveLength(2);
+});
+
+it("rejects a second preview of the same operator file after the first commit", async () => {
+  const { engine, root } = await setup(); const a = await prepared(engine), other = await prepared(engine, 3, companyB), b = await prepared(engine, 2);
+  await engine.commit(commitRequest(other)); await engine.idle();
+  const c = await engine.commit(commitRequest(a)); await engine.idle(); expect((await engine.get(c.jobId))!.status).toBe("completed");
+  const d = await engine.commit(commitRequest(b)); await engine.idle(); expect(await engine.get(d.jobId)).toMatchObject({ status: "failed", error: { code: "STALE_WORKSPACE" } });
+  expect(await maneuvers(root, request().filePath)).toEqual([request().entry]);
+});
 
 it("appends a later revision without disclosing prior entries in its diff and refuses duplicate revision writes", async () => {
   const { engine, root } = await setup(); const first = await prepared(engine); await engine.commit(commitRequest(first)); await engine.idle();
@@ -94,6 +119,35 @@ it.each(["before_write", "temporary_file", "partial_temporary_file", "after_writ
   expect(committed.status).toBe("completed"); expect(committed.result!.commitSha).toMatch(/^[a-f0-9]{40}$/);
   expect(JSON.parse(await readFile(join(root, "repo", request().filePath), "utf8")).maneuvers).toHaveLength(1);
   expect(provider).toHaveBeenCalledTimes(1); expect((await recovered.commit(req)).result!.commitSha).toBe(committed.result!.commitSha);
+});
+
+it.each(["before_write", "after_write", "after_commit"])("recovers crash at %s after another operator's file was committed", async point => {
+  const { engine, provider, root } = await setup(); const p = await prepared(engine), other = await prepared(engine, 2, companyB);
+  await engine.commit(commitRequest(other)); await engine.idle();
+  const req = commitRequest(p), jobId = hash(`commit:${req.intentKey}`);
+  if (point === "after_commit") { await engine.commit(req); await engine.idle(); }
+  if (point === "after_write") await writeFile(join(root, "repo", request().filePath), p.result!.after);
+  await writeFile(join(root, "jobs", `${jobId}.json`), JSON.stringify({ jobId, intentKey: req.intentKey, kind: "commit", status: "running", request: req, result: p.result, error: null }));
+  const recovered = await Engine.open(root, provider); const committed = (await recovered.get(jobId))!;
+  expect(committed).toMatchObject({ status: "completed", result: { expectedPreviousCommit: p.result!.expectedPreviousCommit } });
+  expect(committed.result!.commitSha).toMatch(/^[a-f0-9]{40}$/);
+  expect(await maneuvers(root, request().filePath)).toEqual([request().entry]); expect(await maneuvers(root, companyB)).toEqual([request(2, companyB).entry]);
+  expect(await log(root)).toHaveLength(3); expect(provider).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true])("recovers a committed write before a queued write to another file can land on top of it (swapped: %s)", async swapped => {
+  const { engine, provider, root } = await setup(), previews = [await prepared(engine), await prepared(engine, 2, companyB)];
+  // Both role assignments run so that one of them lists the queued journal before the running one, whatever the directory order.
+  const [a, b] = swapped ? previews.reverse() : previews;
+  const reqA = commitRequest(a), reqB = commitRequest(b), idA = hash(`commit:${reqA.intentKey}`), idB = hash(`commit:${reqB.intentKey}`);
+  await engine.commit(reqA); await engine.idle(); const sha = (await engine.get(idA))!.result!.commitSha;
+  // A crashed after its git commit, before saving its journal; B was accepted behind it.
+  await writeFile(join(root, "jobs", `${idA}.json`), JSON.stringify({ jobId: idA, intentKey: reqA.intentKey, kind: "commit", attempt: 1, status: "running", request: reqA, result: a.result, error: null }));
+  await writeFile(join(root, "jobs", `${idB}.json`), JSON.stringify({ jobId: idB, intentKey: reqB.intentKey, kind: "commit", attempt: 1, status: "queued", request: reqB, result: b.result, error: null }));
+  const recovered = await Engine.open(root, provider);
+  expect(await recovered.get(idA)).toMatchObject({ status: "completed", result: { commitSha: sha } });
+  expect(await recovered.get(idB)).toMatchObject({ status: "completed" });
+  expect(await maneuvers(root, request().filePath)).toEqual([request().entry]); expect(await maneuvers(root, companyB)).toEqual([request(2, companyB).entry]);
 });
 
 it("fails an interrupted preparation visibly and never automatically spends again", async () => {

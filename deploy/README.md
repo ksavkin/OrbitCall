@@ -1,14 +1,14 @@
 # Deploy
 
 The DigitalOcean half of the OrbitCall demo: one CPU Droplet running the orbital API (`services/orbit/`), the voice
-translation worker (`services/voice/`) and a Caddy HTTPS proxy as separate Docker Compose containers. It follows the
+translation worker (`services/voice/`), Factory schedule worker (`services/scheduler/`) and a Caddy HTTPS proxy as separate Docker Compose containers. It follows the
 [master roadmap](../docs/master-roadmap.md) §12 (deployment map) and §13 Steps 3–4 (DigitalOcean, secrets). Vercel and
 Convex deploy separately (§13 Steps 5–6).
 
 | File | What |
 |---|---|
-| `docker-compose.demo.yml` | Services `orbit`, `voice`, `caddy`; volumes; health checks; restart and log rotation |
-| `Caddyfile` | The only public routes: `/orbit/health` and `/orbit/*` on one hostname |
+| `docker-compose.demo.yml` | Services `orbit`, `voice`, `scheduler`, `caddy`; volumes; health checks; restart and log rotation |
+| `Caddyfile` | Public routes `/orbit/*` and `/scheduler/*` on one hostname |
 
 ## Services
 
@@ -16,16 +16,16 @@ Convex deploy separately (§13 Steps 5–6).
 |---|---|---|---|---|
 | `orbit` | `ghcr.io/ksavkin/orbitcall-orbit:$RELEASE_TAG`, built from `services/orbit/` | Port 3610 on the Compose network only, reached through Caddy. One Uvicorn worker: the catalog lives in memory | `orbit_data` at `/service/data` (writable): pinned snapshots, TLE groups, replay and cached validation in; `jobs/`, `sim/` and `validation/` written at runtime | `GET http://127.0.0.1:3610/health` inside the container, with Python's `urllib` |
 | `voice` | `ghcr.io/ksavkin/orbitcall-voice:$RELEASE_TAG`, built from `services/voice/` | Outbound only, to LiveKit Cloud, xAI, Anthropic, Cartesia and Convex. No published port, no Caddy route | None. Phrase buffers are short-lived; final phrases go to Convex | `GET http://127.0.0.1:8090/health` inside the container, with Python's `urllib`. 200 only when xAI, Anthropic, every configured TTS voice, the Convex settings and the LiveKit registration are ready; 503 while not ready or for 60 s after a runtime failure |
+| `scheduler` | `ghcr.io/ksavkin/orbitcall-scheduler:$RELEASE_TAG`, built from `services/scheduler/` | Port 8090 on the Compose network only, reached through Caddy | `scheduler_data` at `/data`: isolated Git repository, durable intent/job journals and temporary Factory workspace; UID 1000 owns the volume | Authenticated `GET http://127.0.0.1:8090/health`, with the service token read from the container environment |
 | `caddy` | `caddy:2.11.7` | Publishes 80 and 443 (TCP, plus UDP for HTTP/3) | `caddy_data` (certificates), `caddy_config` | None; check through the routes below |
 
-All three restart `unless-stopped` and log as JSON files rotated at 10 MB × 5. Compose uses the fixed project name
-`orbitcall`, so volumes are named `orbitcall_orbit_data`, `orbitcall_caddy_data` and `orbitcall_caddy_config`.
+All four restart `unless-stopped` and log as JSON files rotated at 10 MB × 5. Compose uses the fixed project name
+`orbitcall`, so volumes are named `orbitcall_orbit_data`, `orbitcall_scheduler_data`, `orbitcall_caddy_data` and `orbitcall_caddy_config`.
 
 The voice worker connects outward to LiveKit Cloud. It is not the LiveKit media server, and nothing on the Droplet
 accepts audio connections.
 
-The Factory schedule worker (`services/scheduler/`) is not in this file yet. It joins as a fourth container with its
-own workspace volume and a `/scheduler/*` route when that service exists.
+The scheduler runs as UID/GID 1000 with a read-only root filesystem, a 256 MiB `/tmp` tmpfs, no Linux capabilities and no privilege escalation. Only its dedicated `/data` volume is mounted; it receives no source checkout, Docker socket, database credentials or voice/orbit tokens. Run exactly one scheduler per volume: its Linux file lock prevents a second writer. Its 120-second shutdown grace allows the bounded Factory call and journal writes to finish.
 
 ## Routes
 
@@ -33,13 +33,14 @@ own workspace volume and a `/scheduler/*` route when that service exists.
 |---|---|---|
 | `https://$ORBITCALL_API_HOST/orbit/health` | `orbit:3610/health` | None (readiness and loaded snapshot version) |
 | `https://$ORBITCALL_API_HOST/orbit/<path>` | `orbit:3610/<path>`, prefix stripped | The orbit service's `ORBIT_SERVICE_TOKEN` |
+| `https://$ORBITCALL_API_HOST/scheduler/<path>` | `scheduler:8090/<path>`, prefix stripped | `Authorization: Bearer <SCHEDULE_SERVICE_TOKEN>`, including health |
 | Anything else | `404` | n/a |
 
 Caddy only terminates HTTPS and routes. It does not check credentials: the orbit service itself must reject every
 request except `/health` that lacks `ORBIT_SERVICE_TOKEN` (sent as the `X-Service-Token` header, per
 [specification](../docs/specification.md) Appendix A). Convex sets `ORBIT_SERVICE_URL` to
 `https://$ORBITCALL_API_HOST/orbit` and holds the same token. Caddy's access log drops the `X-Service-Token` header
-(it redacts `Authorization` by default).
+and explicitly drops `Authorization` for scheduler requests.
 
 No admin or worker ports are published. SSH stays limited to the team.
 
@@ -56,7 +57,7 @@ No admin or worker ports are published. SSH stays limited to the team.
 
 Create `/opt/orbitcall/demo.env` on the host (`chmod 600`, owned by the deploying user). It is never committed. It
 holds `NAME=value` lines for every variable below. Compose reads it for interpolation only, and each container
-receives just the names listed for it, so the voice worker never sees the orbit token and the reverse.
+receives just the names listed for it. The Factory key goes only to the scheduler; Convex receives the scheduler URL and service token, and the browser receives neither credential.
 
 | Variable | Used by | Secret | Value |
 |---|---|---|---|
@@ -64,6 +65,9 @@ receives just the names listed for it, so the voice worker never sees the orbit 
 | `ORBITCALL_API_HOST` | `caddy` | No | The controlled hostname, e.g. `api.<demo-domain>` |
 | `ORBIT_SERVICE_TOKEN` | `orbit` | Yes | Same value as Convex's `ORBIT_SERVICE_TOKEN` |
 | `ORBIT_SNAPSHOT_ID` | `orbit` | No | The team snapshot to load (`snapshots/<id>/` in the data volume); defaults to `gp-20261024T2134Z`. Set it here when the team pins a new snapshot |
+| `SCHEDULE_SERVICE_TOKEN` | `scheduler` | Yes | At least 32 characters; same value in Convex |
+| `FACTORY_API_KEY` | `scheduler` | Yes | Factory provider key; never set it in Convex or the browser |
+| `FACTORY_MODEL_ID` | `scheduler` | No | Fixed model ID available to the Factory account; required, with no fallback |
 | `LIVEKIT_URL` | `voice` | No | LiveKit Cloud project URL |
 | `LIVEKIT_API_KEY` | `voice` | Yes | LiveKit project key |
 | `LIVEKIT_API_SECRET` | `voice` | Yes | LiveKit project secret |
@@ -91,7 +95,9 @@ Its other settings keep their defaults (`ORBIT_SCREEN_DEADLINE_S` 480, `ORBIT_JO
 Compose file only to change them. Do not set `ORBIT_SNAPSHOT_DIR`: it is not the data folder but an override that loads
 one alternative OMM snapshot. Locked model IDs come from the roadmap §4 registry; changing one is a lock revision.
 
-Generate the two shared tokens on the host, for example `openssl rand -hex 32`, and set the same values in Convex.
+Generate independent shared tokens on the host, for example `openssl rand -hex 32`, and set their matching values in Convex. Set `SCHEDULE_SERVICE_URL=https://$ORBITCALL_API_HOST/scheduler` in Convex. The scheduler image fixes `DROID_EXEC_PATH=/usr/local/bin/droid` and `SCHEDULE_DATA_DIR=/data`; no host binary or source directory is mounted.
+
+All required scheduler settings must be present before running Compose against this release. Configuration and executable readiness do not prove Factory provider access.
 
 ## Deploy
 
@@ -118,7 +124,20 @@ over it keeps existing job records. The service refuses to start if the pinned s
 check. After the team pins a new snapshot, rerun both commands, set `ORBIT_SNAPSHOT_ID` if it changed, and
 `docker compose ... restart orbit`.
 
-### 2. Start the services (roadmap §13 Step 3)
+### 2. Prepare the scheduler volume
+
+A new named volume inherits the image’s UID 1000 ownership of `/data`. Preserve an existing volume across releases; its Git history and intent journals prevent duplicate writes. If an existing volume is owned by root, stop the scheduler and correct only this dedicated volume before starting it:
+
+```sh
+docker volume create orbitcall_scheduler_data
+docker run --rm --user 0:0 --entrypoint chown \
+  -v orbitcall_scheduler_data:/data \
+  "ghcr.io/ksavkin/orbitcall-scheduler:$RELEASE_TAG" -R 1000:1000 /data
+```
+
+Build or pull the scheduler image first. Do not run `down -v`, erase its jobs, or share this volume with another service. Back up the whole volume while the scheduler is stopped; the repository and journals must be restored together.
+
+### 3. Start the services (roadmap §13 Step 3)
 
 ```sh
 docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.yml pull
@@ -127,12 +146,12 @@ docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.
 ```
 
 If the release images are not in the registry, build them on the host with the same tag, then pull only Caddy:
-`docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.yml build orbit voice` and
+`docker compose --env-file /opt/orbitcall/demo.env -f deploy/docker-compose.demo.yml build orbit voice scheduler` and
 `... pull caddy`, then `up -d` as above.
 
 ## Verify
 
-- `docker compose ... ps` shows `orbit` and `voice` as `healthy` and `caddy` as running. `voice` turns healthy only
+- `docker compose ... ps` shows `orbit`, `voice` and `scheduler` as `healthy` and `caddy` as running. `voice` turns healthy only
   once every provider it uses and its LiveKit registration answer. If it stays unhealthy, `docker compose ... logs
   voice` shows which check fails.
 - `curl -fsS https://$ORBITCALL_API_HOST/orbit/health` returns readiness and `gp-20261024T2134Z` (or the configured
@@ -140,7 +159,9 @@ If the release images are not in the registry, build them on the host with the s
 - `curl -s -o /dev/null -w '%{http_code}' https://$ORBITCALL_API_HOST/orbit/snapshot` without the token is rejected
   by the orbit service, and `https://$ORBITCALL_API_HOST/` returns `404`.
 - Call `/orbit/health` from the Convex action path too, not only from a laptop.
-- Logs: `docker compose ... logs -f orbit voice` (structured, with job IDs).
+- `/scheduler/health` without its Bearer credential returns `401`. Authenticated health returns `200` only when the Factory key, fixed model and executable are configured; its `providerVerified: false` deliberately does not claim a live provider test.
+- Before the demo, complete a real Factory preparation, inspect the exact diff, obtain the required current human approvals and commit through Convex’s scheduling flow. Retry the same intent and restart the scheduler to verify the artifact is not duplicated. A schedule file does not prove maneuver execution.
+- Logs: `docker compose ... logs -f orbit voice scheduler` (structured, with job IDs).
 
 A running or healthy container does not prove provider access or numerical readiness. Run one real screening job
 through Convex and join one LiveKit room with speech in each language before calling the host ready.
@@ -167,7 +188,7 @@ different ones. The service variables are the services' own: orbit's from `servi
 `services/voice/README.md`.
 
 - `ORBITCALL_API_HOST`: Caddy's site address.
-- `RELEASE_TAG` and the image names `ghcr.io/ksavkin/orbitcall-orbit` and `ghcr.io/ksavkin/orbitcall-voice`. No CI job
+- `RELEASE_TAG` and the image names `ghcr.io/ksavkin/orbitcall-orbit`, `ghcr.io/ksavkin/orbitcall-voice` and `ghcr.io/ksavkin/orbitcall-scheduler`. No CI job
   publishes them yet.
 
 Other assumptions about the services:
@@ -182,6 +203,6 @@ Other assumptions about the services:
 
 ## Out of scope
 
-- The Factory schedule worker (`services/scheduler/`), its workspace volume and route.
+- Production activation and the live Factory prepare/approved-commit rehearsal; this configuration alone is not deployment evidence.
 - Vercel (`web/`) and Convex (root `convex/`) deployment and their environment values.
 - CI that builds and pushes the release images.

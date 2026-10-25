@@ -39,6 +39,19 @@ export class Engine {
       { cwd: this.repo, env: { PATH: process.env.PATH, HOME: join(this.root, "git-home"), GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" }, timeout: 15_000, maxBuffer: 2_000_000 });
     return args[0] === "show" ? stdout : stdout.trimEnd();
   }
+  /** Runs a git predicate whose exit code 1 means false; any other failure propagates. */
+  private async gitTest(...args: string[]) {
+    try { await this.git(...args); return true; }
+    catch (e) { if ((e as { code?: unknown }).code === 1) return false; throw e; }
+  }
+  /** The previewed commit is still in this history and the intent's own file is unchanged since it. */
+  private async fileBase(expected: string, commit: string, filePath: string) {
+    return await this.gitTest("merge-base", "--is-ancestor", expected, commit) &&
+      await this.gitTest("diff", "--quiet", "--no-ext-diff", "--no-textconv", expected, commit, "--", filePath);
+  }
+  private async blob(commit: string, filePath: string) {
+    return await this.git("ls-tree", "--name-only", commit, "--", filePath) ? this.git("show", `${commit}:${filePath}`) : null;
+  }
   private async save(job: Job) { await atomic(join(this.root, "jobs", `${job.jobId}.json`), JSON.stringify(job)); }
   async get(id: string): Promise<Job | null> {
     if (!/^[a-f0-9]{64}$/.test(id)) return fail("VALIDATION", "Invalid job identifier.", 400);
@@ -55,10 +68,11 @@ export class Engine {
     for (const name of await readdir(join(e.root, "jobs"))) if (/^[a-f0-9]{64}\.json\.tmp$/.test(name)) await rm(join(e.root, "jobs", name));
     if (!await exists(join(e.repo, ".git"))) { await e.git("init", "--quiet"); await e.git("commit", "--allow-empty", "-m", "Initialize isolated schedule workspace"); }
     else await safeDirectory(join(e.repo, ".git"));
-    const jobs = (await readdir(join(e.root, "jobs"))).filter(n => /^[a-f0-9]{64}\.json$/.test(n));
-    for (const name of jobs) {
-      const job = (await e.get(name.slice(0, -5)))!;
-      if (job.status !== "queued" && job.status !== "running") continue;
+    const names = (await readdir(join(e.root, "jobs"))).filter(n => /^[a-f0-9]{64}\.json$/.test(n));
+    const jobs = (await Promise.all(names.map(name => e.get(name.slice(0, -5))))).filter((job): job is Job => job?.status === "queued" || job?.status === "running");
+    // At most one write runs at a time; recover it before queued writes to other files can commit on top of it.
+    jobs.sort((x, y) => Number(y.status === "running") - Number(x.status === "running"));
+    for (const job of jobs) {
       if (job.kind === "prepare") {
         job.status = "failed"; job.result = null; job.error = { code: "PREPARE_INTERRUPTED", message: "Factory preparation was interrupted; explicitly retry the same intent." }; await e.save(job);
         await rm(join(e.root, "staging", job.jobId), { recursive: true, force: true });
@@ -163,10 +177,11 @@ export class Engine {
         await rm(`${file}.tmp`);
       }
       if (recovering && await this.git("log", "-1", "--format=%s") === marker) {
-        if (await this.git("rev-parse", "HEAD^") !== a.expectedPreviousCommit || await regular(file) !== a.after || (await this.git("show", `HEAD:${a.filePath}`)) !== a.after) fail("RECOVERY_CONFLICT", "Committed intent recovery did not match its checked artifact.");
+        if (!await this.gitTest("merge-base", "--is-ancestor", a.expectedPreviousCommit, "HEAD^") || await this.blob("HEAD^", a.filePath) !== a.before || await regular(file) !== a.after || (await this.git("show", `HEAD:${a.filePath}`)) !== a.after) fail("RECOVERY_CONFLICT", "Committed intent recovery did not match its checked artifact.");
         job.result = { ...a, commitSha: head }; job.status = "completed"; job.error = null; await this.save(job); return;
       }
-      if (head !== a.expectedPreviousCommit) fail("STALE_WORKSPACE", "The schedule changed after this preview; prepare a newly authorized intent.");
+      // Writes to other files may land after the preview; only this file must be unchanged since it.
+      if (!await this.fileBase(a.expectedPreviousCommit, head, a.filePath)) fail("STALE_WORKSPACE", "The schedule changed after this preview; prepare a newly authorized intent.");
       const before = await exists(file) ? await regular(file) : null;
       const normal = before === a.before && (before === null ? null : hash(before)) === a.expectedPreviousHash;
       const interruptedWrite = recovering && before === a.after;

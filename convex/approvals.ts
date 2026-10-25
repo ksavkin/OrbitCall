@@ -1,4 +1,5 @@
 import { ConvexError, v, type Infer } from "convex/values";
+import { makeFunctionReference } from "convex/server";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireParty, requireReader } from "./lib/operatorAccess";
@@ -8,6 +9,7 @@ import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
 import { workflow } from "./lib/validators";
 import { closeRoomIfResolved, notify } from "./rooms";
+import { scheduleConfig } from "./lib/scheduleClient";
 import { planFor, syncPlans } from "./trajectoryPlans";
 
 // Explicit human approval and veto of the selected proposal revision, per event (spec §3.4, §4.1; ROOM-7, ROOM-11,
@@ -22,6 +24,20 @@ const decisionArgs = {
   selectionGeneration: v.number(), approvalRuleVersion: v.number(),
 };
 const error = (code: string, message: string) => new ConvexError({ code, message });
+const requestSchedule = makeFunctionReference<"mutation", { eventId: Id<"events"> }>("maneuvers:requestSchedule");
+
+// A maneuver is approved on its prepared schedule diff (EXE-4, ROOM-9). Gated only while the Factory worker is configured
+// (the schedule client's own URL and token check): without it the approval still records and the scheduler's
+// WORKER_UNAVAILABLE stays visible instead.
+async function requirePreview(ctx: MutationCtx, args: Args) {
+  try { scheduleConfig(); } catch { return; }
+  const stored = await ctx.db.query("proposalRevisions").withIndex("by_proposal_revision", q =>
+    q.eq("proposalId", args.proposalId).eq("revision", args.revision)).unique();
+  const card = stored && await ctx.db.get(stored.candidateRevisionId);
+  if (card?.kind === "maneuver" && stored!.schedulePreviewHash === null) {
+    throw error("INVALID_STATE", "Factory is still preparing this plan's schedule diff; approve once it is shown.");
+  }
+}
 
 // spec §4.1 steps 1-4, shared by approve and veto.
 async function checkDecision(ctx: MutationCtx, args: Args) {
@@ -117,6 +133,7 @@ export const approve = mutation({
     let counted = await countingApprovals(ctx, d.event, d.selection);
     // Approving the same tick again is idempotent, even after the turn has moved on; it leaves no notice either.
     const inserted = !counted.has(d.side);
+    if (inserted) await requirePreview(ctx, args);
     if (inserted) {
       await requireTurn(ctx, d);
       await ctx.db.insert("approvals", {
@@ -133,6 +150,8 @@ export const approve = mutation({
       // spec §4.1 step 5; the room closes on consensus in the same mutation (rooms.closeRoomIfResolved).
       await ctx.db.patch(d.event._id, { status: "approved", situation: undefined });
       await closeRoomIfResolved(ctx, d.event._id);
+      // The Maneuver Scheduler runs in the background (spec §4.1); it logs its own failures and never undoes this.
+      await ctx.scheduler.runAfter(0, requestSchedule, { eventId: d.event._id });
     }
     if (inserted) {
       const plan = await planName(ctx, args.proposalId, args.revision);
