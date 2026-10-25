@@ -4,9 +4,9 @@ This record supports issue #6, Round 3's provider-evidence task and the roadmap'
 
 ## Current evidence status
 
-The diagnostic is implemented in `convex/providerReadiness.ts`. Its regression tests run the real action, validation, memory and SQL-adapter paths with mocked external transports. **Those tests are not live provider evidence.** The first live check below succeeded for Claude, Grok, Backboard and Tiger; Gemini rejected the request. No shared Convex deployment was changed to create or run this diagnostic.
+The diagnostic is implemented in `convex/providerReadiness.ts`. Its regression tests run the real action, validation, memory and SQL-adapter paths with mocked external transports. **Those tests are not live provider evidence.** The final integrated live check below succeeded for all five providers and completed cleanup. The initial Gemini failure is preserved alongside its verified fix. No shared Convex deployment was changed to create or run this diagnostic.
 
-The remaining provider proof is a successful checked Gemini call. Even a passing diagnostic does not complete the phase checkboxes: the operator-facing integration and rehearsal listed below remain necessary.
+Provider connectivity and checked synthetic outputs are demonstrated from the local integration harness. The operator-facing integration, shared deployment and rehearsal listed below remain necessary before phase checkboxes can be completed.
 
 ### Live check recorded on October 25, 2026
 
@@ -15,7 +15,7 @@ Executed at **2026-10-25 11:15:05.237 UTC**, using the new diagnostic in a local
 | Provider | Result | Returned model | Duration | Reported input / output tokens | Evidence |
 | --- | --- | --- | ---: | ---: | --- |
 | Claude | Succeeded | `claude-sonnet-5-5` | 2,634 ms | 909 / 258 | All five lines passed the evidence template and number checks. |
-| Gemini | **Failed** | `gemini-3.8-flash` was the configured target; no successful returned model | 3,348 ms | Unavailable | `REQUEST_REJECTED`; no output was published. The cause still needs diagnosis. |
+| Gemini | **Failed** | `gemini-3.8-flash` was the configured target; no successful returned model | 3,348 ms | Unavailable | `REQUEST_REJECTED`; no output was published. The schema correction and successful follow-up are recorded below. |
 | Grok | Succeeded | `grok-4.20-0309-reasoning` | 4,135 ms | 465 / 493 | `agrees: true`, no flagged candidates. The explanation correctly said that no candidates had been published. |
 | Backboard | Succeeded | Not applicable | 3,842 ms | Not applicable | The exact newly written preference and its source event/message were recalled. The isolated assistant was cleaned up. |
 | Tiger | Succeeded | Not applicable | 2,698 ms | Not applicable | A live SQL export returned through the history cache with the exact simulated timestamp and `missKm: 1.25`, `pc: null`; cache version 1. |
@@ -42,6 +42,42 @@ Sanitized source identifiers from this check:
 ```
 
 This receipt establishes four working provider paths from the local integration harness. It does not show a successful Gemini request, execution of this diagnostic on the shared Convex deployment, a rendered chart or a completed human workflow.
+
+### Integrated live check after the Gemini schema correction
+
+The final check ran on October 25 against local integration commit `b21cc413623f6564e5429c93af7e2545c34204cb`, combining all nine Andrew Round 3 task branches. Its synthetic observation timestamp was **2026-10-25T11:18:19.741Z**. It used the actual application adapters and the expanded Host schema, including optional `understood` entries, without intercepting or modifying requests. All five provider results were **`succeeded`**, the overall diagnostic returned **`passed`**, and cleanup returned **`complete`**.
+
+| Provider | Returned model | Duration | Input / output tokens, including reasoning where reported | Checked result |
+| --- | --- | ---: | ---: | --- |
+| Claude | `claude-sonnet-5-5` | 2,493 ms | 909 / 258 | Five incident-summary lines passed evidence and number checks. |
+| Gemini | `gemini-3.8-flash` | 14,844 ms | 909 / 1,693 | A source-linked incident summary and an exact-source soft preference passed the Host checks. |
+| Grok | `grok-4.20-0309-reasoning` | 4,172 ms | 465 / 453 | Checked agreement, no flagged candidates; no decision or approval. |
+| Backboard | Not applicable | 2,803 ms | Not applicable | Exact memory ID, original preference and source event/message recalled; isolated namespace deleted. |
+| Tiger | Not applicable | 2,484 ms | Not applicable | The exact simulated observation timestamp returned through the SQL export and cache read, with `missKm: 1.25`, `pc: null`, cache version 1. |
+
+Gemini's checked output included:
+
+```json
+{
+  "summary": "The operator stated a preference to discuss timing after the imaging pass.",
+  "understood": {
+    "kind": "preference",
+    "hard": false,
+    "text": "Prefer to discuss timing after the imaging pass.",
+    "eventId": "00000000000000000000010005events",
+    "sourceMessageId": "000000000000000000010008messages",
+    "correctsId": null
+  },
+  "status": "passed",
+  "cleanup": "complete"
+}
+```
+
+The source message is explicitly synthetic diagnostic input. These local harness IDs are deterministic and may repeat between harness invocations; distinguish receipts by their observation timestamps and source commit. They are not shared-deployment records.
+
+The first Gemini request returned HTTP 400 `INVALID_ARGUMENT` even though authenticated model metadata lookup succeeded. Removing only provider-schema `maxItems` constraints made the same prompt pass. This matches [Google's documented nested-array schema complexity limit](https://ai.google.dev/gemini-api/docs/structured-output#limitations). The fix is committed in the Host branch at `c80f410b946884f4ad5ed47b23fdd1dad163052e`: the transport schema omits those five limits, while application validation still enforces six clarifications/revisions/understood entries, twenty-four summaries, twelve citations per item, string limits, source grounding, corrections and the human-approval rule. No fallback model was used.
+
+Combined local validation passed TypeScript and **1,230 tests across 46 files**. This includes a separate regression that carries an actual final voice row through Host context, checked publication, a human correction and private memory in the next incident. That regression verifies no approval or maneuver record is created. It mocks external transports; the table above is the separate live-provider evidence. Factory's Node 22 build, 25 service tests and CI container build also passed, but no live Factory preparation or deployment has been demonstrated yet.
 
 ## What the diagnostic proves
 
