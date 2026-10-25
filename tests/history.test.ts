@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { AnalystError } from "../convex/lib/analyst";
-import { connectTiger, observationKey, type SqlResult, type TigerConnection, type TigerObservation } from "../convex/lib/tiger";
+import { TIGER_SOURCES, connectTiger, observationKey, type SqlResult, type TigerConnection, type TigerObservation } from "../convex/lib/tiger";
+import { sourceName } from "../convex/lib/validators";
 import { exportKey, toSeriesPoints, toTigerObservation } from "../convex/lib/tigerExport";
 import { exportWith, readHistory } from "../convex/historyActions";
 import { FIXTURE_NOW } from "../fixtures/events";
@@ -89,23 +90,38 @@ const finish = (t: Backend) => t.finishAllScheduledFunctions(vi.runAllTimers);
 const scheduled = (t: Backend, name: string) => t.run(async ctx =>
   (await ctx.db.system.query("_scheduled_functions").collect()).filter(f => f.name === name));
 
-// One red fixture event (side A: SIM-0001), operator "a" assigned to side A, an unassigned operator, and a
-// published candidate set so requireParty can place the caller on a side.
+// One red fixture event (side A: SIM-0001, side B: 25544) and no candidate set. Company A owns side A: operator "a"
+// is assigned to it, "unassigned" is not, "head-a" is its head of ops, "observer" is a demo observer. Company B owns
+// side B with operator "b". Company C owns an unrelated satellite with its own operator and head of ops.
 async function setup() {
   const t = backend();
   const eventId = await insertEvent(t);
+  await t.run(ctx => ctx.db.insert("spaceObjects", { objectId: "SIM-0099", name: "Unrelated", country: null, launchDate: null }));
   const { companyId } = await t.mutation(internal.operators.provision, {
     key: "history-a", name: "History A", simulated: true, objectIds: ["SIM-0001"], members: [
       { tokenIdentifier: token("a"), role: "operator", assignedObjectIds: ["SIM-0001"] },
       { tokenIdentifier: token("unassigned"), role: "operator", assignedObjectIds: [] },
+      { tokenIdentifier: token("head-a"), role: "head_of_ops", assignedObjectIds: [] },
+      { tokenIdentifier: token("observer"), role: "demo_observer", assignedObjectIds: [] },
     ],
   });
-  await t.run(ctx => ctx.db.insert("candidateSets", {
-    eventId, companyAId: companyId, companyBId: null, version: 1, evidenceKey: "evidence", candidateRevisionIds: [],
-    state: "open", reviewRequired: false,
-  }));
+  await t.mutation(internal.operators.provision, {
+    key: "history-b", name: "History B", simulated: true, objectIds: ["25544"], members: [
+      { tokenIdentifier: token("b"), role: "operator", assignedObjectIds: ["25544"] },
+    ],
+  });
+  await t.mutation(internal.operators.provision, {
+    key: "history-c", name: "History C", simulated: true, objectIds: ["SIM-0099"], members: [
+      { tokenIdentifier: token("c"), role: "operator", assignedObjectIds: ["SIM-0099"] },
+      { tokenIdentifier: token("head-c"), role: "head_of_ops", assignedObjectIds: [] },
+    ],
+  });
   return { t, eventId, companyId };
 }
+const LEASE_MS = 5 * 60_000;
+const demoRun = (t: Backend, scenario: string) => t.run(ctx => ctx.db.insert("demoRuns", {
+  scenario, state: "open", startedBy: null, manifest: null, startedAt: FIXTURE_NOW, closedAt: null,
+}));
 
 type Input = {
   observedAt: string; source: TigerObservation["source"]; metric: string; value: number | null;
@@ -171,6 +187,42 @@ describe("recordObservation", () => {
     await expect(record(t, eventId, realMiss())).rejects.toThrow("NOT_FOUND");
     expect(await exports(t)).toHaveLength(0);
     expect(await scheduled(t, "historyActions:exportObservation")).toHaveLength(0);
+  });
+
+  it("accepts simulated evidence only under the event's current demo run, and real evidence only without a run", async () => {
+    const { t, eventId } = await setup();
+    const [current, old] = [await demoRun(t, "current"), await demoRun(t, "old")];
+    const sim = (runId: Id<"demoRuns"> | null) => realMiss({ source: "simulated", simulated: true, evidenceVersion: "sim-v1", runId });
+    // An event outside any demo run takes simulated evidence without a run label.
+    expect((await record(t, eventId, sim(null))).status).toBe("queued");
+    await expect(record(t, eventId, sim(current))).rejects.toThrow("INVALID_INPUT");
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: current }));
+    expect((await record(t, eventId, sim(current))).status).toBe("queued");
+    await expect(record(t, eventId, sim(old))).rejects.toThrow("INVALID_INPUT");
+    await expect(record(t, eventId, sim(null))).rejects.toThrow("INVALID_INPUT");
+    // A simulated spacecraft screened against a real source is simulated evidence and follows the same rule.
+    await expect(record(t, eventId, realMiss({ simulated: true, runId: old }))).rejects.toThrow("INVALID_INPUT");
+    await expect(record(t, eventId, realMiss({ runId: current }))).rejects.toThrow("INVALID_INPUT");
+    expect((await record(t, eventId, realMiss())).status).toBe("queued");
+    expect(await exports(t)).toHaveLength(3);
+  });
+
+  it("queues a pending export again once its lease has expired, and not before", async () => {
+    const { t, eventId } = await setup();
+    await record(t, eventId, realMiss());
+    const { updatedAt } = (await exports(t))[0];
+    vi.setSystemTime(updatedAt + LEASE_MS);
+    expect((await record(t, eventId, realMiss())).status).toBe("unchanged");
+    expect(await scheduled(t, "historyActions:exportObservation")).toHaveLength(1);
+    vi.setSystemTime(updatedAt + LEASE_MS + 1);
+    expect((await record(t, eventId, realMiss())).status).toBe("retried");
+    expect(await scheduled(t, "historyActions:exportObservation")).toHaveLength(2);
+    expect((await exports(t))[0]).toMatchObject({ exportState: "pending", attempts: 0 });
+    expect((await exports(t))[0].updatedAt).toBeGreaterThan(updatedAt + LEASE_MS);
+    // Both scheduled exports may run; Tiger skips the repeat and the row settles once.
+    await finish(t);
+    expect(tiger.rows.size).toBe(1);
+    expect((await exports(t))[0]).toMatchObject({ exportState: "exported", attempts: 1 });
   });
 });
 
@@ -300,35 +352,62 @@ describe("export and refresh", () => {
     expect(await cache(t, eventId)).toMatchObject({ stale: true, seriesVersion: 2 });
   });
 
-  it("ignores a refresh result older than the one already cached", async () => {
+  const point = { atUtc: "2026-10-24T10:30:00Z", pc: null, missKm: 0.18, source: "socrates", simulated: false };
+  const store = (t: Backend, eventId: Id<"events">, fetchedAt: number, baseVersion: number, points = [point]) =>
+    t.mutation(internal.history.storeSeries, { eventId, points, fetchedAt, baseVersion });
+  const failRead = (t: Backend, eventId: Id<"events">, fetchedAt: number, baseVersion: number) =>
+    t.mutation(internal.history.markSeriesFailed, { eventId, code: "UPSTREAM_UNAVAILABLE", message: "Retry later.", fetchedAt, baseVersion });
+
+  it("orders reads by start time and the cache version they started from, so an older read never wins a tie", async () => {
     const { t, eventId } = await setup();
-    const point = { atUtc: "2026-10-24T10:30:00Z", pc: null, missKm: 0.18, source: "socrates", simulated: false };
-    await t.mutation(internal.history.storeSeries, { eventId, points: [point], fetchedAt: FIXTURE_NOW });
-    const older = await t.mutation(internal.history.storeSeries, { eventId, points: [], fetchedAt: FIXTURE_NOW - 1 });
-    expect(older).toEqual({ stored: false });
+    expect(await store(t, eventId, FIXTURE_NOW, 0)).toEqual({ stored: true });
+    // Started earlier: dropped.
+    expect(await store(t, eventId, FIXTURE_NOW - 1, 0, [])).toEqual({ stored: false });
+    // Same start time, but started before version 1 was published: dropped.
+    expect(await store(t, eventId, FIXTURE_NOW, 0, [])).toEqual({ stored: false });
     expect(await cache(t, eventId)).toMatchObject({ seriesVersion: 1, points: [point] });
+    // Same start time, started after version 1 was published: stored.
+    expect(await store(t, eventId, FIXTURE_NOW, 1, [])).toEqual({ stored: true });
+    expect(await cache(t, eventId)).toMatchObject({ seriesVersion: 2, points: [] });
+    expect(await store(t, eventId, FIXTURE_NOW + 1, 0)).toEqual({ stored: true });
+    expect((await cache(t, eventId))!.seriesVersion).toBe(3);
+  });
+
+  it("ignores a failed read that is older than the cached one", async () => {
+    const { t, eventId } = await setup();
+    await store(t, eventId, FIXTURE_NOW, 0);
+    expect(await failRead(t, eventId, FIXTURE_NOW - 1, 0)).toEqual({ marked: false });
+    expect(await failRead(t, eventId, FIXTURE_NOW, 0)).toEqual({ marked: false });
+    expect(await cache(t, eventId)).toMatchObject({ stale: false, error: null, seriesVersion: 1 });
+    expect(await failRead(t, eventId, FIXTURE_NOW, 1)).toEqual({ marked: true });
+    expect(await cache(t, eventId)).toMatchObject({ stale: true, error: "UPSTREAM_UNAVAILABLE: Retry later.", seriesVersion: 1, points: [point] });
+  });
+
+  it("marks the cache stale while any export of the event is still pending", async () => {
+    const { t, eventId } = await setup();
+    await record(t, eventId, realMiss());
+    await store(t, eventId, FIXTURE_NOW, 0);
+    expect(await cache(t, eventId)).toMatchObject({ stale: true, error: null, seriesVersion: 1 });
+    await finish(t);
+    expect(await cache(t, eventId)).toMatchObject({ stale: false, seriesVersion: 2 });
   });
 });
 
 describe("history.series", () => {
   it("serves real and simulated series separately, the current demo run only for simulated points, nulls kept", async () => {
     const { t, eventId } = await setup();
-    const [currentRun, oldRun] = await t.run(async ctx => {
-      const run = (scenario: string) => ctx.db.insert("demoRuns", {
-        scenario, state: "open", startedBy: null, manifest: null, startedAt: FIXTURE_NOW, closedAt: null,
-      });
-      const ids = [await run("current"), await run("old")];
-      await ctx.db.patch(eventId, { demoRunId: ids[0] });
-      return ids;
-    });
+    const [currentRun, oldRun] = [await demoRun(t, "current"), await demoRun(t, "old")];
     const sim = (patch: Partial<Input>) => realMiss({ source: "simulated", simulated: true, evidenceVersion: "sim-v1", runId: currentRun, ...patch });
+    // Recorded while the event belonged to the old run, before the reset moved it to the current one.
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: oldRun }));
+    await record(t, eventId, sim({ observedAt: "2026-10-24T08:00:00Z", value: 9, runId: oldRun }));
+    await t.run(ctx => ctx.db.patch(eventId, { demoRunId: currentRun }));
     for (const observation of [
       realMiss({ observedAt: "2026-10-24T09:00:00Z", value: 0.3 }),
       realMiss({ observedAt: "2026-10-24T09:00:00Z", metric: "pc", value: null }),
       realMiss({ observedAt: "2026-10-24T10:00:00Z", source: "cdm_public", metric: "pc", value: 1.5e-4 }),
       sim({ observedAt: "2026-10-24T09:30:00Z", value: 0.05 }),
       sim({ observedAt: "2026-10-24T09:30:00Z", metric: "pc", value: 3e-3 }),
-      sim({ observedAt: "2026-10-24T08:00:00Z", value: 9, runId: oldRun }),
     ]) await record(t, eventId, observation);
     await finish(t);
     const series = await as(t, "a").query(api.history.series, { eventId });
@@ -338,7 +417,8 @@ describe("history.series", () => {
         { atUtc: "2026-10-24T10:00:00Z", pc: 1.5e-4, missKm: null, source: "cdm_public" },
       ],
       simulated: [{ atUtc: "2026-10-24T09:30:00Z", pc: 3e-3, missKm: 0.05, source: "simulated" }],
-      stale: false, error: null, fetchedAt: expect.any(Number), seriesVersion: 6,
+      // Refreshes that started in the same millisecond from an older cache version are dropped, so the count varies.
+      stale: false, error: null, fetchedAt: expect.any(Number), seriesVersion: expect.any(Number),
     });
   });
 
@@ -349,11 +429,23 @@ describe("history.series", () => {
     });
   });
 
+  it("serves assigned operators of either side and the owning company's head of ops, with no candidate set", async () => {
+    const { t, eventId } = await setup();
+    expect(await t.run(ctx => ctx.db.query("candidateSets").collect())).toHaveLength(0);
+    for (const name of ["a", "b", "head-a"]) {
+      expect((await as(t, name).query(api.history.series, { eventId })).seriesVersion).toBeNull();
+    }
+  });
+
   it("refuses callers who are not signed in or not assigned to the incident", async () => {
     const { t, eventId } = await setup();
     await expect(t.query(api.history.series, { eventId })).rejects.toThrow("UNAUTHENTICATED");
     await expect(as(t, "stranger").query(api.history.series, { eventId })).rejects.toThrow("FORBIDDEN");
     await expect(as(t, "unassigned").query(api.history.series, { eventId })).rejects.toThrow("FORBIDDEN");
+    await expect(as(t, "observer").query(api.history.series, { eventId })).rejects.toThrow("FORBIDDEN");
+    // Another company, with an active assignment and a head of ops of its own, but on neither object of this event.
+    await expect(as(t, "c").query(api.history.series, { eventId })).rejects.toThrow("FORBIDDEN");
+    await expect(as(t, "head-c").query(api.history.series, { eventId })).rejects.toThrow("FORBIDDEN");
     await t.run(async ctx => {
       const user = await ctx.db.query("users").withIndex("by_token_identifier", q => q.eq("tokenIdentifier", token("a"))).unique();
       const assignment = await ctx.db.query("fleetAssignments").withIndex("by_user_object", q => q.eq("userId", user!._id)).first();
@@ -426,11 +518,17 @@ describe("Tiger export mapping", () => {
     tiger.statements = [];
     await readHistory(db, "event-1", "run-7");
     expect(tiger.statements).toHaveLength(2);
-    expect(tiger.statements[0]).toContain("WHERE event_id = $1) AS ranked");
+    expect(tiger.statements[0]).toContain("WHERE event_id = $1 AND run_id IS NULL) AS ranked");
     expect(tiger.statements[1]).toContain("WHERE event_id = $1 AND run_id = $2) AS ranked");
+    // Outside a demo run one read serves both series.
     tiger.statements = [];
     await readHistory(db, "event-1", null);
-    expect(tiger.statements[1]).toContain("WHERE event_id = $1 AND run_id IS NULL) AS ranked");
+    expect(tiger.statements).toHaveLength(1);
+    expect(tiger.statements[0]).toContain("WHERE event_id = $1 AND run_id IS NULL) AS ranked");
+  });
+
+  it("knows exactly the source names the Tiger client accepts", () => {
+    expect(sourceName.members.map(member => member.value).sort()).toEqual([...TIGER_SOURCES].sort());
   });
 });
 
