@@ -273,7 +273,7 @@ describe("export and refresh", () => {
       await ctx.db.insert("approvals", {
         eventId, side: "A", status: "approved", userId: user!._id, companyId, proposalId, revision: 1, selectionGeneration: 1,
         approvalRuleVersion: 1, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null, demoRunId: null,
-        current: true, at: FIXTURE_NOW,
+        current: true, at: FIXTURE_NOW, assignmentVersion: 1,
       });
       return {
         approvals: await ctx.db.query("approvals").collect(), selections: await ctx.db.query("selections").collect(),

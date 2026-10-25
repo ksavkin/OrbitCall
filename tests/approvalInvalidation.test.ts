@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "../convex/_generated/api";
 import { FIXTURE_NOW } from "../fixtures/events";
 import { advocateCandidates, advocateEvent, policyA } from "../fixtures/policies";
-import { ingestArgs } from "./helpers";
+import { catalogObject, ingestArgs } from "./helpers";
 import { as, companyA, fn, pick, seed, selection, tick } from "./decision";
 import { putFixture, upsertObject } from "../convex/lib/events";
 
@@ -48,14 +48,18 @@ describe("material approval invalidation", () => {
     expect(await status(test)).toMatchObject({ approvals: { A: { status: "approved" } }, turn: "B", lastReset: null });
   });
 
-  it("reopens an approved but unscheduled decision after a policy change", async () => {
+  it("flags an approved but unscheduled plan for review without silently reopening it", async () => {
     const test = await approvedA();
     await as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId));
+    const signed = await tick(test.t, test.eventId);
     await policyChange(test);
-    await expectReset(test, "policy_changed");
-    expect((await event(test))!.status).toBe("proposal");
-    await as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId));
-    expect(await as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId))).toMatchObject({ allRequiredApproved: true });
+    expect(await status(test)).toMatchObject({ allRequiredApproved: false, reviewRequired: true, deciding: false,
+      turn: null, canAct: false, lastReset: { reason: "policy_changed" }, approvals: { A: { status: "pending" }, B: { status: "pending" } } });
+    expect((await selection(test.t, test.eventId))!.generation).toBeGreaterThan(signed.selectionGeneration);
+    expect((await approvals(test)).every(a => !a.current)).toBe(true);
+    expect((await event(test))!.status).toBe("approved");
+    expect(await set(test)).toMatchObject({ reviewRequired: true });
+    await expect(as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId))).rejects.toMatchObject({ data: { code: "ALREADY_DECIDED" } });
   });
 
   it("permanently invalidates changed evidence until new candidates are published", async () => {
@@ -168,6 +172,25 @@ describe("permanent responsibility resets", () => {
     await expectReset(test, "assignment_changed");
     await test.t.mutation(internal.operators.provision, companyA());
     await expectReset(test, "assignment_changed");
+    await as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId));
+    expect(await status(test)).toMatchObject({ approvals: { A: { status: "approved" } }, turn: "B" });
+  });
+
+  it("permanently resets all held incidents when an unrelated assignment changes the user's version", async () => {
+    const test = await approvedA();
+    await test.t.run(ctx => ctx.db.insert("spaceObjects", catalogObject("SIM-4001")));
+    await test.t.mutation(internal.operators.provision, companyA(["SIM-1001", "SIM-4001"], ["SIM-1001", "SIM-4001"]));
+    await expectReset(test, "assignment_changed");
+    await as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId));
+    expect(await status(test)).toMatchObject({ approvals: { A: { status: "approved" } }, turn: "B" });
+  });
+
+  it("refuses legacy approval rows without an assignment version", async () => {
+    const test = await approvedA();
+    const [old] = await approvals(test);
+    await test.t.run(ctx => ctx.db.patch(old._id, { assignmentVersion: undefined }));
+    expect(await status(test)).toMatchObject({ allRequiredApproved: false, approvals: { A: { status: "pending" } }, turn: "A" });
+    await expect(as(test.t, "b").mutation(fn.approve, await tick(test.t, test.eventId))).rejects.toMatchObject({ data: { code: "INVALID_STATE" } });
     await as(test.t, "a").mutation(fn.approve, await tick(test.t, test.eventId));
     expect(await status(test)).toMatchObject({ approvals: { A: { status: "approved" } }, turn: "B" });
   });

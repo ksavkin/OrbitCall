@@ -55,8 +55,8 @@ export async function setActiveAssignments(ctx: MutationCtx, user: Doc<"users">,
   const changed = before.size !== wanted.size || [...wanted].some(id => !before.has(id));
   const version = created ? 1 : (user.assignmentVersion ?? LEGACY_ASSIGNMENT_VERSION) + (changed ? 1 : 0);
   if (version !== user.assignmentVersion) await ctx.db.patch(user._id, { assignmentVersion: version });
-  if (changed) await invalidateObjectApprovals(ctx, [...new Set([...before, ...wanted])]
-    .filter(id => before.has(id) !== wanted.has(id)), "assignment_changed");
+  // The version pins the entire assignment set, so every held incident gets a visible permanent reset.
+  if (changed) await invalidateObjectApprovals(ctx, [...new Set([...before, ...wanted])], "assignment_changed");
   return version;
 }
 

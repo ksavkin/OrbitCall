@@ -141,7 +141,7 @@ export async function ingestEncounter(ctx: MutationCtx, { snapshotId, objectA, o
     if (changed) await ctx.db.patch(eventId, { ...row, updatedAt: now });
     else if (!same) await ctx.db.patch(eventId, row);
   }
-  if (previous && !changed && previous.snapshotId !== snapshotId) {
+  if (previous && !changed && (previous.snapshotId !== snapshotId || previous.active !== row.active)) {
     await invalidateEventApprovals(ctx, (await ctx.db.get(eventId))!, "evidence_changed");
   }
   // Publishing a changed input also invalidates any result still being computed for it.

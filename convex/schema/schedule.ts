@@ -71,6 +71,9 @@ export const scheduleTables = {
     reason: v.union(v.string(), v.null()),
     demoRunId: v.union(v.id("demoRuns"), v.null()),
     current: v.boolean(), at: v.number(),
+    // The approver's users.assignmentVersion when they approved: any later change to their assignments makes the row
+    // stop counting, so a revoked and restored assignment never revives it (ACC-2). Optional for rows written before it.
+    assignmentVersion: v.optional(v.number()),
   }).index("by_event_current", ["eventId", "current"]).index("by_event_generation", ["eventId", "selectionGeneration"])
     .index("by_demo_run", ["demoRunId"]),
   // A reserved schedule-write intent and its result: one row per physical schedule write. `refs` has one entry for a

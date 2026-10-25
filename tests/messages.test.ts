@@ -164,7 +164,7 @@ describe("messages", () => {
     await t.run(ctx => ctx.db.insert("approvals", {
       eventId: crossId, side: "A", status: "approved", userId: ids.ana._id, companyId: ids.north, proposalId, revision: 1,
       selectionGeneration: 1, approvalRuleVersion: 1, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null,
-      demoRunId: null, current: true, at: Date.now(),
+      demoRunId: null, current: true, at: Date.now(), assignmentVersion: 1,
     }));
     expect(await code(as(t, "ana").mutation(send, { roomId, text: "more" }))).toBe("INVALID_STATE");
     await as(t, "bo").mutation(send, { roomId, text: "B decides" });

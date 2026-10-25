@@ -1,8 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireParty, requireReader } from "./lib/operatorAccess";
-import { advanceSelection, classifyIfUnset } from "./lib/approvals";
-import { decisionTurn, isResolved } from "./lib/decision";
+import { advanceSelection, classifyIfUnset, countingApprovals, currentEvidence, turnOf } from "./lib/approvals";
+import { isResolved } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
 
@@ -69,9 +69,10 @@ export const select = mutation({
     const event = await classifyIfUnset(ctx, (await ctx.db.get(eventId))!);
     if (set.state !== "open" || isResolved(event)) throw new ConvexError({ code: "INVALID_STATE", message: "This plan is decided; its selection can no longer change." });
     // While a decision is open only the side in turn acts, selection included (voice selects, user-flow points 6-7).
-    const { deciding, turn } = await decisionTurn(ctx, event);
-    if (deciding && turn !== side) throw new ConvexError({ code: "INVALID_STATE", message: `It is side ${turn}'s turn to decide.` });
     const row = await ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", eventId)).unique();
+    const turn = row?.proposalId ? turnOf(event, await countingApprovals(ctx, event, row)) : null;
+    if (turn !== null && turn !== side) throw new ConvexError({ code: "INVALID_STATE", message: `It is side ${turn}'s turn to decide.` });
+    if (!await currentEvidence(ctx, event, set)) throw new ConvexError({ code: "STALE_REVISION", message: "The incident's evidence changed; wait for recomputed candidates." });
     if ((row?.generation ?? 0) !== expectedGeneration) throw new ConvexError({ code: "STALE_REVISION", message: "Selection changed; reload it before selecting." });
     const proposal = await ctx.db.get(proposalId);
     if (!proposal || proposal.eventId !== eventId) throw new ConvexError({ code: "NOT_FOUND", message: "Proposal not found." });

@@ -1,6 +1,6 @@
 import type { MutationCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
-import { advanceSelection, classifyIfUnset } from "./approvals";
+import { advanceSelection, classifyIfUnset, resetApprovals } from "./approvals";
 
 // Plan cards (spec §2.3 ProposalCard/Revision) mirrored from the candidate set: one proposals row per event and
 // candidateId ("P1".."P4"), one proposalRevisions row per immutable candidate revision. The numbers stay in
@@ -11,7 +11,7 @@ import { advanceSelection, classifyIfUnset } from "./approvals";
 const BEFORE_PROPOSAL = new Set(["new", "agents"]);
 
 export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, candidateRevisionIds: Id<"candidateRevisions">[],
-  options: { candidateSetChanged?: boolean; preserveDecision?: boolean } = {}) {
+  options: { candidateSetChanged?: boolean; preserveDecision?: boolean; evidenceChanged?: boolean } = {}) {
   const now = Date.now();
   const offered = new Set<Id<"proposals">>();
   for (const id of candidateRevisionIds) {
@@ -44,7 +44,8 @@ export async function syncProposals(ctx: MutationCtx, event: Doc<"events">, cand
   else if (selected.latestRevision !== selection.revision) {
     await advanceSelection(ctx, classified, { proposalId: selected._id, revision: selected.latestRevision }, { kind: "agents" }, "revision_changed");
   } else if (options.candidateSetChanged !== false) {
-    // The agreed comparison includes all offered options, not only the selected card.
-    await advanceSelection(ctx, classified, { proposalId: selected._id, revision: selected.latestRevision }, { kind: "agents" }, "candidate_set_changed");
+    // The agreed comparison includes every offered option and its source evidence.
+    await advanceSelection(ctx, classified, { proposalId: selected._id, revision: selected.latestRevision }, { kind: "agents" },
+      options.evidenceChanged ? "evidence_changed" : "candidate_set_changed");
   }
 }

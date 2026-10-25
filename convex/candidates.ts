@@ -92,7 +92,7 @@ export const publish = internalMutation({
       version: (previous?.version ?? 0) + 1, evidenceKey, candidateRevisionIds, state: "open" as const, reviewRequired: false };
     if (previous) await ctx.db.replace(previous._id, value);
     else await ctx.db.insert("candidateSets", value);
-    await syncProposals(ctx, event, candidateRevisionIds);
+    await syncProposals(ctx, event, candidateRevisionIds, { evidenceChanged: previous !== null && previous.evidenceKey !== evidenceKey });
     const runs = await ctx.db.query("agentRuns").withIndex("by_event_role_company", q => q.eq("eventId", eventId).eq("role", "operator_advocate")).collect();
     for (const run of runs) if (run.status === "running" || run.status === "succeeded") await supersede(ctx, run._id);
     if (start) await ctx.scheduler.runAfter(0, internal.agents.advocate.negotiate, { eventId });

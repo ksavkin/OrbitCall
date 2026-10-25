@@ -2,11 +2,22 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { inputKey } from "./analyst";
 import { loadFacts } from "./events";
+import { LEGACY_ASSIGNMENT_VERSION } from "./accounts";
 
 type Side = "A" | "B";
 export type ResetReason = "selection_changed" | "revision_changed" | "proposal_withdrawn" | "vetoed" |
-  "policy_changed" | "evidence_changed" | "assignment_changed" | "authorization_changed" | "candidate_set_changed";
+  "policy_changed" | "assignment_revoked" | "evidence_changed" | "assignment_changed" | "authorization_changed" | "candidate_set_changed";
 type Next = { proposalId: Id<"proposals">; revision: number } | null;
+
+export const RESOLVED_STATUSES = new Set(["approved", "scheduled", "monitoring", "awaiting_verification_data", "verified", "no_action_needed"]);
+export const assignmentVersionOf = (user: Doc<"users">) => user.assignmentVersion ?? LEGACY_ASSIGNMENT_VERSION;
+export const turnOf = (event: Doc<"events">, counted: Map<Side, unknown>): Side | null =>
+  [...(event.requiredApprovalSides ?? [])].sort().find(s => !counted.has(s)) ?? null;
+
+/** Read-only evidence gate also used before a proposal has been selected. */
+export async function currentEvidence(ctx: QueryCtx, event: Doc<"events">, set: Doc<"candidateSets">) {
+  try { return !set.reviewRequired && set.evidenceKey === inputKey(await loadFacts(ctx, event)); } catch { return false; }
+}
 
 /** Current, complete evidence for an approval. Every reader and decision writer uses this same gate. */
 export async function decisionInputs(ctx: QueryCtx, event: Doc<"events">, selection: Doc<"selections"> | null) {
@@ -63,7 +74,8 @@ export async function countingApprovals(ctx: QueryCtx, event: Doc<"events">, sel
       ctx.db.get(row.userId), ctx.db.query("fleetAssignments").withIndex("by_user_object", q =>
         q.eq("userId", row.userId).eq("objectId", input.objects[row.side].objectId)).unique(),
     ]);
-    if (!user || user.role !== "operator" || user.companyId !== row.companyId || !assignment?.active) continue;
+    if (!user || user.role !== "operator" || user.companyId !== row.companyId || !assignment?.active ||
+      row.assignmentVersion !== assignmentVersionOf(user)) continue;
     if (row.trajectoryPlanId) {
       const plan = await ctx.db.get(row.trajectoryPlanId);
       if (!plan || plan.demoRunId !== (event.demoRunId ?? null) || plan.planVersion !== row.trajectoryPlanVersion ||
@@ -125,15 +137,18 @@ export async function invalidateEventApprovals(ctx: MutationCtx, supplied: Doc<"
     if (!maneuver.reviewRequired) await ctx.db.patch(maneuver._id, { reviewRequired: true, updatedAt: Date.now() });
   }
   const set = await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", event._id)).unique();
-  const scheduled = reserved || set?.state === "scheduled" || ["scheduled", "awaiting_verification_data", "verified"].includes(event.status ?? "");
-  if ((scheduled || reason === "evidence_changed") && set && !set.reviewRequired) await ctx.db.patch(set._id, { reviewRequired: true });
+  const decided = reserved || set?.state === "scheduled" || RESOLVED_STATUSES.has(event.status ?? "new");
+  if ((decided || reason === "evidence_changed") && set && !set.reviewRequired) await ctx.db.patch(set._id, { reviewRequired: true });
   if (!selection?.proposalId && !current.length) return;
   await advanceSelection(ctx, event, selection?.proposalId && selection.revision !== null ?
     { proposalId: selection.proposalId, revision: selection.revision } : null, { kind: "agents" }, reason);
-  if (!scheduled && event.active && event.status !== "no_action_needed") {
+  if (!decided && event.active) {
     await ctx.db.patch(event._id, { status: reason === "evidence_changed" ? "agents" : "proposal", situation: undefined });
   }
 }
+
+/** Compatibility entry point: retain decided plans, retire signatures and flag review in the same transaction. */
+export const resetApprovals = invalidateEventApprovals;
 
 /** Indexed object-scoped invalidation, shared by assignment and catalog writers. */
 export async function invalidateObjectApprovals(ctx: MutationCtx, objectIds: string[], reason: ResetReason) {

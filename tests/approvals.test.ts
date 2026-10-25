@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { internal } from "../convex/_generated/api";
+import { api, internal } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { FIXTURE_NOW } from "../fixtures/events";
-import { advocateCandidates, advocateEvent } from "../fixtures/policies";
+import { advocateCandidates, advocateEvent, policyA } from "../fixtures/policies";
 import { buildHostContext } from "../convex/lib/hostContext";
+import { decisionTurn } from "../convex/lib/decision";
 import { insertEvent, type Backend } from "./helpers";
 import { as, code, companyA, fn, pick, seed, selection, tick, userId, withCard } from "./decision";
 
@@ -147,6 +148,71 @@ describe("approval resets", () => {
     await as(t, "a").mutation(fn.approve, await tick(t, eventId));
     await t.mutation(internal.operators.provision, companyA([]));
     expect(await read(t, "b", eventId)).toMatchObject({ allRequiredApproved: false, approvals: { A: { status: "pending" } } });
+  });
+
+  it("never revives a revoked approval when the assignment comes back, and keeps A's turn", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    await t.mutation(internal.operators.provision, companyA([]));
+    await t.mutation(internal.operators.provision, companyA());
+    expect(await read(t, "b", eventId)).toMatchObject({ turn: "A", selectionGeneration: 3, approvals: { A: { status: "pending" } },
+      lastReset: { reason: "assignment_changed" } });
+    expect(await code(as(t, "b").mutation(fn.approve, await tick(t, eventId)))).toBe("INVALID_STATE");
+    expect(await as(t, "a").mutation(fn.approve, await tick(t, eventId))).toMatchObject({ allRequiredApproved: false });
+  });
+
+  it("stops counting an approval the revalidation sweep missed once the approver's assignments changed", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    const a = await userId(t, "a");
+    // An assignment change the sweep never saw: only the version moves; the row stays current and exact.
+    await t.run(async ctx => { await ctx.db.patch(a, { assignmentVersion: 9 }); });
+    expect(await t.run(async ctx => decisionTurn(ctx, (await ctx.db.get(eventId))!))).toMatchObject({ turn: "A" });
+    expect(await read(t, "b", eventId)).toMatchObject({ turn: "A", approvals: { A: { status: "pending" } } });
+    expect(await code(as(t, "b").mutation(fn.approve, await tick(t, eventId)))).toBe("INVALID_STATE");
+  });
+
+  it("resets approvals on a policy edit and refuses decisions on stale evidence", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    await as(t, "a").mutation(api.policies.update, { satellites: [{ ...policyA, minFuelReserveKg: 7.5 }] });
+    expect(await read(t, "b", eventId)).toMatchObject({ turn: "A", approvals: { A: { status: "pending" } }, lastReset: { reason: "policy_changed" } });
+    await t.run(ctx => ctx.db.patch(eventId, { missKm: 0.3 }));
+    expect(await code(as(t, "a").mutation(fn.approve, await tick(t, eventId)))).toBe("STALE_REVISION");
+    expect(await rows(t, eventId)).toHaveLength(1);
+  });
+
+  it("resets approvals when the same cards are recomputed on new evidence", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    await t.run(ctx => ctx.db.patch(eventId, { pcValue: 3e-4 }));
+    expect(await t.mutation(internal.candidates.publish, { eventId, baseVersion: 1, start: false, candidates: advocateCandidates }))
+      .toMatchObject({ version: 2, changed: true });
+    expect(await read(t, "b", eventId)).toMatchObject({ turn: "A", selected: { revision: 1, generation: 2 },
+      approvals: { A: { status: "pending" } }, lastReset: { reason: "evidence_changed" } });
+  });
+
+  it("resets the approvals of an inactive but undecided incident, so a reactivated one starts over", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    await t.run(ctx => ctx.db.patch(eventId, { active: false }));
+    await as(t, "a").mutation(api.policies.update, { satellites: [{ ...policyA, minFuelReserveKg: 7.5 }] });
+    await t.run(ctx => ctx.db.patch(eventId, { active: true }));
+    expect(await read(t, "b", eventId)).toMatchObject({ turn: "A", approvals: { A: { status: "pending" } }, lastReset: { reason: "policy_changed" } });
+  });
+
+  it("flags an agreed plan for review instead of undoing it on a policy edit or revocation", async () => {
+    const { t, eventId } = await selected();
+    await as(t, "a").mutation(fn.approve, await tick(t, eventId));
+    await as(t, "b").mutation(fn.approve, await tick(t, eventId));
+    await as(t, "a").mutation(api.policies.update, { satellites: [{ ...policyA, minFuelReserveKg: 7.5 }] });
+    await t.mutation(internal.operators.provision, companyA([]));
+    expect(await read(t, "head", eventId)).toMatchObject({ selectionGeneration: 3, lastReset: { reason: "assignment_changed" },
+      reviewRequired: true, deciding: false, turn: null, canAct: false, allRequiredApproved: false, approvals: { B: { status: "pending" } } });
+    expect((await rows(t, eventId)).map(r => r.current)).toEqual([false, false]);
+    expect((await eventRow(t, eventId))!.status).toBe("approved");
+    expect(await t.run(async ctx => (await ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique())!.reviewRequired))
+      .toBe(true);
   });
 });
 

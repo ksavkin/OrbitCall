@@ -2,8 +2,8 @@ import { ConvexError, v, type Infer } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { requireParty, requireReader } from "./lib/operatorAccess";
-import { advanceSelection, allApproved, classifyIfUnset, countingApprovals, decisionInputs } from "./lib/approvals";
-import { decisionTurn } from "./lib/decision";
+import { advanceSelection, allApproved, assignmentVersionOf, classifyIfUnset, countingApprovals, decisionInputs, turnOf } from "./lib/approvals";
+import { isResolved } from "./lib/decision";
 import { isoUtc } from "./lib/events";
 import { side } from "./lib/policyValidators";
 import { workflow } from "./lib/validators";
@@ -50,10 +50,10 @@ async function checkDecision(ctx: MutationCtx, args: Args) {
   return { user, side, event, selection };
 }
 
-// Off-turn approve or veto is refused; null means every required side looks approved under the turn rule.
+// Off-turn approve or veto is refused. The turn comes from the approvals that count, the same rule as consensus.
 async function requireTurn(ctx: MutationCtx, d: Awaited<ReturnType<typeof checkDecision>>) {
-  const { turn } = await decisionTurn(ctx, d.event);
-  if (turn !== null && turn !== d.side) throw error("INVALID_STATE", `It is side ${turn}'s turn to decide.`);
+  const turn = turnOf(d.event, await countingApprovals(ctx, d.event, d.selection));
+  if (turn !== d.side) throw error("INVALID_STATE", turn ? `It is side ${turn}'s turn to decide.` : "Every required side has approved.");
 }
 
 const approveResult = v.object({ allRequiredApproved: v.boolean(), requiredApprovalSides: v.array(side) });
@@ -71,7 +71,7 @@ export const approve = mutation({
         eventId: d.event._id, side: d.side, status: "approved", userId: d.user._id, companyId: d.user.companyId,
         proposalId: args.proposalId, revision: args.revision, selectionGeneration: args.selectionGeneration,
         approvalRuleVersion: args.approvalRuleVersion, trajectoryPlanId: null, trajectoryPlanVersion: null, reason: null,
-        demoRunId: d.event.demoRunId ?? null, current: true, at: Date.now(),
+        demoRunId: d.event.demoRunId ?? null, current: true, at: Date.now(), assignmentVersion: assignmentVersionOf(d.user),
       });
       counted = await countingApprovals(ctx, d.event, d.selection);
     }
@@ -123,13 +123,13 @@ export const approvalStatus = v.object({
   selected: nullable(v.object({ proposalId: v.id("proposals"), label: v.string(), revision: v.number(), generation: v.number() })),
   // Required sides only: never a debris or internal entry.
   approvals: v.object({ A: v.optional(sideApproval), B: v.optional(sideApproval) }),
-  allRequiredApproved: v.boolean(),
+  allRequiredApproved: v.boolean(), reviewRequired: v.boolean(),
   deciding: v.boolean(), turn: nullable(side),
   lastReset: nullable(v.object({ at: v.string(), reason: v.string() })),
   mySide: nullable(side), canAct: v.boolean(), myTurn: v.boolean(), simulated: v.boolean(),
 });
 
-/** "P2 · R2 · A approved · waiting for B" for one event. Parties and the observer read; the observer has no control. */
+/** "P2 · R2 · A approved · waiting for B" for one event. Assigned operators and heads of operations read. */
 export const status = query({
   args: { eventId: v.id("events") },
   returns: approvalStatus,
@@ -139,7 +139,10 @@ export const status = query({
       ctx.db.query("selections").withIndex("by_event", q => q.eq("eventId", eventId)).unique(),
       ctx.db.query("candidateSets").withIndex("by_event", q => q.eq("eventId", eventId)).unique(),
     ]);
-    const [counted, { deciding, turn }] = await Promise.all([countingApprovals(ctx, event, selection), decisionTurn(ctx, event)]);
+    const counted = await countingApprovals(ctx, event, selection);
+    const decidable = !isResolved(event) && !!selection?.proposalId && (event.workflow === "bilateral" || event.workflow === "unilateral_debris");
+    const turn = decidable ? turnOf(event, counted) : null;
+    const deciding = turn !== null;
     const required = event.requiredApprovalSides ?? [];
     const ruleVersion = event.approvalRuleVersion ?? null;
     const approvals: Partial<Record<"A" | "B", Infer<typeof sideApproval>>> = {};
@@ -170,7 +173,7 @@ export const status = query({
       selectionGeneration: selection?.generation ?? 0,
       selected: proposal && selection?.revision != null
         ? { proposalId: proposal._id, label: proposal.label, revision: selection.revision, generation: selection.generation } : null,
-      approvals, allRequiredApproved: allApproved(event, counted), deciding, turn,
+      approvals, allRequiredApproved: allApproved(event, counted), reviewRequired: set?.reviewRequired ?? false, deciding, turn,
       lastReset: selection?.lastReset ? { at: isoUtc(selection.lastReset.at), reason: selection.lastReset.reason } : null,
       mySide, canAct, myTurn: canAct && deciding && turn === mySide, simulated: event.simulated,
     };

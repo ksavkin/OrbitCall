@@ -28,5 +28,5 @@ export async function classifyIfUnset(ctx: MutationCtx, event: Doc<"events">): P
   return { ...event, ...patch };
 }
 
-export { advanceSelection, allApproved, countingApprovals, decisionInputs, invalidateEventApprovals } from "./approvalState";
+export { advanceSelection, allApproved, assignmentVersionOf, countingApprovals, currentEvidence, decisionInputs, invalidateEventApprovals, resetApprovals, turnOf } from "./approvalState";
 export type { ResetReason } from "./approvalState";

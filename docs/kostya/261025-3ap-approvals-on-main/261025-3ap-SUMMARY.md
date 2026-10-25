@@ -26,7 +26,7 @@ This port follows Adil's decision of October 25 (user-flow "App navigation and t
 
 The port replaces the old branch `claude/r2-approvals-chain-a21926`, which must not be merged.
 
-**No schema edits.** Everything runs on main's Round 1.5 tables: `proposals`, `proposalRevisions`, `selections` and `approvals` in `schema/schedule.ts`, plus the stored `events.workflow`, `requiredApprovalSides`, `approvalRuleVersion` and `status`.
+**One schema edit:** an optional `approvals.assignmentVersion`. Everything else runs on main's Round 1.5 tables: `proposals`, `proposalRevisions`, `selections` and `approvals` in `schema/schedule.ts`, plus the stored `events.workflow`, `requiredApprovalSides`, `approvalRuleVersion` and `status`.
 
 ## What was built
 
@@ -69,7 +69,7 @@ The port replaces the old branch `claude/r2-approvals-chain-a21926`, which must 
 ## Decisions and deviations
 
 - **Selection is a turn action.** While a decision is open, only the side in turn may change the selection (user-flow points 6-7: voice selects). Changing it resets that side's earlier approval.
-- **No silent replacement after consensus.** Changed candidate publication is refused once the event is `approved` or later. Identical publication may backfill missing card records without altering approval state. A material policy, assignment or evidence change permanently invalidates approvals; an unscheduled decision can be reviewed again, while prepared or committed artifacts stay flagged for review.
+- **No silent replacement after consensus.** Changed candidate publication is refused once the event is `approved` or later. Identical publication may backfill missing card records without altering approval state. A material policy, assignment or evidence change permanently invalidates approvals; a decision that already reached consensus retains its status and is visibly flagged for review, while artifacts remain immutable.
 
 - **Turns versus spec §4.1.** The spec still says "independent Approve"; Adil's user flow says turns. Turns are implemented, and the spec sentence needs the doc fix.
 - **Status gate.** Spec step 2 requires `proposal` or `communication`. `candidates.publish` is the writer of `proposal`. `communication` is left to `rooms.startWorkflow` as a seam; approving already works in `proposal`.
@@ -78,8 +78,9 @@ The port replaces the old branch `claude/r2-approvals-chain-a21926`, which must 
 
 ## Known limits and seams
 
-- **Responsibility changes are permanent resets.** Assignment, role and ownership writers invalidate affected approvals in the same transaction. Restoring access requires a fresh human checkmark; previous rows remain historical.
+- **Responsibility changes are permanent resets.** Assignment, role and ownership writers invalidate affected approvals in the same transaction. Restoring access requires a fresh human checkmark; previous rows remain historical. Approvals also pin the user's assignment version, so a missed sweep cannot revive a signature.
 - **One validity rule for turns and agreement.** A replacement operator gets the first outstanding required side's turn. A stale or revoked approval cannot advance the turn while appearing pending in status.
+- **After consensus.** A material change flags the plan for review, retires the old approval generation and retains the recorded status and any artifact. Reopening is an explicit review step, not a silent replacement.
 - **Not wired yet:**
   - the `log` audit rows for select, approve and veto (reset audit rows are implemented);
   - scheduling the agents' revision after a veto;
