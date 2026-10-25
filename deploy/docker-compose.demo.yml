@@ -47,6 +47,7 @@ services:
       context: ../services/voice
     restart: unless-stopped
     stop_grace_period: 30s
+    # An empty value overrides the worker's own default, so the locked model IDs are defaulted here too.
     environment:
       LIVEKIT_URL: ${LIVEKIT_URL}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
@@ -54,14 +55,25 @@ services:
       XAI_API_KEY: ${XAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       CARTESIA_API_KEY: ${CARTESIA_API_KEY}
-      XAI_STT_MODEL: ${XAI_STT_MODEL}
-      TRANSLATION_MODEL: ${TRANSLATION_MODEL}
-      CARTESIA_MODEL_ID: ${CARTESIA_MODEL_ID}
-      CARTESIA_VOICE_ID_EN: ${CARTESIA_VOICE_ID_EN}
-      CARTESIA_VOICE_ID_ZH: ${CARTESIA_VOICE_ID_ZH}
+      XAI_STT_MODEL: ${XAI_STT_MODEL:-grok-voice-transcribe-2.0}
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-claude-sonnet-5-5}
+      CARTESIA_MODEL_ID: ${CARTESIA_MODEL_ID:-sonic-3.6-2026-08-27}
+      CARTESIA_VOICE_EN: ${CARTESIA_VOICE_EN}
+      CARTESIA_VOICE_ZH: ${CARTESIA_VOICE_ZH}
       XAI_TTS_VOICE_ID: ${XAI_TTS_VOICE_ID}
       CONVEX_SITE_URL: ${CONVEX_SITE_URL}
-      VOICE_CALLBACK_TOKEN: ${VOICE_CALLBACK_TOKEN:?set VOICE_CALLBACK_TOKEN}
+      CALL_SERVICE_TOKEN: ${CALL_SERVICE_TOKEN:?set CALL_SERVICE_TOKEN}
+    # 200 only when the providers, Convex settings and LiveKit registration are ready; 503 while degraded.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=4)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     logging: *logging
 
   caddy:
