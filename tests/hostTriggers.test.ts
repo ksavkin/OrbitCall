@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { internal } from "../convex/_generated/api";
+import { api, internal } from "../convex/_generated/api";
 import type { Doc, Id } from "../convex/_generated/dataModel";
 import { putFixture } from "../convex/lib/events";
 import { MAX_EVENTS, MAX_MESSAGES, validateHostContext, type HostContext, type HostOutput } from "../convex/lib/host";
@@ -11,6 +11,7 @@ const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/test
 const XAI_URL = "https://api.x.ai/v1/chat/completions";
 const LANGS = ["en", "ru", "zh"] as const;
 const token = (name: string) => `https://fixture.invalid|${name}`;
+const as = (t: Backend, name: string) => t.withIdentity({ tokenIdentifier: token(name) });
 
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(FIXTURE_NOW);
@@ -435,5 +436,31 @@ describe("Coordination Host trigger", () => {
     expect(calls.host[0].events).toHaveLength(MAX_EVENTS);
     expect(calls.host[0].members).toHaveLength(6);
     expect(await t.run(ctx => ctx.db.get(full))).toMatchObject({ status: "succeeded" });
+  });
+});
+
+describe("Room host runs", () => {
+  it("lists a room's host runs, newest first, to its members only", async () => {
+    const t = backend();
+    const room = await seedRoom(t);
+    await say(t, room.roomId, human(room, 0), "Can we move the burn?", 0);
+    stubProviders();
+    const first = (await request(t, room.roomId))!;
+    await execute(t, first);
+    vi.setSystemTime(FIXTURE_NOW + 60_000);
+    const second = (await request(t, room.roomId, "summary_requested"))!;
+    const list = await as(t, "u1").query(api.hostTriggers.listForRoom, { roomId: room.roomId });
+    expect(list.map(r => r.hostRunId)).toEqual([second, first]);
+    expect(list[1]).toMatchObject({ trigger: "final_message", status: "succeeded", attempt: 1, span: { provider: "google", model: "test-gemini" },
+      check: { span: { provider: "xai" } } });
+    expect(list[1].output?.summaries).toHaveLength(1);
+    expect(list[0]).toMatchObject({ status: "running", output: null, finishedAt: null });
+
+    await t.run(async ctx => {
+      const companyId = await ctx.db.insert("companies", { key: "outsider", name: "Outsider", simulated: true });
+      await ctx.db.insert("users", { tokenIdentifier: token("outsider"), companyId, role: "operator" });
+    });
+    await expect(t.query(api.hostTriggers.listForRoom, { roomId: room.roomId })).rejects.toThrow("UNAUTHENTICATED");
+    await expect(as(t, "outsider").query(api.hostTriggers.listForRoom, { roomId: room.roomId })).rejects.toThrow("FORBIDDEN");
   });
 });

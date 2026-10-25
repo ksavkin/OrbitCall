@@ -1,11 +1,12 @@
 import { ConvexError, v } from "convex/values";
-import { internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, query, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { hostTrigger } from "./schema/rooms";
 import { agentSpanValidator, hostOutputValidator, type HostContext, type HostOutput } from "./lib/host";
 import { checkResultValidator, type CheckInput } from "./lib/checker";
 import { buildHostContext } from "./lib/hostContext";
+import { requireUser } from "./session";
 
 // Coordination Host runs (roadmap §6 Gemini Host contract). A caller asks explicitly; nothing here watches messages.
 // One run per room, input version and trigger; a failed run may be retried up to MAX_ATTEMPTS times.
@@ -141,5 +142,20 @@ export const finish = internalMutation({
     const succeeded = span?.status === "succeeded" && output !== null;
     await ctx.db.patch(hostRunId, { status: succeeded ? "succeeded" : "failed", span, output: succeeded ? output : null, check, finishedAt });
     return null;
+  },
+});
+
+/** A room's latest host runs for the agent trace, newest first. Room members only. */
+export const listForRoom = query({
+  args: { roomId: v.id("rooms") },
+  handler: async (ctx, { roomId }) => {
+    const { user } = await requireUser(ctx);
+    const member = await ctx.db.query("roomMembers").withIndex("by_room_user", q => q.eq("roomId", roomId).eq("userId", user._id)).first();
+    if (!member) throw new ConvexError({ code: "FORBIDDEN", message: "Only room members can see its host runs." });
+    const runs = await ctx.db.query("hostRuns").withIndex("by_room_created", q => q.eq("roomId", roomId)).order("desc").take(20);
+    return runs.map(r => ({
+      hostRunId: r._id, trigger: r.trigger, inputVersion: r.inputVersion, attempt: r.attempt, status: r.status,
+      span: r.span, output: r.output, check: r.check, createdAt: r.createdAt, finishedAt: r.finishedAt,
+    }));
   },
 });
