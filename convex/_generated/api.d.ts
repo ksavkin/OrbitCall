@@ -14,12 +14,20 @@ import type * as agentSummaries from "../agentSummaries.js";
 import type * as agents from "../agents.js";
 import type * as agents_advocate from "../agents/advocate.js";
 import type * as agents_analyst from "../agents/analyst.js";
+import type * as call_core from "../call/core.js";
+import type * as call_demo from "../call/demo.js";
+import type * as call_ingest from "../call/ingest.js";
+import type * as call_join from "../call/join.js";
+import type * as call_livekitToken from "../call/livekitToken.js";
+import type * as call_messages from "../call/messages.js";
+import type * as call_presence from "../call/presence.js";
 import type * as candidates from "../candidates.js";
 import type * as catalog from "../catalog.js";
 import type * as coordinationHost from "../coordinationHost.js";
 import type * as crons from "../crons.js";
 import type * as dev from "../dev.js";
 import type * as events from "../events.js";
+import type * as http from "../http.js";
 import type * as ingest from "../ingest.js";
 import type * as lib_advocate from "../lib/advocate.js";
 import type * as lib_advocateMemory from "../lib/advocateMemory.js";
@@ -42,6 +50,7 @@ import type * as policies from "../policies.js";
 import type * as rationaleCheck from "../rationaleCheck.js";
 import type * as riskMonitor from "../riskMonitor.js";
 import type * as schema_agents from "../schema/agents.js";
+import type * as schema_call from "../schema/call.js";
 import type * as schema_data from "../schema/data.js";
 
 import type {
@@ -57,12 +66,20 @@ declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   "agents/advocate": typeof agents_advocate;
   "agents/analyst": typeof agents_analyst;
+  "call/core": typeof call_core;
+  "call/demo": typeof call_demo;
+  "call/ingest": typeof call_ingest;
+  "call/join": typeof call_join;
+  "call/livekitToken": typeof call_livekitToken;
+  "call/messages": typeof call_messages;
+  "call/presence": typeof call_presence;
   candidates: typeof candidates;
   catalog: typeof catalog;
   coordinationHost: typeof coordinationHost;
   crons: typeof crons;
   dev: typeof dev;
   events: typeof events;
+  http: typeof http;
   ingest: typeof ingest;
   "lib/advocate": typeof lib_advocate;
   "lib/advocateMemory": typeof lib_advocateMemory;
@@ -85,6 +102,7 @@ declare const fullApi: ApiFromModules<{
   rationaleCheck: typeof rationaleCheck;
   riskMonitor: typeof riskMonitor;
   "schema/agents": typeof schema_agents;
+  "schema/call": typeof schema_call;
   "schema/data": typeof schema_data;
 }>;
 
