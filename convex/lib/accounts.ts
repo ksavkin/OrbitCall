@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import type { MutationCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { invalidateObjectApprovals } from "./approvalState";
+import { notifyLateAssignment } from "./roomCall";
 
 // Account vocabulary shared by the schema, provisioning and session functions.
 export const lang = v.union(v.literal("en"), v.literal("ru"), v.literal("zh"));
@@ -57,6 +58,8 @@ export async function setActiveAssignments(ctx: MutationCtx, user: Doc<"users">,
   if (version !== user.assignmentVersion) await ctx.db.patch(user._id, { assignmentVersion: version });
   // The version pins the entire assignment set, so every held incident gets a visible permanent reset.
   if (changed) await invalidateObjectApprovals(ctx, [...new Set([...before, ...wanted])], "assignment_changed");
+  // An operator assigned to a party object of an open room after it started gets the inbox notice startWorkflow leaves.
+  if (changed) await notifyLateAssignment(ctx, user, new Set([...wanted].filter(id => !before.has(id))));
   return version;
 }
 

@@ -3,6 +3,7 @@
 import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
+import { stillResponsibleForCall } from "../lib/roomCall";
 
 export type CallErrorCode = "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION" | "FEATURE_DISABLED";
 
@@ -36,7 +37,13 @@ export async function memberBy(ctx: QueryCtx, roomId: string, subject: string | 
   } else {
     return callError("UNAUTHENTICATED", "Sign in first");
   }
-  return member ?? callError("FORBIDDEN", "You are not a member of this room");
+  if (!member) return callError("FORBIDDEN", "You are not a member of this room");
+  // A provisioned operator (userId is a users id, written by rooms.ts) in a coordination room (a rooms id) follows
+  // current responsibility, as rooms.requireMember does: a revoked assignment ends call access. Demo seed members
+  // (call/demo.ts: "demo-…" user ids, dev tokens, also when seeded into a rooms id) are not users and keep their rows.
+  const room = ctx.db.normalizeId("rooms", roomId), user = ctx.db.normalizeId("users", member.userId);
+  if (room && user && !await stillResponsibleForCall(ctx, room, user)) return callError("FORBIDDEN", "You are not a member of this room");
+  return member;
 }
 
 /** The LiveKit identity of a member; the worker names translated tracks after it (tr:<lang>:<identity>). */

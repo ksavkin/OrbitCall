@@ -247,6 +247,69 @@ describe("rooms.byId / rooms.listMine / presence", () => {
   });
 });
 
+// The voice call of a coordination room (call/core.ts memberBy) follows the same responsibility as the room.
+const memberForJoin = makeFunctionReference<"query">("call/join:memberForJoin");
+const captions = makeFunctionReference<"query">("call/messages:list");
+
+describe("rooms and the voice call", () => {
+  // Carl joins North after the room started: an Auth0-shaped subject, so the call row is found by "auth0|carl".
+  const CARL = "auth0|carl";
+  const withCarl = (carl: string[]) => {
+    const company = north();
+    return { ...company, members: [...company.members,
+      { tokenIdentifier: token(CARL), role: "operator" as const, assignedObjectIds: carl, name: "Carl Chen", language: "zh" as const }] };
+  };
+  const carlId = (t: Backend) => t.run(async ctx =>
+    (await ctx.db.query("users").withIndex("by_token_identifier", q => q.eq("tokenIdentifier", token(CARL))).unique())!._id);
+  const callMember = (t: Backend, roomId: Id<"rooms">, subject: string) =>
+    t.query(memberForJoin, { roomId: String(roomId), subject });
+
+  it("a late-assigned operator gets the inbox notice, then the call once they open the room", async () => {
+    const { t, ids } = await seed();
+    const { roomId } = await as(t, "ana").mutation(startWorkflow, { eventId: ids.cross });
+    await t.mutation(internal.operators.provision, withCarl(["48211"]));
+    const carl = await carlId(t);
+    const inbox = (await rows(t, "inbox")).filter(r => r.userId === carl);
+    expect(inbox.map(r => [r.eventId, r.unread]).sort()).toEqual([[ids.cross, true], [ids.crossMirror, true]].sort());
+    expect(inbox[0].lastUpdateSummary).toMatch(/^You were added to the coordination room for /);
+    // A rerun of the same provisioning changes nothing and leaves no second notice.
+    await t.mutation(internal.operators.provision, withCarl(["48211"]));
+    expect((await rows(t, "inbox")).filter(r => r.userId === carl)).toHaveLength(2);
+
+    expect(await code(callMember(t, roomId, CARL))).toBe("FORBIDDEN");
+    await as(t, CARL).mutation(join, { roomId });
+    expect(await callMember(t, roomId, CARL)).toMatchObject({ roomId: String(roomId), subject: CARL, userId: String(carl), lang: "zh", role: "operator" });
+    expect(await as(t, CARL).query(captions, { roomId: String(roomId) })).toEqual([]);
+    // Joining again keeps one row.
+    await as(t, CARL).mutation(join, { roomId });
+    expect((await rows(t, "call_members")).filter(m => m.subject === CARL)).toHaveLength(1);
+  });
+
+  it("a revoked assignment ends call access; the operators still assigned keep it", async () => {
+    const { t, ids } = await seed();
+    const { roomId } = await as(t, "ana").mutation(startWorkflow, { eventId: ids.cross });
+    await t.mutation(internal.operators.provision, withCarl(["48211"]));
+    await as(t, CARL).mutation(join, { roomId });
+    await t.mutation(internal.operators.provision, withCarl([]));
+    expect(await code(callMember(t, roomId, CARL))).toBe("FORBIDDEN");
+    expect(await code(as(t, CARL).query(captions, { roomId: String(roomId) }))).toBe("FORBIDDEN");
+    expect(await callMember(t, roomId, "ana")).toMatchObject({ subject: "ana" });
+    expect(await callMember(t, roomId, "bo")).toMatchObject({ subject: "bo" });
+    expect(await as(t, "bo").query(captions, { roomId: String(roomId) })).toEqual([]);
+    // Reassigned: the kept row works again.
+    await t.mutation(internal.operators.provision, withCarl(["48211"]));
+    expect(await callMember(t, roomId, CARL)).toMatchObject({ subject: CARL });
+  });
+
+  it("an assignment for an object outside every open room leaves no notice", async () => {
+    const { t, ids } = await seed();
+    await as(t, "ana").mutation(startWorkflow, { eventId: ids.cross });
+    await t.mutation(internal.operators.provision, withCarl(["48214"]));
+    const carl = await carlId(t);
+    expect((await rows(t, "inbox")).filter(r => r.userId === carl)).toEqual([]);
+  });
+});
+
 describe("rooms decision turns", () => {
   it("gives the turn to side A, then B, and closes it when both approved the selection", async () => {
     const { t, ids, user, company } = await seed();

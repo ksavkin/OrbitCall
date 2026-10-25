@@ -7,6 +7,10 @@ import { isoUtc, TCA_MATCH_MS } from "./lib/events";
 import { color, eventStatus, workflow } from "./lib/validators";
 import { side } from "./lib/policyValidators";
 import { decisionTurn, isResolved } from "./lib/decision";
+import { ensureCallMember, isOpenRoom, notify } from "./lib/roomCall";
+
+// Moved to lib/roomCall so call/core and lib/accounts can use them without importing this module.
+export { isOpenRoom, notify };
 
 // Coordination rooms (spec §3.4) on the round 1.5 tables in schema/rooms.ts. A room is the optional, automatically
 // connected communication channel of one case (user-flow "App navigation and the decision flow"): an operator presses
@@ -26,14 +30,6 @@ export async function linkedEvents(ctx: QueryCtx, event: Doc<"events">): Promise
   const run = event.demoRunId ?? null;
   const all = new Map([...forward, ...reversed, event].filter(e => (e.demoRunId ?? null) === run).map(e => [e._id, e]));
   return [...all.values()].sort((x, y) => x.tcaMs - y.tcaMs || (x._id < y._id ? -1 : x._id > y._id ? 1 : 0));
-}
-
-/** Open, not closed, and its demo run (if any) still open: the same rule as hostTriggers.isOpen. */
-export async function isOpenRoom(ctx: QueryCtx, room: Doc<"rooms">): Promise<boolean> {
-  if (room.state !== "open" || room.closedAt !== null) return false;
-  if (room.demoRunId === null) return true;
-  const demo = await ctx.db.get(room.demoRunId);
-  return demo !== null && demo.state === "open" && demo.closedAt === null;
 }
 
 // An event is in at most one open room; closed rooms stay linked as history, so a re-flare gets a fresh room.
@@ -180,10 +176,6 @@ async function project(ctx: QueryCtx, scope: FleetScope, room: Doc<"rooms">, pai
   };
 }
 
-// The Convex identity subject inside a tokenIdentifier ("<issuer>|<subject>"; an issuer URL has no "|"). The call
-// module (call/core.ts memberOf) finds call members by this subject.
-const subjectOf = (tokenIdentifier: string) => tokenIdentifier.slice(tokenIdentifier.indexOf("|") + 1);
-
 /** Joins every operator currently assigned to a party object; returns the users joined for the first time. */
 async function autoJoin(ctx: MutationCtx, room: Doc<"rooms">, pairs: Pair[], starter: Id<"users">) {
   const objectIds = new Set(pairs.flatMap(p => [p.a, p.b]));
@@ -204,17 +196,7 @@ async function autoJoin(ctx: MutationCtx, room: Doc<"rooms">, pairs: Pair[], sta
       await ctx.db.patch(row._id, { inRoom: true, updatedAt: now });
     }
     // The voice call authorizes through call_members (call/join.ts), keyed by the rooms id as a string.
-    const subject = subjectOf(user.tokenIdentifier);
-    const callMember = await ctx.db.query("call_members").withIndex("by_room", q => q.eq("roomId", String(room._id)).eq("subject", subject)).unique();
-    if (!callMember) {
-      const company = await ctx.db.get(user.companyId);
-      await ctx.db.insert("call_members", {
-        roomId: String(room._id), subject, userId: String(user._id), companyId: String(user.companyId),
-        // A provisioned name, else the company's; the call needs a display name and a language.
-        name: user.name ?? company?.name ?? "Operator", lang: user.language ?? company?.language ?? "en",
-        role: "operator", simulated: company?.simulated ?? room.simulated,
-      });
-    }
+    await ensureCallMember(ctx, room, user);
   }
   return added;
 }
@@ -268,14 +250,6 @@ export const startWorkflow = mutation({
     return { roomId: room._id, created: existing === null, joined: joined.map(u => u._id) };
   },
 });
-
-/** Leaves an unread inbox notice for one person on one event (the inbox row is the only personal state). */
-export async function notify(ctx: MutationCtx, userId: Id<"users">, event: Doc<"events">, summary: string) {
-  const existing = await ctx.db.query("inbox").withIndex("by_user_event", q => q.eq("userId", userId).eq("eventId", event._id)).unique();
-  const fields = { unread: true, lastUpdateAt: Date.now(), lastUpdateSummary: summary };
-  if (existing) await ctx.db.patch(existing._id, fields);
-  else await ctx.db.insert("inbox", { userId, eventId: event._id, ...fields, demoRunId: event.demoRunId ?? null, simulated: event.simulated });
-}
 
 /** The open room of an event the caller is party to; null while none exists. */
 export const get = query({
@@ -347,6 +321,8 @@ async function setPresence(ctx: MutationCtx, roomId: Id<"rooms">, patch: { inRoo
   // companyId is the member's own company: hostTriggers.listForRoom rejects any other.
   if (row) await ctx.db.patch(row._id, { ...next, companyId: scope.user.companyId, updatedAt: Date.now() });
   else await ctx.db.insert("roomMembers", { roomId: room._id, userId: scope.user._id, companyId: scope.user.companyId, ...next, updatedAt: Date.now() });
+  // An operator assigned after the room started was never auto-joined: entering the room gives them the call too.
+  if (next.inRoom) await ensureCallMember(ctx, room, scope.user);
   return null;
 }
 
