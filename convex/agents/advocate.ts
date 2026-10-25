@@ -20,18 +20,17 @@ export const start = internalAction({
       await ctx.runMutation(internal.agentRuns.progress, { runId, stage: "checking" });
       checkRecommendation(result.raw, input.evaluations, Boolean(input.policy), input.counterpart);
       await ctx.runMutation(internal.advocates.finish, { runId, ...result });
-    } catch (error) { await ctx.runMutation(internal.agentRuns.fail, { runId, ...safeFailure(error) }); }
+    } catch (error) { await ctx.runMutation(internal.advocates.fail, { runId, ...safeFailure(error) }); }
     return null;
   },
 });
 
-// One bounded round: A makes an offer, then B reads A's checked public outcomes and responds.
-// Each side makes its own Claude call. The query computes the shared shortlist; humans select.
+// One bounded round. A's finish/fail transaction schedules B exactly once; retries of A
+// also refresh B. B failures remain explicit retries and never restart A.
 export const negotiate = internalAction({
   args: { eventId: v.id("events") }, returns: v.null(),
   handler: async (ctx, { eventId }): Promise<null> => {
     await ctx.runAction(internal.agents.advocate.start, { eventId, side: "A" });
-    await ctx.runAction(internal.agents.advocate.start, { eventId, side: "B" });
     return null;
   },
 });

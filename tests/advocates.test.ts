@@ -140,7 +140,56 @@ describe("Operator Advocate v1", () => {
     await identity(t, "a").mutation(api.advocates.rerun, { eventId }); await finish(t);
     shared = await identity(t, "a").query(api.advocates.list, { eventId });
     expect(shared.assessments.A).toHaveLength(4);
-    expect((await t.run(ctx => ctx.db.query("negotiationMessages").collect())).filter(m => m.kind === "assessment")).toHaveLength(2);
+    expect((await t.run(ctx => ctx.db.query("negotiationMessages").collect())).filter(m => m.kind === "assessment")).toHaveLength(3);
+  });
+
+  it("refreshes B's recommendation when A recovers with a previously missing hard constraint", async () => {
+    const { t, eventId } = await setup();
+    vi.mocked(callClaude)
+      .mockRejectedValueOnce(new Error("Temporary model failure"))
+      .mockResolvedValueOnce({ raw: '{"preferredCandidateId":"P1"}', model: "test-model", usage: { inputTokens: 1, outputTokens: 1 } });
+    await finish(t);
+    const before = await identity(t, "b").query(api.advocates.list, { eventId });
+    expect(before.assessments.A).toEqual([]);
+    expect(before.assessments.B[0].recommended).toBe(true);
+
+    await identity(t, "a").mutation(api.advocates.rerun, { eventId });
+    await finish(t);
+    const after = await identity(t, "b").query(api.advocates.list, { eventId });
+    expect(after.assessments.A[0].outcome).toBe("infeasible");
+    expect(after.assessments.B[0].recommended).toBe(false);
+    expect(after.assessments.B[1].recommended).toBe(true);
+    expect(after.messages.filter(m => m.current)).toHaveLength(2);
+    expect(callClaude).toHaveBeenCalledTimes(4);
+  });
+
+  it("supersedes an in-flight B result when A publishes new shared outcomes", async () => {
+    const { t, eventId } = await setup();
+    const b = await t.mutation(internal.advocates.begin, { eventId, side: "B" });
+    const a = await t.mutation(internal.advocates.begin, { eventId, side: "A" });
+    const result = { raw: '{"preferredCandidateId":"P2"}', model: "test-model", usage: { inputTokens: 1, outputTokens: 1 } };
+    await t.mutation(internal.advocates.finish, { runId: a!.runId, ...result });
+    expect((await t.mutation(internal.advocates.finish, { runId: b!.runId, ...result })).published).toBe(false);
+    await finish(t);
+    const shared = await identity(t, "a").query(api.advocates.list, { eventId });
+    expect(shared.assessments.B[1].recommended).toBe(true);
+    expect(callClaude).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a failed B response for an explicit retry instead of calling it twice", async () => {
+    const { t, eventId } = await setup();
+    vi.mocked(callClaude).mockImplementation(async prompt => {
+      if (JSON.parse(prompt.user).side === "B") throw new Error("Temporary model failure");
+      return { raw: '{"preferredCandidateId":"P2"}', model: "test-model", usage: { inputTokens: 1, outputTokens: 1 } };
+    });
+    await finish(t);
+    expect(callClaude).toHaveBeenCalledTimes(2);
+    expect((await identity(t, "b").query(api.advocates.list, { eventId })).runs.B?.status).toBe("failed");
+    vi.mocked(callClaude).mockResolvedValue({ raw: '{"preferredCandidateId":"P2"}', model: "test-model", usage: { inputTokens: 1, outputTokens: 1 } });
+    await identity(t, "b").mutation(api.advocates.rerun, { eventId });
+    await finish(t);
+    expect(callClaude).toHaveBeenCalledTimes(3);
+    expect((await identity(t, "b").query(api.advocates.list, { eventId })).assessments.B[1].recommended).toBe(true);
   });
 
   it("rechecks hard limits inside publication even when the action check is bypassed", async () => {

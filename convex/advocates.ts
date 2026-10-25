@@ -70,7 +70,26 @@ export const finish = internalMutation({
       candidateVersion: set.version, evidenceKey: set.evidenceKey,
     });
     await ctx.db.patch(runId, { status: "succeeded", stage: undefined, finishedAt: Date.now(), stalled: false, model, usage });
+    if (context.side === "A") {
+      // B may have started before A finished, or answered while A's previous attempt failed.
+      // Invalidate that response atomically and give B the newly published shared outcomes.
+      const response = await latestAdvocate(ctx, run.eventId, set.companyBId);
+      if (response && ["running", "succeeded"].includes(response.status)) await supersede(ctx, response._id);
+      await ctx.scheduler.runAfter(0, internal.agents.advocate.start, { eventId: run.eventId, side: "B" });
+    }
     return { published: true };
+  },
+});
+
+export const fail = internalMutation({
+  args: { runId: v.id("agentRuns"), code: v.string(), message: v.string() },
+  handler: async (ctx, { runId, code, message }) => {
+    const run = await ctx.db.get(runId);
+    if (!run || run.role !== "operator_advocate" || run.status !== "running") return;
+    await ctx.db.patch(runId, { status: "failed", stage: undefined, finishedAt: Date.now(), stalled: false,
+      errorCode: code, errorMessage: message });
+    const context = await ctx.db.query("advocateContexts").withIndex("by_run", q => q.eq("runId", runId)).unique();
+    if (context?.side === "A") await ctx.scheduler.runAfter(0, internal.agents.advocate.start, { eventId: run.eventId, side: "B" });
   },
 });
 
